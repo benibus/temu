@@ -1,4 +1,5 @@
-#pragma once
+#ifndef CONFIG_H__
+#define CONFIG_H__
 
 static Config cfg = {
 	.wm_class = "Temu",
@@ -44,3 +45,5 @@ static Config cfg = {
 #define CFG_LOG_EVENTS   0
 #define CFG_LOG_KEYPRESS 0
 #define CFG_LOG_DRAWING  0
+
+#endif

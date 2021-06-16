@@ -1,4 +1,5 @@
-#pragma once
+#ifndef X_H__
+#define X_H__
 
 typedef int ClientID;
 
@@ -29,3 +30,5 @@ uint key_get_string(uint, uint, char *, uint);
 void run(void);
 
 void dbg__test_draw(void);
+
+#endif

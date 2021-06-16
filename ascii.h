@@ -1,4 +1,5 @@
-#pragma once
+#ifndef ASCII_H__
+#define ASCII_H__
 
 #define NUM_ASCII_STD 128
 #define NUM_ASCII_EXT 128
@@ -136,3 +137,5 @@ struct {
  /* 126 */  { "~",      "01111110" },
  /* 127 */  { "Delete", "01111111" }
 };
+
+#endif

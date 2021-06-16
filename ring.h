@@ -1,4 +1,5 @@
-#pragma once
+#ifndef RING_H__
+#define RING_H__
 
 typedef void (*hist_set_fn_)(int, int, void *, int);
 
@@ -16,3 +17,5 @@ int   hist_get_first(void);
 int   hist_get_last(void);
 bool  hist_is_full(void);
 bool  hist_is_empty(void);
+
+#endif

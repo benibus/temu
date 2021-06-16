@@ -1,4 +1,5 @@
-#pragma once
+#ifndef UTILS_H__
+#define UTILS_H__
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -128,3 +129,4 @@ static inline int  wrapinv(int a, int b) { return ((a > 0) ? a - 1 : b - 1); }
 #define ASSERT(cond_) \
 if (!(cond_)) { msg_error("assertion failed: " #cond_ ", SIGTRAP raised"); DBG_BREAK; }
 
+#endif

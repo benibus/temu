@@ -1,4 +1,5 @@
-#pragma once
+#ifndef TERM_H__
+#define TERM_H__
 
 typedef char Cell; // temporary until utf-8 support is added
 typedef int CodePt;
@@ -123,3 +124,5 @@ void dbg_print_state(const char *, const char *, int);
     dbg_print_##group_(__FILE__, __func__, __LINE__); \
   } \
 } while (0)
+
+#endif
