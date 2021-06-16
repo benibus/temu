@@ -1,0 +1,61 @@
+000	00	Null char
+001	01	Start of Heading
+002	02	Start of Text
+003	03	End of Text
+004	04	End of Transmission
+005	05	Enquiry
+006	06	Acknowledgment
+007	07	Bell
+008	08	Back Space
+009	09	Horizontal Tab
+010	0A	Line Feed
+011	0B	Vertical Tab
+012	0C	Form Feed
+013	0D	Carriage Return
+014	0E	Shift Out / X-On
+015	0F	Shift In / X-Off
+016	10	Data Line Escape
+017	11	Device Control 1 (oft. XON)
+018	12	Device Control 2
+019	13	Device Control 3 (oft. XOFF)
+020	14	Device Control 4
+021	15	Negative Acknowledgement
+022	16	Synchronous Idle
+023	17	End of Transmit Block
+024	18	Cancel
+025	19	End of Medium
+026	1A	Substitute
+027	1B	Escape
+028	1C	File Separator
+029	1D	Group Separator
+030	1E	Record Separator
+031	1F	Unit Separator
+
+032	20	Space
+033	21	Exclamation mark
+034	22	Double quotes (or speech marks)
+035	23	Number
+036	24	Dollar
+037	25	Per cent sign
+038	26	Ampersand
+039	27	Single quote
+040	28	Open parenthesis (or open bracket)
+041	29	Close parenthesis (or close bracket)
+042	2A	Asterisk
+043	2B	Plus
+044	2C	Comma
+045	2D	Hyphen
+046	2E	Period, dot or full stop
+047	2F	Slash or divide
+
+
+048	30	Zero
+049	31	One
+050	32	Two
+051	33	Three
+052	34	Four
+053	35	Five
+054	36	Six
+055	37	Seven
+056	38	Eight
+057	39	Nine
