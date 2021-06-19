@@ -1,19 +1,22 @@
-SRCDIR = src/
-OBJDIR = build/
+SRC_DIR := src
+OBJ_DIR := build
+
+BIN := temu
+SRC := $(wildcard $(SRC_DIR)/*.c)
+OBJ := $(SRC:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 
 PKG_CONFIG = pkg-config
-
-INCFLAGS = $(shell $(PKG_CONFIG) --cflags freetype2 fontconfig)
-LDFLAGS = -lX11 -lutil -lXft $(shell $(PKG_CONFIG) --libs freetype2 fontconfig)
+IDLIBS = $(shell $(PKG_CONFIG) --cflags freetype2 fontconfig)
+LDLIBS = $(shell $(PKG_CONFIG) --libs freetype2 fontconfig) -lX11 -lutil -lXft
+LFLAGS =
+IFLAGS =
 
 CC ?= cc
-
-CPPFLAGS = -D_POSIX_C_SOURCE=199309L -D_XOPEN_SOURCE=600
+CPPFLAGS = $(IFLAGS) $(IDLIBS) -MMD -MP \
+         -D_POSIX_C_SOURCE=199309L -D_XOPEN_SOURCE=600
 WFLAGS = -Wall -Wextra -Wpedantic \
          -Wno-unused-variable -Wno-unused-parameter -Wno-unused-function
-
-CFLAGS_COMMON  = -std=c99 $(WFLAGS) $(INCFLAGS)
-
+CFLAGS_COMMON  = -std=c99 $(WFLAGS)
 CFLAGS_DEBUG   = -O0 -ggdb3 -no-pie $(CFLAGS_COMMON)
 CFLAGS_RELEASE = -O2 $(CFLAGS_COMMON)
 
@@ -24,26 +27,22 @@ else
 	CFLAGS = $(CFLAGS_DEBUG)
 endif
 
-BIN = temu
-INCLUDE = x.h parser.h ring.h term.h utils.h config.h
-OBJ = main.o x.o parser.o ring.o pty.o keys.o buffer.o utils.o
-
 .PHONY: all clean
 
 all: $(BIN)
 
-$(BIN): $(OBJ) Makefile
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $(@) $(OBJ) $(LDFLAGS)
+$(BIN): $(OBJ) | $(OBJ_DIR)
+	$(CC) $(LFLAGS) $^ $(LDLIBS) -o $@
 
-utils.o: utils.c utils.h
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $^ -o $@
 
-buffer.o: $(INCLUDE)
-keys.o:   $(INCLUDE)
-pty.o:    $(INCLUDE)
-ring.o:   $(INCLUDE)
-parser.o: $(INCLUDE)
-x.o:      $(INCLUDE)
-main.o:   $(INCLUDE)
+$(OBJ_DIR):
+	@mkdir -pv $@
 
 clean:
-	rm -f $(BIN) *.o *.bin
+	@echo cleaning...
+	@$(RM) -rv $(OBJ_DIR)
+	@$(RM) -v $(BIN)
+
+-include $(OBJ:.o=.d)
