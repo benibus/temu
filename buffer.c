@@ -4,10 +4,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "utils.h"
+#include <limits.h>
 
+#include "utils.h"
 #include "term.h"
 #include "ring.h"
+#include "parser.h"
 
 static void  tty_alloc_buffers(int);
 static void *tty_realloc_rows(size_t);
@@ -35,6 +37,9 @@ struct tty_state_t_ {
 	int c_idx, c_row, c_col;
 };
 static struct tty_state_t_ ts_;
+
+static char mbuf[BUFSIZ];
+static size_t msize = 0;
 
 #define NEED_WRAP(w_) \
     ( tty.max_cols - ROW(C_ROW).len < (int)(w_) && ROW(C_ROW).len - C_COL <= (int)(w_) )
@@ -113,21 +118,16 @@ tty_write(const char *str, size_t len)
 	int old_cy  = tty.c.y;
 #if 1
 	for (size_t j = 0; j < len; j++) {
-		printf("%s,", asciistr(str[j]));
+		size_t tmp;
+		tmp = snprintf(&mbuf[msize], BUFSIZ-msize-1, "%s%s",
+		    asciistr(str[j]), (j + 1 < len) ? " " : "");
+		msize += tmp;
+		if (!tmp) break;
 	}
-	printf("%s", (len) ? "\n" : "");
-#else
-	for (size_t j = 0; j < len; j++) {
-		bool is_nonp = (!isgraph(str[j]));
-		bool is_lnfd = (str[j] == '\n');
-
-		fprintf(stderr, "%s%s%s%s",
-		    (is_nonp) ? "<" : "",
-		    (str[j] != ' ') ? asciistr(str[j]) : " ",
-		    (is_nonp) ? ">" : "",
-		    (is_lnfd) ? "\n" : "");
-	}
+	msg_log("Input", "%s\n", mbuf);
+	mbuf[(msize=0)] = 0;
 #endif
+
 	for (i = 0; str[i] && i < len; i++) {
 		if (tty.i + tabstop >= tty.max) {
 			tty_alloc_buffers(bitround(tty.i * 2, 1) + 1);
@@ -135,7 +135,9 @@ tty_write(const char *str, size_t len)
 		if (hist_is_empty()) {
 			put_linefeed();
 		}
-		read_codepoint(str[i]);
+		if (!parse_codepoint(str[i])) {
+			read_codepoint(str[i]);
+		}
 	}
 
 	tty.data[tty.i] = 0;
@@ -295,7 +297,7 @@ put_linefeed(void)
 	cursor_move(0, PosRel, +1, PosRel);
 	row_update(row);
 
-	DBG_PRINT(history, 1);
+	DBG_PRINT(history, 0);
 }
 
 void

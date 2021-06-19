@@ -1,0 +1,7 @@
+.*
+!.gitignore
+*.bin
+*.[oa]
+*.so
+temu
+utils.[ch]

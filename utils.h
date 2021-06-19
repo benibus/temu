@@ -48,9 +48,6 @@ typedef int8_t    sbool;
 #define WRAP_INV(n_,m_)    ( ((n_) > 0) ? (n_) - 1 : (m_) - 1 )
 #define ABS(n_)            ( ((n_) < 0) ? -(n_) : (n_) )
 
-#define SET_ON(flags_,mask_)  ( (flags_) |=  (mask_) )
-#define SET_OFF(flags_,mask_) ( (flags_) &= ~(mask_) )
-
 #define MALLOC(p_,n_)  ( xmalloc((n_), sizeof(*(p_))) )
 #define CALLOC(p_,n_)  ( xcalloc((n_), sizeof(*(p_))) )
 #define REALLOC(p_,n_) ( xrealloc((p_), (n_), sizeof(*(p_))) )
@@ -61,8 +58,14 @@ typedef int8_t    sbool;
 #define MEMMOVE(p1_,p2_,n_) ( memmove((p1_), (p2_), (n_) * sizeof(*(p1_))) )
 #define MEMSHIFT(p_,i_,n_)  ( memmove((p_)+(i_), (p_), (n_) * sizeof(*(p_))) )
 
-#define SWAP(type_,v1_,v2_) do { (type_) tmp_ = (v1_); (v1_) = (v2_); (v2_) = tmp_; } while (0)
+#define SWAP(T_,v1_,v2_) do { \
+	T_ tmp_ = (v1_); (v1_) = (v2_); (v2_) = tmp_; \
+} while (0)
 #define FALLBACK(p1_,p2_) ( ((p1_)) ? (p1_) : (p2_) )
+// more parseable syntax for bracketed literals
+#define OBJ(T_,...) ((T_){ __VA_ARGS__ })
+
+#define msizeof(T_,memb_) (sizeof(((T_ *)0)->memb_))
 
 typedef struct String {
 	size_t len;
@@ -80,6 +83,25 @@ struct FileBuf {
 	size_t size;
 	int fd;
 };
+
+typedef struct {
+	uint8_t *data;
+	size_t size, count, max;
+} SBuf;
+typedef struct {
+	uint8_t data[1<<8];
+	size_t size, count, max;
+} SBuf8;
+typedef struct {
+	uint8_t data[1<<12];
+	size_t size, count, max;
+} SBuf12;
+typedef struct {
+	uint8_t data[1<<16];
+	size_t size, count, max;
+} SBuf16;
+#define SBUF(n_) \
+    ((SBuf##n_){ .size = msizeof(SBuf##n_, data[0]), .max = msizeof(SBuf##n_, data), })
 
 void *xmalloc(size_t, size_t);
 void *xcalloc(size_t, size_t);
@@ -99,22 +121,29 @@ char *asciistr(int);
 #define strnmatch(s1_,s2_,n_) ( strncmp((s1_), (s2_), (n_)) == 0 )
 #define memmatch(s1_,s2_,n_)  ( memcmp((s1_), (s2_), (n_)) == 0 )
 
-#if !defined(UTILS_NO_INLINE)
-static inline int  min(int a, int b) { return ((a < b) ? a : b); }
-static inline int  max(int a, int b) { return ((a > b) ? a : b); }
-static inline int  clamp(int n, int a, int b) { return min(max(n, a), b); }
-static inline bool between(int n, int a, int b) { return (n >= a && n <= b); }
-static inline bool xbetween(int n, int a, int b) { return (n > a && n < b); }
-static inline int  wrap(int a, int b) { return ((a + 1 < b) ? a + 1 : 0); }
-static inline int  wrapinv(int a, int b) { return ((a > 0) ? a - 1 : b - 1); }
+#if !defined(BNB_UTILS_NO_INLINE)
+static inline ptrdiff_t min(ptrdiff_t a, ptrdiff_t b) { return ((a < b) ? a : b); }
+static inline ptrdiff_t max(ptrdiff_t a, ptrdiff_t b) { return ((a > b) ? a : b); }
+static inline ptrdiff_t clamp(ptrdiff_t n, ptrdiff_t a, ptrdiff_t b) { return min(max(n, a), b); }
+static inline bool      between(ptrdiff_t n, ptrdiff_t a, ptrdiff_t b) { return (n >= a && n <= b); }
+static inline bool      xbetween(ptrdiff_t n, ptrdiff_t a, ptrdiff_t b) { return (n > a && n < b); }
+static inline ptrdiff_t wrap(ptrdiff_t a, ptrdiff_t b) { return ((a + 1 < b) ? a + 1 : 0); }
+static inline ptrdiff_t wrapinv(ptrdiff_t a, ptrdiff_t b) { return ((a > 0) ? a - 1 : b - 1); }
 #endif
 
 #define msg__begin(pre_,label_,suf_) do { \
-	fprintf(stderr,"%s%s(%s/%s():%d)%s", pre_, label_, __FILE__, __func__, __LINE__, suf_); \
+	fprintf(stderr,"%s%s(%s/%s():%04d)%s", pre_, label_, __FILE__, __func__, __LINE__, suf_); \
 } while (0)
 
 #define msg_error(str_) do { \
 	msg__begin("", "Error", " "); fprintf(stderr, "%s\n", str_); \
+} while (0)
+
+#define msg_log(label_,...) do { \
+	if ((label_)[0]) {                         \
+		msg__begin("\0", label_, " --- "); \
+	}                                          \
+	fprintf(stderr, __VA_ARGS__);              \
 } while (0)
 
 #define error_fatal(msg_,ret_) { msg_error(msg_); exit((ret_)); }

@@ -522,73 +522,24 @@ xev_keypress(XEvent *xevp)
 {
 	log__xevent(xevp);
 	XKeyEvent *event = (XKeyEvent *)xevp;
-	char keystr[16];
-	char buf[64];
-	uint len, keylen;
 	KeySym keysym;
 	Status status;
+	char xbuf[64];
+	char kbuf[32];
+	size_t xlen, klen;
 
-	len = (x11.ime.ic)
-	    ? XmbLookupString(x11.ime.ic, event, buf, sizeof(buf), &keysym, &status)
-	    : XLookupString(event, buf, sizeof(buf), &keysym, NULL);
-#if 1
-	keylen = key_get_string(keysym, event->state, keystr, 16);
-	if (keylen) {
-#if 1
-		fprintf(stderr, "==> ");
-		for (uint i = 0; i < keylen; ++i) {
-			fprintf(stderr, "%03u,", keystr[i]);
-		}
-		fprintf(stderr, "END\n");
-#else
-		fprintf(stderr, "==> %s\n", keystr);
-#endif
-		x_read_string(keystr, keylen);
+	xlen = (x11.ime.ic)
+	    ? XmbLookupString(x11.ime.ic, event, xbuf, ARRLEN(xbuf), &keysym, &status)
+	    : XLookupString(event, xbuf, ARRLEN(xbuf), &keysym, NULL);
+	klen = key_get_string(keysym, event->state, kbuf, ARRLEN(kbuf));
+
+	if (klen) {
+		x_read_string(kbuf, klen);
 		return;
 	}
-
-	if (len == 1) {
-		x_read_string(buf, len);
+	if (xlen == 1) {
+		x_read_string(xbuf, 1);
 	}
-#else
-	if (len == 0) {
-		// temporary
-		switch (keysym) {
-		case XK_Left:  cursor_move_x(-1); break;
-		case XK_Right: cursor_move_x(+1); break;
-		case XK_Up:    cursor_move_y(-1); break;
-		case XK_Down:  cursor_move_y(+1); break;
-
-		case XK_F10:
-			DBG_PRINT(history, 1);
-			break;
-		case XK_F11:
-			DBG_PRINT(cursor, 1);
-			break;
-		case XK_F12:
-			DBG_PRINT(state, 1);
-			break;
-
-		default: return;
-		}
-
-		/* draw(); */
-	} else {
-		switch (keysym) {
-		case XK_BackSpace:
-			{
-			char *seq = "\177";
-			x_read_string(seq, strlen(seq));
-			}
-			break;
-		default:
-			x_read_string(buf, len);
-			break;
-		}
-		/* int c = buf[0]; */
-		/* fprintf(stderr, " * XKeyChar: (%02u) ASCII[%d] = \"%s\"\n", len, c, asciistr(c)); */
-	}
-#endif
 }
 
 void

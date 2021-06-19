@@ -11,7 +11,6 @@ typedef struct attr_t_ {
 
 typedef struct row_t_ {
 	uint offset;
-	/* Cell *data;     // start of row in data stream */
 	int len;        // length of row
 	bool is_static; // whether the row is hard-wrapped
 } Row;
@@ -32,6 +31,7 @@ typedef struct pty_t_ {
 typedef struct tty_t_ {
 	Cell *data;        // text data stream
 	Attr *attr;         // text attributes stream
+	bool *tabs;
 	HistBuf hist;       // ring buffer of static rows (scrollback history)
 	struct {
 		Row *buf;   // buffer of rows in the data stream
@@ -39,8 +39,8 @@ typedef struct tty_t_ {
 	} rows;
 	struct {
 		int i;
-		int start;
 		int x, y;
+		int start;
 	} c;                // cursor
 	int i, max;         // current/max index of data stream
 	int max_cols, max_rows; // current cell dimensions (updated by X11)

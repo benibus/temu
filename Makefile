@@ -25,8 +25,8 @@ else
 endif
 
 BIN = temu
-INCLUDE = x.h ring.h term.h utils.h config.h
-OBJ = main.o x.o ring.o pty.o keys.o buffer.o utils.o
+INCLUDE = x.h parser.h ring.h term.h utils.h config.h
+OBJ = main.o x.o parser.o ring.o pty.o keys.o buffer.o utils.o
 
 .PHONY: all clean
 
@@ -41,6 +41,7 @@ buffer.o: $(INCLUDE)
 keys.o:   $(INCLUDE)
 pty.o:    $(INCLUDE)
 ring.o:   $(INCLUDE)
+parser.o: $(INCLUDE)
 x.o:      $(INCLUDE)
 main.o:   $(INCLUDE)
 
