@@ -45,7 +45,7 @@ typedef struct parser_s_ {
 	size_t idx;
 	size_t args[MAX_ARGS];
 	uint narg;
-	int lastch;
+	int lastc;
 } Parser;
 
 int parse_codepoint(int);
