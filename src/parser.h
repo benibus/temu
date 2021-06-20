@@ -25,29 +25,6 @@ enum ctrlcodes_e_ {
 	CtrlAPC = 0x9f
 };
 
-enum stateflags_e_ {
-	StateDefault,
-	StateESC = (1 << 0),
-	StateCSI = (1 << 1),
-	StateDEC = (1 << 2),
-	StateSTR = (1 << 3),
-	StateMax = (1 << 4)
-};
-
-#define STATE_MASK (StateMax-1)
-#define ESC_MASK   (STATE_MASK)
-
-#define MAX_ARGS 256
-
-typedef struct parser_s_ {
-	u32 state;
-	char buf[BUFSIZ];
-	size_t idx;
-	size_t args[MAX_ARGS];
-	uint narg;
-	int lastc;
-} Parser;
-
 int parse_codepoint(int);
 
 #endif
