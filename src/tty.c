@@ -9,7 +9,6 @@
 
 #include "utils.h"
 #include "term.h"
-#include "parser.h"
 
 #define SET(base_,mask_,opt_) \
 ( (base_) = ((opt_)) ? ((base_) | (mask_)) : ((base_) & ~(mask_)) )
@@ -23,6 +22,30 @@
 	fprintf(stderr, "\n");                                 \
 } while (0)
 
+enum ctrlcodes_e_ {
+	CtrlNUL,
+	CtrlBEL = '\a',
+	CtrlBS  = '\b',
+	CtrlHT  = '\t',
+	CtrlLF  = '\n',
+	CtrlVT  = '\v',
+	CtrlFF  = '\f',
+	CtrlCR  = '\r',
+	CtrlSO  = 0x0e,
+	CtrlSI  = 0x0f,
+	CtrlCAN = 0x18,
+	CtrlSUB = 0x1a,
+	CtrlESC = 0x1b,
+	CtrlNEL = 0x85,
+	CtrlHTS = 0x88,
+	CtrlDCS = 0x90,
+	CtrlSOS = 0x98,
+	CtrlST  = 0x9c,
+	CtrlOSC = 0x9d,
+	CtrlPM  = 0x9e,
+	CtrlAPC = 0x9f
+};
+
 enum stateflags_e_ {
 	StateDefault,
 	StateESC = (1 << 0),
@@ -32,11 +55,9 @@ enum stateflags_e_ {
 	StateMax = (1 << 4)
 };
 
-#define STATE_MASK (StateMax-1)
-#define ESC_MASK   (STATE_MASK)
+#define ESC_MASK (StateMax-1)
 
 #define MAX_ARGS 256
-
 typedef struct parser_s_ {
 	u32 state;
 	char buf[BUFSIZ];
@@ -46,14 +67,58 @@ typedef struct parser_s_ {
 	int lastc;
 } Parser;
 
-static Parser parser = { 0 };
 static int g_ucode = 0; // debug only
+
+static Parser parser = { 0 };
+static char mbuf[BUFSIZ];
+static size_t msize = 0;
 
 static void state_set(uint, bool, int);
 static void state_reset(void);
 static void state_set_esc(bool);
 static void buf_push(int);
 static void buf_reset(void);
+static int parse_codepoint(int);
+
+bool
+tty_init(int cols, int rows)
+{
+	MEMCLEAR(&tty, 1);
+	tty.max_cols = cols;
+	tty.max_rows = rows;
+	stream_realloc(bitround(histsize * tty.max_cols, 1) + 1);
+
+	return (tty.data != NULL);
+}
+
+size_t
+tty_write(const char *str, size_t len)
+{
+	size_t i = 0;
+	{
+		for (size_t j = 0; j < len; j++) {
+			size_t tmp;
+			tmp = snprintf(&mbuf[msize], BUFSIZ-msize-1, "%s%s",
+			    asciistr(str[j]), (j + 1 < len) ? " " : "");
+			msize += tmp;
+			if (!tmp) break;
+		}
+		msg_log("Input", "%s\n", mbuf);
+		mbuf[(msize=0)] = 0;
+	}
+	for (i = 0; str[i] && i < len; i++) {
+		if (tty.i + tabstop >= tty.max) {
+			stream_realloc(bitround(tty.i * 2, 1) + 1);
+		}
+		if (!parse_codepoint(str[i])) {
+			stream_write(str[i]);
+		}
+	}
+
+	tty.data[tty.i] = 0;
+
+	return i;
+}
 
 void
 buf_reset(void)
@@ -135,13 +200,21 @@ parse_codepoint(int ucode)
 		switch (ucode) {
 		case CtrlCAN:
 		case CtrlSUB:
-			state_reset();
 			PRINTSEQ("ESC:CAN/SUB>END");
+			state_reset();
 			break;
 		case '[':
 			PRINTSEQ("ESC>CSI");
 			state_set_esc(false);
 			state_set(StateCSI, true, ucode);
+			break;
+		case 'E':
+			PRINTSEQ("ESC:NEL");
+			state_reset();
+			break;
+		case 'H':
+			PRINTSEQ("ESC:HTS");
+			state_reset();
 			break;
 		default:
 			goto quit;
@@ -316,4 +389,3 @@ state_set_esc(bool opt)
 }
 
 #undef SET
-

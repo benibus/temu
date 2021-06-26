@@ -66,6 +66,8 @@ int    pty_init(char *);
 size_t pty_read(void);
 void   pty_resize(int, int, int, int);
 size_t pty_write(const char *, size_t);
+int    stream_write(int);
+void   stream_realloc(size_t);
 void   screen_set_dirty(int);
 void   screen_set_all_dirty(void);
 void   screen_set_clean(void);

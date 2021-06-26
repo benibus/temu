@@ -9,18 +9,13 @@
 #include "utils.h"
 #include "term.h"
 #include "ring.h"
-#include "parser.h"
 
-static void  tty_alloc_buffers(int);
-static void *tty_realloc_rows(size_t);
-static void  tty_record_state(void);
-
-static int   read_codepoint(int);
 static void  put_glyph(int, uint);
 static void  put_tab(void);
 static void  put_linefeed(void);
 static Row  *row_append(CellPos, bool);
 static void  row_update(Row *);
+static void *rows_realloc(size_t);
 static void  set_cell_value(CellPos, int);
 static void  screen_update(void);
 static int   cursor_set_index(void);
@@ -30,135 +25,21 @@ static void dbg__print_row(int);
 
 enum { PosAbs, PosRel };
 
-struct tty_state_t_ {
-	int idx;
-	int num_rows;
-	int top, bot, anchor;
-	int c_idx, c_row, c_col;
-};
-static struct tty_state_t_ ts_;
-
 static char mbuf[BUFSIZ];
 static size_t msize = 0;
 
 #define NEED_WRAP(w_) \
     ( tty.max_cols - ROW(C_ROW).len < (int)(w_) && ROW(C_ROW).len - C_COL <= (int)(w_) )
 
-bool
-tty_init(int cols, int rows)
-{
-	MEMCLEAR(&tty, 1);
-	tty.max_cols = cols;
-	tty.max_rows = rows;
-
-	tty_alloc_buffers(bitround(histsize * tty.max_cols, 1) + 1);
-
-	return (tty.data != NULL);
-}
-
-void
-tty_alloc_buffers(int max)
-{
-	if (max == 0) {
-		xfree(tty.data);
-		xfree(tty.rows.buf);
-		xfree(tty.hist.buf);
-		tty.max = tty.i = 0;
-		tty.rows.max = tty.rows.n = 0;
-	} else {
-		if (!tty.data) {
-			tty.data = CALLOC(tty.data, max);
-			tty.rows.buf = CALLOC(tty.rows.buf, histsize);
-			tty.rows.max = histsize;
-			hist_init(histsize + 1);
-		} else {
-			tty.data = REALLOC(tty.data, max);
-			if (max > tty.max) {
-				MEMCLEAR(&tty.data[tty.i], max - tty.i);
-			}
-		}
-	}
-
-	tty.max = max;
-}
-
-void *
-tty_realloc_rows(size_t max)
-{
-	tty.rows.buf = REALLOC(tty.rows.buf, max);
-	if ((int)max > tty.rows.max) {
-		MEMCLEAR(&tty.rows.buf[tty.rows.n], max - tty.rows.n);
-	}
-
-	tty.rows.max = max;
-
-	return tty.rows.buf;
-}
-
-void
-tty_record_state(void)
-{
-	ts_.idx      = tty.i;
-	ts_.num_rows = tty.rows.n;
-	ts_.top      = tty.top;
-	ts_.bot      = tty.bot;
-	ts_.anchor   = tty.anchor;
-	ts_.c_idx    = C_IDX;
-	ts_.c_col    = C_COL;
-	ts_.c_row    = C_ROW;
-}
-
-size_t
-tty_write(const char *str, size_t len)
-{
-	size_t i = 0;
-
-	int old_idx = tty.i;
-	int old_top = tty.top;
-	int old_cy  = tty.c.y;
-#if 1
-	for (size_t j = 0; j < len; j++) {
-		size_t tmp;
-		tmp = snprintf(&mbuf[msize], BUFSIZ-msize-1, "%s%s",
-		    asciistr(str[j]), (j + 1 < len) ? " " : "");
-		msize += tmp;
-		if (!tmp) break;
-	}
-	msg_log("Input", "%s\n", mbuf);
-	mbuf[(msize=0)] = 0;
-#endif
-
-	for (i = 0; str[i] && i < len; i++) {
-		if (tty.i + tabstop >= tty.max) {
-			tty_alloc_buffers(bitround(tty.i * 2, 1) + 1);
-		}
-		if (hist_is_empty()) {
-			put_linefeed();
-		}
-		if (!parse_codepoint(str[i])) {
-			read_codepoint(str[i]);
-		}
-	}
-
-	tty.data[tty.i] = 0;
-
-	if (tty.top != old_top) {
-		screen_set_all_dirty();
-	} else if (tty.i != old_idx || C_ROW != old_cy + old_top) {
-		screen_set_dirty(MIN(tty.c.y, old_cy));
-	} else {
-		screen_set_clean();
-	}
-
-	return i;
-}
-
 int
-read_codepoint(int codept)
+stream_write(int codept)
 {
 	int i_ = tty.i;
 
 	/* fprintf(stderr, "%s * [%05d] = #%d\n%s", "\n", tty.i, codept, "\n"); */
+	if (hist_is_empty()) {
+		put_linefeed();
+	}
 
 	switch (codept) {
 	case '\r':
@@ -190,12 +71,38 @@ read_codepoint(int codept)
 	return tty.i - i_;
 }
 
+void
+stream_realloc(size_t max)
+{
+	if (max == 0) {
+		xfree(tty.data);
+		xfree(tty.rows.buf);
+		xfree(tty.hist.buf);
+		tty.max = tty.i = 0;
+		tty.rows.max = tty.rows.n = 0;
+	} else {
+		if (!tty.data) {
+			tty.data = CALLOC(tty.data, max);
+			tty.rows.buf = CALLOC(tty.rows.buf, histsize);
+			tty.rows.max = histsize;
+			hist_init(histsize + 1);
+		} else {
+			tty.data = REALLOC(tty.data, max);
+			if ((ssize_t)max > tty.max) {
+				MEMCLEAR(&tty.data[tty.i], max - tty.i);
+			}
+		}
+	}
+
+	tty.max = max;
+}
+
 Row *
 row_append(CellPos cell, bool is_static)
 {
 	tty.rows.n += (!is_static || (ROW(tty.rows.n).len && !hist_is_empty()));
 	if (tty.rows.n == tty.rows.max) {
-		tty_realloc_rows(tty.rows.max * 2);
+		rows_realloc(tty.rows.max * 2);
 	}
 	int index = tty.rows.n;
 
@@ -232,6 +139,19 @@ row_update(Row *row)
 	}
 
 	return;
+}
+
+void *
+rows_realloc(size_t max)
+{
+	tty.rows.buf = REALLOC(tty.rows.buf, max);
+	if ((ssize_t)max > tty.rows.max) {
+		MEMCLEAR(&tty.rows.buf[tty.rows.n], max - tty.rows.n);
+	}
+
+	tty.rows.max = max;
+
+	return tty.rows.buf;
 }
 
 void

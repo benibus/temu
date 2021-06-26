@@ -32,7 +32,7 @@
 #define FILE_IN "tests/readme1.txt"
 
 enum WM_ATOMS { WM_Protocols, WM_Delete, WM_Name, WM_State, NUM_WM };
-struct X11 {
+static struct {
 	Display *dpy;
 	Window root;
 	int sid; // screen ID
@@ -49,7 +49,7 @@ struct X11 {
 	int w, h;
 	char *fontstr;
 	char *wmtitle, *wmname, *wmclass;
-};
+} x11 = { 0 };
 
 enum { COLOR_BG, COLOR_FG, NUM_COLOR };
 static struct {
@@ -58,7 +58,7 @@ static struct {
 	XftColor color[NUM_COLOR];
 } rsc = { 0 }; // global resources
 
-struct Win {
+static struct {
 	Window wid;
 	Drawable map;
 	XftDraw *render;
@@ -69,7 +69,7 @@ struct Win {
 	int cols, rows; // number of columns/rows
 	int bpx;        // border width (pixels)
 	bool up;        // session status
-} Win;
+} win = { 0 };
 
 static void draw_clear(uint, uint);
 static void draw_cursor(Cell, uint, uint);
@@ -89,8 +89,8 @@ static ulong rgb2ul(u8, u8, u8);
 
 static void log__xevent(XEvent *);
 
-static struct X11 x11 = { 0 }; // X11 Defaults
-static struct Win win = { 0 }; // Main session
+/* static struct X11 x11 = { 0 }; // X11 Defaults */
+/* static struct Win win = { 0 }; // Main session */
 TTY tty = { 0 };
 PTY pty = { 0 };
 
@@ -438,7 +438,14 @@ x_init_session(void)
 	/*
 	 * Setup graphics context and pixel buffers
 	 */
-	win.gc = DefaultGC(x11.dpy, x11.sid);
+	{
+		XGCValues gcvals;
+
+		memset(&gcvals, 0, sizeof(gcvals));
+		gcvals.graphics_exposures = False;
+
+		win.gc = XCreateGC(x11.dpy, x11.root, GCGraphicsExposures, &gcvals);
+	}
 
 	win.map = XCreatePixmap(x11.dpy, win.wid,
 	    win.w, win.h, XDefaultDepth(x11.dpy, x11.sid));

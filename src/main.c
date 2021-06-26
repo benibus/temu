@@ -9,11 +9,8 @@
 #include "x.h"
 
 enum {
-	COLOR_A0, COLOR_A1, COLOR_A2, COLOR_A3, COLOR_A4, COLOR_A5, COLOR_A6, COLOR_A7,
-	COLOR_B0, COLOR_B1, COLOR_B2, COLOR_B3, COLOR_B4, COLOR_B5, COLOR_B6, COLOR_B7,
 	COLOR_BG = 256,
 	COLOR_FG = 257,
-
 	NUM_COLOR
 };
 
@@ -32,7 +29,6 @@ typedef struct Config {
 	struct { int x, y; } position;
 	struct { uint min, max; } latency;
 } Config;
-
 // NOTE: must include *after* definitions
 #include "config.h"
 
