@@ -1,22 +1,22 @@
 #ifndef CONFIG_H__
 #define CONFIG_H__
 
-static Config cfg = {
+static Config config = {
 	.wm_class = "Temu",
-	.wm_name = "win_floating",
+	.wm_instance = "win_floating",
 	.wm_title = "temu",
 	.geometry = NULL,
-	.font = "monospace:size=9",
+	.font = "monospace:size=10.5",
 	.colors = {
-		[COLOR_BG] = "black",
-		[COLOR_FG] = "white"
+		[0] = "black",
+		[1] = "white"
 	},
 	.shell = "/bin/dash",
 	.tabstop = 8,
 	.border_px = 0,
 	.history_size = 120,
-	.columns = 120,
-	.rows = 40,
+	.columns = 80,
+	.rows = 24,
 	.position = { .x = 0, .y = 0 },
 	.latency = { .min = 8, .max = 33 }
 };

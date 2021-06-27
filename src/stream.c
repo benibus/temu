@@ -245,7 +245,7 @@ put_glyph(int glyph, uint width)
 void
 put_tab(void)
 {
-	uint tab_len = TAB_LEN(tty.c.i - streamidx_v(tty.top + tty.c.i, 0));
+	uint tab_len = TAB_LEN(tty.c.i - streamidx_v(tty.top + tty.c.y, 0));
 
 	for (uint n = 0; n < tab_len; n++) {
 		if (tty.c.x == tty.max_cols - 1)

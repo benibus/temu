@@ -95,16 +95,20 @@ size_t
 tty_write(const char *str, size_t len)
 {
 	size_t i = 0;
+	static size_t count = 0;
 	{
 		for (size_t j = 0; j < len; j++) {
-			size_t tmp;
-			tmp = snprintf(&mbuf[msize], BUFSIZ-msize-1, "%s%s",
-			    asciistr(str[j]), (j + 1 < len) ? " " : "");
+			long tmp;
+			if (msize >= LEN(mbuf)-1-1)
+				break;
+			tmp = snprintf(&mbuf[msize], LEN(mbuf)-msize-1-1, "%s ", asciistr(str[j]));
+			/* printf("%zu/%zu\n", msize, LEN(mbuf)); */
+			if (tmp <= 0) break;
 			msize += tmp;
-			if (!tmp) break;
 		}
 		msg_log("Input", "%s\n", mbuf);
-		mbuf[(msize=0)] = 0;
+		msize = 0;
+		mbuf[msize] = 0;
 	}
 	for (i = 0; str[i] && i < len; i++) {
 		if (tty.i + tabstop >= tty.max) {
