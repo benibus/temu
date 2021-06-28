@@ -31,19 +31,19 @@ typedef struct pty_t_ {
 typedef struct tty_t_ {
 	Cell *data;        // text data stream
 	Attr *attr;         // text attributes stream
+	int size, max;         // current/max index of data stream
 	bool *tabs;
 	HistBuf hist;       // ring buffer of static rows (scrollback history)
 	struct {
 		Row *buf;   // buffer of rows in the data stream
-		int n, max; // current/max number of rows in buffer
+		int count, max; // current/max number of rows in buffer
 	} rows;
 	struct {
-		int i;
-		int x, y;
+		int offset;
+		int col, row;
 		int start;
 	} c;                // cursor
-	int i, max;         // current/max index of data stream
-	int max_cols, max_rows; // current cell dimensions (updated by X11)
+	int maxcols, maxrows; // current cell dimensions (updated by X11)
 	int top, bot;       // top and bottom screen row numbers
 	int anchor;         // the minimum top-of-screen row between resets, assuming no scrollback
 	int scroll;         // current number of scrollback rows
@@ -72,13 +72,9 @@ void   screen_set_dirty(int);
 void   screen_set_all_dirty(void);
 void   screen_set_clean(void);
 
-CellPos cellpos_p(Cell *);
-CellPos cellpos_s(size_t);
-CellPos cellpos_v(size_t, size_t);
-Cell   *streamptr_s(size_t);
-Cell   *streamptr_v(size_t, size_t);
-size_t  streamidx_p(const Cell *);
-size_t  streamidx_v(size_t, size_t);
+size_t key_get_sequence(uint, uint, char *, size_t);
+
+size_t stream_get_row(uint, char **);
 
 extern TTY tty;
 extern PTY pty;
@@ -120,11 +116,15 @@ void dbg_print_state(const char *, const char *, int);
 
 #define PRINTSRC do { fprintf(stderr, "==> %s:%d/%s()\n", __FILE__, __LINE__, __func__); } while (0)
 
+#if (DEBUG)
 #define DBG_PRINT(group_,force_) do { \
   if (DEBUG || (force_)) { \
     fprintf(stderr, "\nTTY(%s) --- ", #group_); \
     dbg_print_##group_(__FILE__, __func__, __LINE__); \
   } \
 } while (0)
+#else
+#define DBG_PRINT(group_,force_)
+#endif
 
 #endif

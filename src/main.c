@@ -177,7 +177,7 @@ run(void)
 	double timeout = min_latency / 1E3;
 
 	pty_init(config.shell);
-	pty_resize(win->w, win->h, tty.max_cols, tty.max_rows);
+	pty_resize(win->w, win->h, tty.maxcols, tty.maxrows);
 
 	while (win->state) {
 		FD_ZERO(&rset);
@@ -200,22 +200,29 @@ void
 render(void)
 {
 	wsr_clear_screen(rc);
-	for (int n = tty.top; n <= tty.bot; n++) {
-		Row *p = &ROW(n);
-		if (!p->len || IS_BLANK(*p)) {
-			continue;
+	for (int n = 0; n <= tty.bot - tty.top; n++) {
+		size_t len;
+		char *ptr;
+		if ((len = stream_get_row(tty.top + n, &ptr))) {
+			wsr_draw_string(rc, ptr, len, 0, n, false);
 		}
-		wsr_draw_string(rc, streamptr_s(p->offset), p->len, 0, n - tty.top, false);
 	}
-	wsr_fill_region(rc, tty.c.x, tty.c.y, tty.c.x + 1, tty.c.y + 1, cw, ch);
+	wsr_fill_region(rc,
+	    tty.c.col, tty.c.row - tty.top,
+	    tty.c.col + 1, tty.c.row - tty.top + 1,
+	    cw, ch);
 	ws_swap_buffers(win);
 }
 
 void
 event_key_press(int key, int mod, char *buf, int len)
 {
-	printf("\"%s\"\n", buf);
-	if (len == 1) {
+	char seq[64];
+	int seqlen = 0;
+
+	if ((seqlen = key_get_sequence(key, mod, seq, LEN(seq)))) {
+		pty_write(seq, seqlen);
+	} else if (len == 1) {
 		pty_write(buf, len);
 	}
 }

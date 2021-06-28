@@ -13,37 +13,58 @@
 static void  put_glyph(int, uint);
 static void  put_tab(void);
 static void  put_linefeed(void);
-static Row  *row_append(CellPos, bool);
+static Row  *row_append(Cell *, bool);
 static void  row_update(Row *);
 static void *rows_realloc(size_t);
-static void  set_cell_value(CellPos, int);
+static void  set_cell_value(Cell *, int);
 static void  screen_update(void);
 static int   cursor_set_index(void);
 static void  cursor_move(int, uint, int, uint);
 
 static void dbg__print_row(int);
 
-enum { PosAbs, PosRel };
+enum { POS_ABS, POS_REL };
 
 static char mbuf[BUFSIZ];
 static size_t msize = 0;
 
-#define NEED_WRAP(w_) \
-    ( tty.max_cols - ROW(C_ROW).len < (int)(w_) && ROW(C_ROW).len - C_COL <= (int)(w_) )
+static inline Cell *
+cellptr(size_t record, size_t offset)
+{
+	Cell *ptr = tty.data + tty.rows.buf[record].offset + offset;
+
+	return (ptr <= tty.data + tty.size) ? ptr : NULL;
+}
+
+static inline Row *
+rowptr(size_t record)
+{
+	Row *ptr = tty.rows.buf + record;
+
+	return (ptr <= tty.rows.buf + tty.rows.count) ? ptr : NULL;
+}
+
+static inline size_t
+celloffset(Cell *cell)
+{
+	ptrdiff_t diff = ptrcmp(cell, cellptr(0, 0), sizeof(*cell));
+	ASSERT(BETWEEN(diff, 0, tty.size));
+
+	return diff;
+}
 
 int
 stream_write(int codept)
 {
-	int i_ = tty.i;
+	int i_ = tty.size;
 
-	/* fprintf(stderr, "%s * [%05d] = #%d\n%s", "\n", tty.i, codept, "\n"); */
 	if (hist_is_empty()) {
 		put_linefeed();
 	}
 
 	switch (codept) {
 	case '\r':
-		cursor_move(0, PosAbs, 0, PosRel);
+		cursor_move(0, POS_ABS, 0, POS_REL);
 		break;
 	case '\n':
 	case '\v':
@@ -51,7 +72,7 @@ stream_write(int codept)
 		put_linefeed();
 		break;
 	case '\b':
-		cursor_move(-1, PosRel, 0, PosRel);
+		cursor_move(-1, POS_REL, 0, POS_REL);
 		break;
 	case '\t':
 		put_tab();
@@ -68,7 +89,7 @@ stream_write(int codept)
 
 	DBG_PRINT(state, 0);
 
-	return tty.i - i_;
+	return tty.size - i_;
 }
 
 void
@@ -78,18 +99,18 @@ stream_realloc(size_t max)
 		xfree(tty.data);
 		xfree(tty.rows.buf);
 		xfree(tty.hist.buf);
-		tty.max = tty.i = 0;
-		tty.rows.max = tty.rows.n = 0;
+		tty.max = tty.size = 0;
+		tty.rows.max = tty.rows.count = 0;
 	} else {
 		if (!tty.data) {
-			tty.data = CALLOC(tty.data, max);
-			tty.rows.buf = CALLOC(tty.rows.buf, histsize);
+			tty.data = xcalloc(max, sizeof(*tty.data));
+			tty.rows.buf = xcalloc(histsize, sizeof(*tty.rows.buf));
 			tty.rows.max = histsize;
 			hist_init(histsize + 1);
 		} else {
-			tty.data = REALLOC(tty.data, max);
+			tty.data = xrealloc(tty.data, max, sizeof(*tty.data));
 			if ((ssize_t)max > tty.max) {
-				MEMCLEAR(&tty.data[tty.i], max - tty.i);
+				MEMCLEAR(&tty.data[tty.size], max - tty.size);
 			}
 		}
 	}
@@ -98,44 +119,62 @@ stream_realloc(size_t max)
 }
 
 Row *
-row_append(CellPos cell, bool is_static)
+row_append(Cell *cell, bool is_static)
 {
-	tty.rows.n += (!is_static || (ROW(tty.rows.n).len && !hist_is_empty()));
-	if (tty.rows.n == tty.rows.max) {
+
+	if (!is_static || (rowptr(tty.rows.count)->len && !hist_is_empty())) {
+		tty.rows.count++;
+	}
+
+	if (tty.rows.count == tty.rows.max) {
 		rows_realloc(tty.rows.max * 2);
 	}
-	int index = tty.rows.n;
 
-	ROW(index).offset = cell.idx;
-	/* ROW(index).data = cell.ptr; */
-	ROW(index).len  = 0;
-	ROW(index).is_static = is_static;
+	Row *row = rowptr(tty.rows.count);
 
-	if (is_static) {
-		hist_append(index);
+	row->offset = celloffset(cell);
+	row->len = 0;
+	row->is_static = is_static;
+
+	if (row->is_static) {
+		hist_append(row->offset);
 	}
 
-	DBG_PRINT(history, 0);
+	return row;
+}
 
-	return &ROW(index);
+size_t
+stream_get_row(uint n, char **str)
+{
+	if ((int)n <= tty.rows.count) {
+		Row *row = rowptr(n);
+		char *cell = cellptr(0, row->offset);
+
+		if (row->len && *cell != '\n') {
+			if (str) *str = cell;
+			return row->len;
+		}
+	}
+
+	if (str) *str = NULL;
+	return 0;
 }
 
 void
 row_update(Row *row)
 {
-	const Row *lastrow = &ROW(tty.rows.n);
-	ASSERT(row == lastrow);
+	ASSERT(row == rowptr(tty.rows.count));
 
-	int idx = row->offset;
-	int len = clamp(tty.c.i - idx, 0, tty.max_cols - 1);
+	int offset = row->offset;
+	int len = clamp(tty.c.offset - offset, 0, tty.maxcols - 1);
 	int tmp = row->len;
 
 	if (!len) {
-		row->len = (streamptr_s(row->offset)[0] == '\n') ? 1 : len;
-	} else if (len < tty.max_cols - 1) {
+		row->len = (*cellptr(0, row->offset) == '\n') ? 1 : len;
+	} else if (len < tty.maxcols - 1) {
 		row->len = len;
 	} else {
-		row->len = (tty.c.i < tty.i) ? tty.max_cols : len;
+		row->len = (tty.c.offset < tty.size) ? tty.maxcols : len;
 	}
 
 	return;
@@ -144,9 +183,9 @@ row_update(Row *row)
 void *
 rows_realloc(size_t max)
 {
-	tty.rows.buf = REALLOC(tty.rows.buf, max);
+	tty.rows.buf = xrealloc(tty.rows.buf, max, sizeof(*tty.rows.buf));
 	if ((ssize_t)max > tty.rows.max) {
-		MEMCLEAR(&tty.rows.buf[tty.rows.n], max - tty.rows.n);
+		MEMCLEAR(&tty.rows.buf[tty.rows.count], max - tty.rows.count);
 	}
 
 	tty.rows.max = max;
@@ -158,63 +197,66 @@ void
 screen_update(void)
 {
 	// increase top row anchor if necessary
-	tty.anchor = max(tty.anchor, tty.rows.n - tty.max_rows + 1);
-	tty.anchor = CLAMP(tty.anchor, 0, tty.rows.n);
+	tty.anchor = max(tty.anchor, tty.rows.count - tty.maxrows + 1);
+	tty.anchor = clamp(tty.anchor, 0, tty.rows.count);
 
-	tty.bot = tty.rows.n; // not affected by scrollback
-	tty.top = MAX(0, tty.anchor - tty.scroll);
+	tty.bot = tty.rows.count; // not affected by scrollback
+	tty.top = max(0, tty.anchor - tty.scroll);
 }
 
 int
 cursor_set_index(void)
 {
-	uint n = C_ROW;
-	tty.c.i = streamidx_v(C_ROW, C_COL);
+	Row *row = rowptr(tty.c.row);
 
-	ASSERT(BETWEEN(tty.c.i, 0, tty.i));
+	tty.c.offset = row->offset + tty.c.col;
+	ASSERT(BETWEEN(tty.c.offset, 0, tty.size));
 
-	while (n > 0 && !ROW(n).is_static) n--;
+	for (int n = tty.c.row; n > tty.top; n--) {
+		if ((row = rowptr(n))->is_static) {
+			break;
+		}
+	}
 
-	tty.c.start = streamidx_v(n, 0);
+	tty.c.start = row->offset;
 
-	return tty.c.i;
+	return tty.c.offset;
 }
 
 void
 cursor_move(int x, uint opt_x, int y, uint opt_y)
 {
-	uint dest_x = max(0, x + ((opt_x) ? tty.c.x : 0));
-	uint dest_y = max(0, y + ((opt_y) ? tty.c.y : 0));
+	uint dest_x = max(0, x + ((opt_x) ? tty.c.col : 0));
+	uint dest_y = max(0, y + ((opt_y) ? tty.c.row : 0));
 
 	screen_update();
 
-	tty.c.y = clamp(dest_y, 0, tty.bot - tty.top);
-	tty.c.x = clamp(dest_x, 0, tty.max_cols - 1);
+	tty.c.row = clamp(dest_y, tty.top, tty.bot);
+	tty.c.col = clamp(dest_x, 0, tty.maxcols - 1);
 
 	cursor_set_index();
 }
 
 void
-set_cell_value(CellPos cell, int glyph)
+set_cell_value(Cell *cell, int glyph)
 {
-	int tmp = cell.ptr[0];
-
-	cell.ptr[0] = glyph;
-	tty.i += ((int)cell.idx == tty.i);
-	tty.data[tty.i] = 0;
+	int tmp = *cell;
+	*cell = glyph;
+	tty.size += (cell == cellptr(0, tty.size));
+	tty.data[tty.size] = 0;
 }
 
 void
 put_linefeed(void)
 {
-	ASSERT(BETWEEN(tty.rows.n, 0, tty.rows.max));
+	ASSERT(BETWEEN(tty.rows.count, 0, tty.rows.max));
 
-	Row *row = &ROW(C_ROW);
-	CellPos cell = cellpos_s(row->offset + row->len);
+	Cell *cell = cellptr(tty.c.row, rowptr(tty.c.row)->len);
 
-	row = row_append(cell, true);
+	Row *row = row_append(cell, true);
 	set_cell_value(cell, '\n');
-	cursor_move(0, PosRel, +1, PosRel);
+	cursor_move(0, POS_REL, +1, POS_REL);
+
 	row_update(row);
 
 	DBG_PRINT(history, 0);
@@ -225,17 +267,21 @@ put_glyph(int glyph, uint width)
 {
 	ASSERT(width);
 	// if we need to wrap, start the new row at the cell following the cursor, not the current cell
-	int idx = tty.c.i + (NEED_WRAP(width) ? (int)width : 0);
+	Row *row = rowptr(tty.c.row);
+	int offset = tty.c.offset;
 
-	Row *row = &ROW(C_ROW);
-	CellPos cell = cellpos_s(idx);
+	if (tty.maxcols - row->len < (int)width && row->len - tty.c.col <= (int)width) {
+		offset += width;
+	}
+
+	Cell *cell = cellptr(0, offset);
 	set_cell_value(cell, glyph);
 
-	if (idx > tty.c.i) { // wrap to next row
+	if (offset > tty.c.offset) { // wrap to next row
 		row = row_append(cell, false);
-		cursor_move(width, PosAbs, +1, PosRel);
+		cursor_move(width, POS_ABS, +1, POS_REL);
 	} else {
-		cursor_move(+1, PosRel, 0, PosRel);
+		cursor_move(+1, POS_REL, 0, POS_REL);
 	}
 	row_update(row);
 
@@ -245,80 +291,13 @@ put_glyph(int glyph, uint width)
 void
 put_tab(void)
 {
-	uint tab_len = TAB_LEN(tty.c.i - streamidx_v(tty.top + tty.c.y, 0));
+	uint tab_len = TAB_LEN(tty.c.offset - rowptr(tty.c.row)->offset);
 
 	for (uint n = 0; n < tab_len; n++) {
-		if (tty.c.x == tty.max_cols - 1)
+		if (tty.c.col == tty.maxcols - 1)
 			break;
 		put_glyph(' ', 1);
 	}
-}
-
-Cell *
-streamptr_s(size_t offset)
-{
-	return &tty.data[offset];
-}
-
-Cell *
-streamptr_v(size_t row, size_t col)
-{
-	return &tty.data[ROW(row).offset+col];
-}
-
-size_t
-streamidx_v(size_t row, size_t col)
-{
-	return ROW(row).offset + col;
-}
-
-size_t
-streamidx_p(const Cell *ptr)
-{
-	return MEMLEN(ptr, streamptr_v(0, 0));
-}
-
-CellPos
-cellpos_p(Cell *ptr)
-{
-	ASSERT(ptr);
-
-	CellPos cell = {
-		.ptr = ptr,
-		.idx = MEMLEN(cell.ptr, streamptr_v(0, 0))
-	};
-
-	ASSERT(cell.ptr);
-
-	return cell;
-}
-
-CellPos
-cellpos_s(size_t idx)
-{
-	ASSERT((int)idx <= tty.i);
-
-	CellPos cell = {
-		.ptr = streamptr_s(idx),
-		.idx = idx
-	};
-
-	ASSERT(cell.ptr);
-
-	return cell;
-}
-
-CellPos
-cellpos_v(size_t col, size_t row)
-{
-	CellPos cell = {
-		.ptr = streamptr_v(row, col),
-		.idx = MEMLEN(cell.ptr, streamptr_v(0, 0))
-	};
-
-	ASSERT(cell.ptr);
-
-	return cell;
 }
 
 void
@@ -339,19 +318,20 @@ screen_set_clean(void)
 	tty.dirty = tty.bot - tty.top;
 }
 
+#if 0
 void
 dbg_print_state(const char *srcfile, const char *srcfunc, int srcline)
 {
 	fprintf(stderr, "buf: (%04d/%04d) | ",
-	    tty.i, tty.max);
+	    tty.size, tty.max);
 	fprintf(stderr, "crs: { (%04d/%04d), %03d|%03d } | ",
-	    C_IDX, tty.i, tty.c.x, tty.c.y);
+	    C_IDX, tty.size, tty.c.col, tty.c.row);
 	fprintf(stderr, "rows: { (%03d/%03d), %03d|%03d -> %03d } | ",
-	    tty.rows.n, tty.rows.max, tty.anchor, tty.top, tty.bot);
+	    tty.rows.count, tty.rows.max, tty.anchor, tty.top, tty.bot);
 	fprintf(stderr, "hist: { (%03d|%03d/%03d), %02d, [^] = %04d, [@] = %04d } | ",
 	    tty.hist.r, tty.hist.w, tty.hist.max, tty.hist.lap, HIST_FIRST, HIST_LAST);
 	fprintf(stderr, "max: (%03d/%03d) | ",
-	    tty.max_cols, tty.max_rows);
+	    tty.maxcols, tty.maxrows);
 	fprintf(stderr, "scroll: %03d | ",
 	    tty.scroll);
 	fprintf(stderr, "%s:%d/%s()\n", srcfile, srcline, srcfunc);
@@ -369,7 +349,7 @@ dbg_print_history(const char *srcfile, const char *srcfunc, int srcline)
 		dbg__print_row(h.buf[i]);
 
 		int tmp = (next != h.w) ? h.buf[next] : h.buf[i];
-		for (int j = h.buf[i] + 1; j < tmp && j <= tty.rows.n; j++) {
+		for (int j = h.buf[i] + 1; j < tmp && j <= tty.rows.count; j++) {
 			fprintf(stderr, "%-10s", "");
 			dbg__print_row(j);
 		}
@@ -385,9 +365,9 @@ dbg_print_cursor(const char *srcfile, const char *srcfunc, int srcline)
 	    "local: { %03d %03d, %s } | "
 	    "row: { (%03d/%03d), len = %02d, %d|%d } | "
 	    "%s:%d/%s()\n",
-	    C_IDX, tty.i, tty.c.start,
-	    tty.c.x, tty.c.y, asciistr(tty.data[C_IDX]),
-	    C_ROW, tty.rows.n, ROW(C_ROW).len, ROW(C_ROW).is_static, ROW_IS_BLANK(C_ROW),
+	    C_IDX, tty.size, tty.c.start,
+	    tty.c.col, tty.c.row, asciistr(tty.data[C_IDX]),
+	    C_ROW, tty.rows.count, ROW(C_ROW).len, ROW(C_ROW).is_static, ROW_IS_BLANK(C_ROW),
 	    srcfile, srcline, srcfunc);
 }
 
@@ -407,3 +387,4 @@ dbg__print_row(int idx)
 	}
 	fprintf(stderr, "\"\n");
 }
+#endif

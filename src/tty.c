@@ -84,9 +84,9 @@ bool
 tty_init(int cols, int rows)
 {
 	MEMCLEAR(&tty, 1);
-	tty.max_cols = cols;
-	tty.max_rows = rows;
-	stream_realloc(bitround(histsize * tty.max_cols, 1) + 1);
+	tty.maxcols = cols;
+	tty.maxrows = rows;
+	stream_realloc(bitround(histsize * tty.maxcols, 1) + 1);
 
 	return (tty.data != NULL);
 }
@@ -95,7 +95,7 @@ size_t
 tty_write(const char *str, size_t len)
 {
 	size_t i = 0;
-	static size_t count = 0;
+#if 1
 	{
 		for (size_t j = 0; j < len; j++) {
 			long tmp;
@@ -110,16 +110,17 @@ tty_write(const char *str, size_t len)
 		msize = 0;
 		mbuf[msize] = 0;
 	}
+#endif
 	for (i = 0; str[i] && i < len; i++) {
-		if (tty.i + tabstop >= tty.max) {
-			stream_realloc(bitround(tty.i * 2, 1) + 1);
+		if (tty.size + tabstop >= tty.max) {
+			stream_realloc(bitround(tty.size * 2, 1) + 1);
 		}
 		if (!parse_codepoint(str[i])) {
 			stream_write(str[i]);
 		}
 	}
 
-	tty.data[tty.i] = 0;
+	tty.data[tty.size] = 0;
 
 	return i;
 }

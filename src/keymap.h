@@ -56,20 +56,21 @@
     expand__(KEY_KP_MULTIPLY,   332) \
     expand__(KEY_KP_SUBTRACT,   333) \
     expand__(KEY_KP_ADD,        334) \
-    expand__(KEY_KP_ENTER,      335) \
-    expand__(KEY_KP_EQUAL,      336) \
-    expand__(KEY_KP_TAB,        337) \
-    expand__(KEY_KP_SPACE,      338) \
-    expand__(KEY_KP_INSERT,     339) \
-    expand__(KEY_KP_DELETE,     340) \
-    expand__(KEY_KP_RIGHT,      341) \
-    expand__(KEY_KP_LEFT,       342) \
-    expand__(KEY_KP_DOWN,       343) \
-    expand__(KEY_KP_UP,         344) \
-    expand__(KEY_KP_PAGE_UP,    345) \
-    expand__(KEY_KP_PAGE_DOWN,  346) \
-    expand__(KEY_KP_HOME,       347) \
-    expand__(KEY_KP_END,        348)
+    expand__(KEY_KP_SEPARATOR,  335) \
+    expand__(KEY_KP_ENTER,      336) \
+    expand__(KEY_KP_EQUAL,      337) \
+    expand__(KEY_KP_TAB,        338) \
+    expand__(KEY_KP_SPACE,      339) \
+    expand__(KEY_KP_INSERT,     340) \
+    expand__(KEY_KP_DELETE,     341) \
+    expand__(KEY_KP_RIGHT,      342) \
+    expand__(KEY_KP_LEFT,       343) \
+    expand__(KEY_KP_DOWN,       344) \
+    expand__(KEY_KP_UP,         345) \
+    expand__(KEY_KP_PAGE_UP,    346) \
+    expand__(KEY_KP_PAGE_DOWN,  347) \
+    expand__(KEY_KP_HOME,       348) \
+    expand__(KEY_KP_END,        349)
 
 enum {
 	KEY_NONE = -1,
