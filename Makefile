@@ -12,10 +12,11 @@ LFLAGS =
 IFLAGS =
 
 CC ?= cc
-CPPFLAGS = $(IFLAGS) $(IDLIBS) -MMD -MP \
-         -D_POSIX_C_SOURCE=199309L -D_XOPEN_SOURCE=600
-WFLAGS = -Wall -Wextra -Wpedantic \
-         -Wno-unused-variable -Wno-unused-parameter -Wno-unused-function
+
+CPPFLAGS_COMMON  = $(IFLAGS) $(IDLIBS) -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=600
+CPPFLAGS_DEBUG   = $(CPPFLAGS_COMMON) -DBUILD_DEBUG -MMD -MP
+CPPFLAGS_RELEASE = $(CPPFLAGS_COMMON) -DBUILD_RELEASE
+WFLAGS = -Wall -Wextra -Wpedantic -Wno-unused-variable -Wno-unused-parameter -Wno-unused-function
 CFLAGS_COMMON  = -std=c99 $(WFLAGS)
 CFLAGS_DEBUG   = -O0 -ggdb3 -no-pie $(CFLAGS_COMMON)
 CFLAGS_RELEASE = -O2 $(CFLAGS_COMMON)
@@ -23,8 +24,10 @@ CFLAGS_RELEASE = -O2 $(CFLAGS_COMMON)
 BUILD := Debug
 ifeq ($(BUILD), Release)
 	CFLAGS = $(CFLAGS_RELEASE)
+	CPPFLAGS = $(CPPFLAGS_RELEASE)
 else
 	CFLAGS = $(CFLAGS_DEBUG)
+	CPPFLAGS = $(CPPFLAGS_DEBUG)
 endif
 
 .PHONY: all clean

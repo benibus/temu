@@ -13,6 +13,7 @@
 #define SET(base_,mask_,opt_) \
 ( (base_) = ((opt_)) ? ((base_) | (mask_)) : ((base_) & ~(mask_)) )
 
+#if 1
 #define PRINTSEQ(s_) do { \
 	msg_log("Parser", "%-6s %-15s (%02u)  lc:%-6s #%02u:", \
 	    asciistr(g_ucode), (s_), parser.state, asciistr(parser.lastc), parser.narg); \
@@ -21,41 +22,44 @@
 	}                                                      \
 	fprintf(stderr, "\n");                                 \
 } while (0)
+#else
+#define PRINTSEQ(s_)
+#endif
 
 enum ctrlcodes_e_ {
-	CtrlNUL,
-	CtrlBEL = '\a',
-	CtrlBS  = '\b',
-	CtrlHT  = '\t',
-	CtrlLF  = '\n',
-	CtrlVT  = '\v',
-	CtrlFF  = '\f',
-	CtrlCR  = '\r',
-	CtrlSO  = 0x0e,
-	CtrlSI  = 0x0f,
-	CtrlCAN = 0x18,
-	CtrlSUB = 0x1a,
-	CtrlESC = 0x1b,
-	CtrlNEL = 0x85,
-	CtrlHTS = 0x88,
-	CtrlDCS = 0x90,
-	CtrlSOS = 0x98,
-	CtrlST  = 0x9c,
-	CtrlOSC = 0x9d,
-	CtrlPM  = 0x9e,
-	CtrlAPC = 0x9f
+	CTRL_NUL,
+	CTRL_BEL = '\a',
+	CTRL_BS  = '\b',
+	CTRL_HT  = '\t',
+	CTRL_LF  = '\n',
+	CTRL_VT  = '\v',
+	CTRL_FF  = '\f',
+	CTRL_CR  = '\r',
+	CTRL_SO  = 0x0e,
+	CTRL_SI  = 0x0f,
+	CTRL_CAN = 0x18,
+	CTRL_SUB = 0x1a,
+	CTRL_ESC = 0x1b,
+	CTRL_NEL = 0x85,
+	CTRL_HTS = 0x88,
+	CTRL_DCS = 0x90,
+	CTRL_SOS = 0x98,
+	CTRL_ST  = 0x9c,
+	CTRL_OSC = 0x9d,
+	CTRL_PM  = 0x9e,
+	CTRL_APC = 0x9f
 };
 
 enum stateflags_e_ {
-	StateDefault,
-	StateESC = (1 << 0),
-	StateCSI = (1 << 1),
-	StateDEC = (1 << 2),
-	StateSTR = (1 << 3),
-	StateMax = (1 << 4)
+	STATE_DEFAULT,
+	STATE_ESC = (1 << 0),
+	STATE_CSI = (1 << 1),
+	STATE_DEC = (1 << 2),
+	STATE_STR = (1 << 3),
+	STATE_MAX = (1 << 4)
 };
 
-#define ESC_MASK (StateMax-1)
+#define ESC_MASK (STATE_MAX-1)
 
 #define MAX_ARGS 256
 typedef struct parser_s_ {
@@ -112,11 +116,20 @@ tty_write(const char *str, size_t len)
 	}
 #endif
 	for (i = 0; str[i] && i < len; i++) {
-		if (tty.size + tabstop >= tty.max) {
+		if (tty.size + tty.maxcols >= tty.max) {
 			stream_realloc(bitround(tty.size * 2, 1) + 1);
 		}
 		if (!parse_codepoint(str[i])) {
-			stream_write(str[i]);
+			int u = str[i];
+			if (u == '\r' && i + 1 < len) {
+				if (str[i+1] == CTRL_LF) {
+					u = '\n';
+					i++;
+				}
+			}
+			stream_write(u);
+		} else {
+			dummy__();
 		}
 	}
 
@@ -168,13 +181,20 @@ get_arg_csi(int ucode)
 	return true;
 }
 
+#if 1
+  #define SEQBEG(s1,s2) do { PRINTSEQ(#s1":"#s2); } while (0)
+#else
+  #define SEQBEG(s1,s2)
+#endif
+#define SEQEND(ret)   do { state_reset(); } while (0); return (ret)
+
 int
 parse_codepoint(int ucode)
 {
 	g_ucode = ucode;
 
 	switch (ucode) {
-	case CtrlESC:
+	case CTRL_ESC:
 		PRINTSEQ("BEG>ESC");
 		state_set_esc(true);
 		return 1;
@@ -182,36 +202,50 @@ parse_codepoint(int ucode)
 
 	u32 state = (parser.state & ESC_MASK);
 
-	if (state & StateSTR) {
-		if (state & StateESC) {
+	if (state & STATE_STR) {
+		if (state & STATE_ESC) {
 			switch (ucode) {
 			case '\\':
 				PRINTSEQ("END");
-				state_set(StateSTR, false, ucode);
+				state_set(STATE_STR, false, ucode);
 				break;
 			default:
-				buf_push(CtrlESC);
+				buf_push(CTRL_ESC);
 				buf_push(ucode);
 				break;
 			}
 			state_reset();
 		} else {
-			buf_push(ucode);
+			switch (ucode) {
+			case CTRL_ST:
+			case CTRL_BEL:
+				PRINTSEQ("END");
+				state_reset();
+				break;
+			default:
+				buf_push(ucode);
+				break;
+			}
 		}
 		return 2;
 	}
 
-	if (state & StateESC) {
+	if (state & STATE_ESC) {
 		switch (ucode) {
-		case CtrlCAN:
-		case CtrlSUB:
+		case CTRL_CAN:
+		case CTRL_SUB:
 			PRINTSEQ("ESC:CAN/SUB>END");
 			state_reset();
 			break;
 		case '[':
 			PRINTSEQ("ESC>CSI");
 			state_set_esc(false);
-			state_set(StateCSI, true, ucode);
+			state_set(STATE_CSI, true, ucode);
+			break;
+		case ']':
+			PRINTSEQ("ESC>OSC");
+			state_set_esc(false);
+			state_set(STATE_STR, true, ucode);
 			break;
 		case 'E':
 			PRINTSEQ("ESC:NEL");
@@ -221,11 +255,16 @@ parse_codepoint(int ucode)
 			PRINTSEQ("ESC:HTS");
 			state_reset();
 			break;
+		case 'M':
+			SEQBEG(ESC, RI);
+			stream_move_cursor_row(-1);
+			SEQEND(1);
+			break;
 		default:
 			goto quit;
 		}
 		return 3;
-	} else if (state & StateCSI) {
+	} else if (state & STATE_CSI) {
 		if (get_arg_csi(ucode)) {
 			PRINTSEQ("CSI#ARG");
 			return 5;
@@ -241,17 +280,42 @@ parse_codepoint(int ucode)
 			case '$':
 			case '>':
 				PRINTSEQ("CSI>DEC");
-				state_set(StateDEC, true, ucode);
+				state_set(STATE_DEC, true, ucode);
 				return 5;
 			// CSI terminators with no alt variations (VT100)
 			case '@': ESC_CSI("ICH");
-			case 'A': ESC_CSI("CUU");
-			case 'B': ESC_CSI("CUD");
-			case 'C': ESC_CSI("CUF");
-			case 'D': ESC_CSI("CUB");
+			case 'A':
+				  SEQBEG(CSI, CUU);
+				  stream_move_cursor_row(-DEFAULT(parser.args[0], 1));
+				  SEQEND(1);
+			case 'B':
+				  SEQBEG(CSI, CUD);
+				  stream_move_cursor_row(+DEFAULT(parser.args[0], 1));
+				  SEQEND(1);
+			case 'C':
+				  SEQBEG(CSI, CUF);
+				  stream_move_cursor_col(+DEFAULT(parser.args[0], 1));
+				  SEQEND(1);
+			case 'D':
+				  SEQBEG(CSI, CUB);
+				  stream_move_cursor_col(-DEFAULT(parser.args[0], 1));
+				  SEQEND(1);
 			case 'E': ESC_CSI("CNL");
 			case 'F': ESC_CSI("CPL");
 			case 'G': ESC_CSI("CHA");
+			case 'H':
+				  SEQBEG(CSI, CUP);
+				  stream_set_cursor_pos(
+				      parser.args[1],
+				      parser.args[0]
+				  );
+				  SEQEND(1);
+			case 'I':
+				  SEQBEG(CSI, CHT);
+				  for (size_t i = 0; i < DEFAULT(parser.args[0], 1); i++) {
+				  	  stream_write('\t');
+				  }
+				  SEQEND(1);
 			case 'L': ESC_CSI("IL");
 			case 'M': ESC_CSI("DL");
 			case 'P': ESC_CSI("DCH");
@@ -276,7 +340,20 @@ parse_codepoint(int ucode)
 			} break;
 		case 'K':
 			switch (parser.lastc) {
-			case '[': ESC_CSI("EL");
+			case '[':
+				SEQBEG(CSI, EL);
+				switch (parser.args[0]) {
+				case 0:
+					stream_delete_columns(tty.c.col, tty.maxcols);
+					break;
+				case 1:
+					stream_delete_columns(0, tty.c.col);
+					break;
+				case 2:
+					stream_delete_columns(0, tty.maxcols);
+					break;
+				}
+				SEQEND(1);
 			case '?': ESC_CSI("DECSEL");
 			} break;
 		case 'c':
@@ -385,9 +462,9 @@ state_reset(void)
 void
 state_set_esc(bool opt)
 {
-	SET(parser.state, StateESC, opt);
-	SET(parser.state, StateCSI|StateDEC, false);
-	if (!(parser.state & StateSTR)) {
+	SET(parser.state, STATE_ESC, opt);
+	SET(parser.state, STATE_CSI|STATE_DEC, false);
+	if (!(parser.state & STATE_STR)) {
 		buf_reset();
 	}
 	parser.lastc = 0;

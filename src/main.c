@@ -200,16 +200,16 @@ void
 render(void)
 {
 	wsr_clear_screen(rc);
-	for (int n = 0; n <= tty.bot - tty.top; n++) {
+	for (int n = 0; n <= tty.rows.bot - tty.rows.top; n++) {
 		size_t len;
 		char *ptr;
-		if ((len = stream_get_row(tty.top + n, &ptr))) {
+		if ((len = stream_get_row(tty.rows.top + n, &ptr))) {
 			wsr_draw_string(rc, ptr, len, 0, n, false);
 		}
 	}
 	wsr_fill_region(rc,
-	    tty.c.col, tty.c.row - tty.top,
-	    tty.c.col + 1, tty.c.row - tty.top + 1,
+	    tty.c.col, tty.c.row - tty.rows.top,
+	    tty.c.col + 1, tty.c.row - tty.rows.top + 1,
 	    cw, ch);
 	ws_swap_buffers(win);
 }
