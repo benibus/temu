@@ -12,7 +12,7 @@ hist_reset(void)
 {
 	HistBuf *h = &tty.hist;
 
-	MEMCLEAR(h->buf, h->max);
+	memclear(h->buf, h->max, sizeof(*h->buf));
 	h->r = 1;
 	h->w = 1;
 	h->lap = 0;

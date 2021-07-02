@@ -57,7 +57,7 @@ row_create(int index, bool isnewline)
 	if (tty.rows.count == tty.rows.max) {
 		int max = tty.rows.max * 2;
 		tty.rows.buf = xrealloc(tty.rows.buf, max, sizeof(*tty.rows.buf));
-		memset(rowptr(tty.rows.count), 0, max - tty.rows.count);
+		memclear(rowptr(tty.rows.count), max - tty.rows.count, sizeof(*tty.rows.buf));
 		tty.rows.max = max;
 	}
 
@@ -66,10 +66,10 @@ row_create(int index, bool isnewline)
 	if (!index) {
 		rp[0].offset = 0;
 	} else if (index == tty.rows.count) {
-		rp[0].offset = rp[-1].offset + tty.maxcols * sizeof(*tty.data);
+		rp[0].offset = rp[-1].offset + celloffset(1, 0);
 	} else {
 		memmove(rp + 1, rp, sizeof(*rp) * (tty.rows.count - index));
-		memset(rp, 0, sizeof(*rp));
+		memclear(rp, 1, sizeof(*rp));
 		rp[0].offset = rp[1].offset;
 		for (int n = index; ++n < tty.rows.count; ) {
 			rowptr(n)->offset += tty.maxcols * sizeof(*tty.data);
@@ -98,7 +98,7 @@ row_alloc(int index, bool isnewline)
 	if (!index) {
 		rp[0].offset = 0;
 	} else {
-		rp[0].offset = rp[-1].offset + tty.maxcols * sizeof(*tty.data);
+		rp[0].offset = rp[-1].offset + celloffset(1, 0);
 	}
 
 	rp->newline = isnewline;
@@ -114,9 +114,7 @@ stream_write(int u)
 	if (tty.rows.count == 0) {
 		if (!row_create(0, true))
 			return -1;
-		tty.c.row = 0;
-		tty.c.col = 0;
-		tty.c.offset = 0;
+		memclear(&tty.c, 1, sizeof(tty.c));
 	}
 
 	switch (u) {
@@ -208,10 +206,8 @@ put_linefeed(void)
 void
 put_tab(void)
 {
-	uint tablen = TAB_LEN(tty.c.offset - tty.rows.buf[tty.c.row].offset);
-
-	for (uint n = 0; n < tablen; n++) {
-		if (tty.c.col == tty.maxcols - 1)
+	for (int n = 0; tty.c.col + 1 < tty.maxcols; n++) {
+		if (tty.tabs[tty.c.col] && n > 0)
 			break;
 		put_glyph(' ');
 	}
@@ -265,9 +261,10 @@ void
 stream_realloc(size_t max)
 {
 	if (max == 0) {
-		xfree(tty.data);
-		xfree(tty.rows.buf);
-		xfree(tty.hist.buf);
+		FREE(tty.data);
+		FREE(tty.rows.buf);
+		FREE(tty.hist.buf);
+		FREE(tty.tabs);
 		tty.max = tty.size = 0;
 		tty.rows.max = tty.rows.count = 0;
 	} else {
@@ -276,10 +273,11 @@ stream_realloc(size_t max)
 			tty.rows.buf = xcalloc(histsize, sizeof(*tty.rows.buf));
 			tty.rows.max = histsize;
 			hist_init(histsize + 1);
+			tty.tabs = xcalloc(tty.maxcols, sizeof(*tty.tabs));
 		} else {
 			tty.data = xrealloc(tty.data, max, sizeof(*tty.data));
 			if ((ssize_t)max > tty.max) {
-				MEMCLEAR(&tty.data[tty.size], max - tty.size);
+				memclear(tty.data + tty.size, max - tty.size, sizeof(*tty.data));
 			}
 		}
 	}
@@ -287,10 +285,9 @@ stream_realloc(size_t max)
 	tty.max = max;
 }
 void
-stream_delete_columns(int col, int num)
+stream_clear_columns(int col, int num)
 {
-	ASSERT(col >= 0);
-	ASSERT(col < tty.maxcols);
+	ASSERT(UXCEIL(col, tty.maxcols));
 	ASSERT(num >= 0);
 
 	if (num == 0) return;
@@ -301,7 +298,8 @@ stream_delete_columns(int col, int num)
 	int end = min(beg + num, max);
 	int delta = end - beg;
 
-	memset(tty.data + beg, 0, sizeof(*tty.data) * delta);
+	memclear(tty.data + beg, delta, sizeof(*tty.data));
+	memshift(tty.data + end, -delta, max - end, sizeof(*tty.data));
 
 	if (beg < tty.c.offset) {
 		cursor_set_col_abs(beg);
@@ -311,6 +309,49 @@ stream_delete_columns(int col, int num)
 	rowptr(tty.c.row)->len -= delta;
 
 	LOG_STATE;
+}
+
+void
+stream_clear_from_cursor(int arg)
+{
+	struct { int col, row; } pos1, pos2, cpos;
+
+	switch (arg) {
+	case -1: // cursor to top corner of screen
+		pos1.row = tty.rows.top, pos1.col = 0;
+		pos2.row = tty.c.row,    pos2.col = tty.c.col;
+		cpos = pos2;
+		break;
+	case +1: // cursor to bottom corner of screen
+		pos1.row = tty.c.row,    pos1.col = tty.c.col;
+		pos2.row = tty.rows.bot, pos2.col = tty.maxcols;
+		cpos = pos1;
+		break;
+	default: // entire screen (cursor moves to orgin)
+		pos1.row = tty.rows.top, pos1.col = 0;
+		pos2.row = tty.rows.bot, pos2.col = tty.maxcols;
+		cpos = pos1;
+		break;
+	}
+
+	int beg = celloffset(pos1.row, pos1.col);
+	int end = celloffset(pos2.row, pos2.col);
+	int delta = end - beg;
+
+	if (delta == 0) return;
+
+	memclear(tty.data + beg, delta, sizeof(*tty.data));
+	// empty rows store some persistent attributes
+	for (int n = pos1.row; n <= pos2.row; n++) {
+		rowptr(n)->len = 0;
+		rowptr(n)->newline = (n <= cpos.row);
+	}
+
+	rowptr(cpos.row)->len = cpos.col;
+	cursor_set_col_abs(cpos.col);
+	cursor_set_row_abs(cpos.row);
+
+	update_cursor();
 }
 
 void
@@ -371,3 +412,4 @@ stream_get_row(uint n, char **str)
 	if (str) *str = NULL;
 	return 0;
 }
+

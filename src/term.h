@@ -5,7 +5,7 @@ typedef char Cell;
 
 typedef struct attr_t_ {
 	uint flags;
-	u8 width;
+	uint8 width;
 } Attr;
 
 typedef struct row_t_ {
@@ -31,7 +31,7 @@ typedef struct tty_t_ {
 	Cell *data; // text stream
 	Attr *attr; // text attributes stream
 	int size, max; // size of parallel stream
-	bool *tabs;
+	uint8 *tabs;
 	struct {
 		Row *buf;
 		int count, max;
@@ -58,7 +58,8 @@ size_t pty_write(const char *, size_t);
 int stream_write(int);
 void stream_realloc(size_t);
 size_t stream_get_row(uint, char **);
-void stream_delete_columns(int, int);
+void stream_clear_columns(int, int);
+void stream_clear_from_cursor(int);
 void stream_set_cursor_col(int);
 void stream_set_cursor_row(int);
 void stream_set_cursor_pos(int, int);

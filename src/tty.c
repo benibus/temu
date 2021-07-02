@@ -87,10 +87,15 @@ static int parse_codepoint(int);
 bool
 tty_init(int cols, int rows)
 {
-	MEMCLEAR(&tty, 1);
+	memclear(&tty, 1, sizeof(tty));
 	tty.maxcols = cols;
 	tty.maxrows = rows;
 	stream_realloc(bitround(histsize * tty.maxcols, 1) + 1);
+
+	ASSERT(tabstop > 0);
+	for (int i = 0; ++i < tty.maxcols; ) {
+		tty.tabs[i] |= (i % tabstop == 0) ? 1 : 0;
+	}
 
 	return (tty.data != NULL);
 }
@@ -144,7 +149,7 @@ buf_reset(void)
 	parser.idx = 0;
 	parser.buf[parser.idx] = 0;
 	if (parser.narg) {
-		memset(parser.args, 0, sizeof(*parser.args) * parser.narg);
+		memclear(parser.args, parser.narg, sizeof(*parser.args));
 		parser.narg = 0;
 	}
 }
@@ -335,7 +340,24 @@ parse_codepoint(int ucode)
 		switch (ucode) {
 		case 'J':
 			switch (parser.lastc) {
-			case '[': ESC_CSI("ED");
+			case '[':
+#if 1
+				SEQBEG(CSI, ED);
+				switch (parser.args[0]) {
+				case 0:
+					stream_clear_from_cursor(+1);
+					break;
+				case 1:
+					stream_clear_from_cursor(-1);
+					break;
+				case 2:
+					stream_clear_from_cursor(0);
+					break;
+				}
+				SEQEND(1);
+#else
+				ESC_CSI("ED");
+#endif
 			case '?': ESC_CSI("DECSED");
 			} break;
 		case 'K':
@@ -344,13 +366,13 @@ parse_codepoint(int ucode)
 				SEQBEG(CSI, EL);
 				switch (parser.args[0]) {
 				case 0:
-					stream_delete_columns(tty.c.col, tty.maxcols);
+					stream_clear_columns(tty.c.col, tty.maxcols);
 					break;
 				case 1:
-					stream_delete_columns(0, tty.c.col);
+					stream_clear_columns(0, tty.c.col);
 					break;
 				case 2:
-					stream_delete_columns(0, tty.maxcols);
+					stream_clear_columns(0, tty.maxcols);
 					break;
 				}
 				SEQEND(1);
