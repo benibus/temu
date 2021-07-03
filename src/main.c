@@ -199,18 +199,24 @@ run(void)
 void
 render(void)
 {
+	char cursor[3] = { ' ' };
+
 	wsr_clear_screen(rc);
 	for (int n = 0; n <= tty.rows.bot - tty.rows.top; n++) {
-		size_t len;
-		char *ptr;
-		if ((len = stream_get_row(tty.rows.top + n, &ptr))) {
-			wsr_draw_string(rc, ptr, len, 0, n, false);
+		Str cells;
+		if ((cells.len = stream_get_row(tty.rows.top + n, &cells.str))) {
+			wsr_draw_string(rc, cells.str, cells.len, 0, n, false);
+			if (n == tty.c.row && isprint(cells.str[tty.c.col])) {
+				cursor[0] = cells.str[tty.c.col];
+			}
 		}
 	}
-	wsr_fill_region(rc,
+
+	wsr_draw_string(rc,
+	    cursor, strlen(cursor),
 	    tty.c.col, tty.c.row - tty.rows.top,
-	    tty.c.col + 1, tty.c.row - tty.rows.top + 1,
-	    cw, ch);
+	    true);
+
 	ws_swap_buffers(win);
 }
 

@@ -97,7 +97,7 @@ tty_init(int cols, int rows)
 		tty.tabs[i] |= (i % tabstop == 0) ? 1 : 0;
 	}
 
-	return (tty.data != NULL);
+	return (tty.data && tty.attr);
 }
 
 size_t
@@ -288,42 +288,52 @@ parse_codepoint(int ucode)
 				state_set(STATE_DEC, true, ucode);
 				return 5;
 			// CSI terminators with no alt variations (VT100)
-			case '@': ESC_CSI("ICH");
+			case '@':
+#if 0
+				ESC_CSI("ICH");
+#else
+				SEQBEG(CSI, ICH);
+				stream_insert_cells(DEFAULT(parser.args[0], 1));
+				SEQEND(1);
+#endif
 			case 'A':
-				  SEQBEG(CSI, CUU);
-				  stream_move_cursor_row(-DEFAULT(parser.args[0], 1));
-				  SEQEND(1);
+				SEQBEG(CSI, CUU);
+				stream_move_cursor_row(-DEFAULT(parser.args[0], 1));
+				SEQEND(1);
 			case 'B':
-				  SEQBEG(CSI, CUD);
-				  stream_move_cursor_row(+DEFAULT(parser.args[0], 1));
-				  SEQEND(1);
+				SEQBEG(CSI, CUD);
+				stream_move_cursor_row(+DEFAULT(parser.args[0], 1));
+				SEQEND(1);
 			case 'C':
-				  SEQBEG(CSI, CUF);
-				  stream_move_cursor_col(+DEFAULT(parser.args[0], 1));
-				  SEQEND(1);
+				SEQBEG(CSI, CUF);
+				stream_move_cursor_col(+DEFAULT(parser.args[0], 1));
+				SEQEND(1);
 			case 'D':
-				  SEQBEG(CSI, CUB);
-				  stream_move_cursor_col(-DEFAULT(parser.args[0], 1));
-				  SEQEND(1);
+				SEQBEG(CSI, CUB);
+				stream_move_cursor_col(-DEFAULT(parser.args[0], 1));
+				SEQEND(1);
 			case 'E': ESC_CSI("CNL");
 			case 'F': ESC_CSI("CPL");
 			case 'G': ESC_CSI("CHA");
 			case 'H':
-				  SEQBEG(CSI, CUP);
-				  stream_set_cursor_pos(
-				      parser.args[1],
-				      parser.args[0]
-				  );
-				  SEQEND(1);
+				SEQBEG(CSI, CUP);
+				stream_set_cursor_pos(
+				    parser.args[1],
+				    parser.args[0]
+				);
+				SEQEND(1);
 			case 'I':
-				  SEQBEG(CSI, CHT);
-				  for (size_t i = 0; i < DEFAULT(parser.args[0], 1); i++) {
-				  	  stream_write('\t');
-				  }
-				  SEQEND(1);
+				SEQBEG(CSI, CHT);
+				for (size_t i = 0; i < DEFAULT(parser.args[0], 1); i++) {
+					  if (!stream_write('\t')) break;
+				}
+				SEQEND(1);
 			case 'L': ESC_CSI("IL");
 			case 'M': ESC_CSI("DL");
-			case 'P': ESC_CSI("DCH");
+			case 'P':
+				SEQBEG(CSI, DCH);
+				stream_clear_cells(+1, DEFAULT(parser.args[0], 1), true, false);
+				SEQEND(1);
 			case 'S': ESC_CSI("SU");
 			case 'T': ESC_CSI("SD");
 			case 'X': ESC_CSI("ECH");
@@ -345,13 +355,13 @@ parse_codepoint(int ucode)
 				SEQBEG(CSI, ED);
 				switch (parser.args[0]) {
 				case 0:
-					stream_clear_from_cursor(+1);
+					stream_clear_screen(+1);
 					break;
 				case 1:
-					stream_clear_from_cursor(-1);
+					stream_clear_screen(-1);
 					break;
 				case 2:
-					stream_clear_from_cursor(0);
+					stream_clear_screen(0);
 					break;
 				}
 				SEQEND(1);
@@ -366,13 +376,13 @@ parse_codepoint(int ucode)
 				SEQBEG(CSI, EL);
 				switch (parser.args[0]) {
 				case 0:
-					stream_clear_columns(tty.c.col, tty.maxcols);
+					stream_clear_cells(+1, 0, false, false);
 					break;
 				case 1:
-					stream_clear_columns(0, tty.c.col);
+					stream_clear_cells(-1, 0, false, false);
 					break;
 				case 2:
-					stream_clear_columns(0, tty.maxcols);
+					stream_clear_cells(0, 0, false, false);
 					break;
 				}
 				SEQEND(1);

@@ -934,7 +934,7 @@ wsr_draw_string(RC *rc, const char *str, uint len, uint col, uint row, bool inve
 		color = getcolor(rc->colorid.fg);
 	} else {
 		wsr_fill_region(rc,
-		    col, row, col + len - 1, row + 1, face->width, face->height);
+		    col, row, col + len, row + 1, face->width, face->height);
 		color = getcolor(rc->colorid.bg);
 	}
 

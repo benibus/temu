@@ -109,7 +109,7 @@ row_alloc(int index, bool isnewline)
 int
 stream_write(int u)
 {
-	int size = tty.size;
+	int offset = tty.c.offset;
 
 	if (tty.rows.count == 0) {
 		if (!row_create(0, true))
@@ -143,7 +143,7 @@ stream_write(int u)
 
 	LOG_STATE;
 
-	return tty.size - size;
+	return tty.c.offset - offset;
 }
 
 void
@@ -262,6 +262,7 @@ stream_realloc(size_t max)
 {
 	if (max == 0) {
 		FREE(tty.data);
+		FREE(tty.attr);
 		FREE(tty.rows.buf);
 		FREE(tty.hist.buf);
 		FREE(tty.tabs);
@@ -269,50 +270,108 @@ stream_realloc(size_t max)
 		tty.rows.max = tty.rows.count = 0;
 	} else {
 		if (!tty.data) {
+			ASSERT(!tty.attr);
 			tty.data = xcalloc(max, sizeof(*tty.data));
+			tty.attr = xcalloc(max, sizeof(*tty.attr));
 			tty.rows.buf = xcalloc(histsize, sizeof(*tty.rows.buf));
 			tty.rows.max = histsize;
 			hist_init(histsize + 1);
 			tty.tabs = xcalloc(tty.maxcols, sizeof(*tty.tabs));
 		} else {
 			tty.data = xrealloc(tty.data, max, sizeof(*tty.data));
+			tty.attr = xrealloc(tty.attr, max, sizeof(*tty.attr));
 			if ((ssize_t)max > tty.max) {
 				memclear(tty.data + tty.size, max - tty.size, sizeof(*tty.data));
+				memclear(tty.attr + tty.size, max - tty.size, sizeof(*tty.attr));
 			}
 		}
 	}
 
 	tty.max = max;
 }
+
 void
-stream_clear_columns(int col, int num)
+stream_insert_cells(int num)
 {
-	ASSERT(UXCEIL(col, tty.maxcols));
+	int len = row_length(tty.c.row);
+	(void)len;
+	int col1 = tty.c.col;
+	int col2 = min(tty.c.col + num, tty.maxcols);
+	ASSERT(col2 >= col1);
+	int delta = ABS(col2 - col1);
+
+	if (delta == 0) return;
+
+	int beg = celloffset(tty.c.row, col1);
+	int end = celloffset(tty.c.row, col2);
+
+	memmove(tty.data + end, tty.data + beg, max(tty.maxcols - col2, 0) * sizeof(*tty.data));
+	memmove(tty.attr + end, tty.attr + beg, max(tty.maxcols - col2, 0) * sizeof(*tty.attr));
+	memset(tty.data + beg, ' ', delta * sizeof(*tty.data));
+	memset(tty.attr + beg, 0, delta * sizeof(*tty.attr));
+
+	rowptr(tty.c.row)->len = min(len + delta, tty.maxcols);
+}
+
+void
+stream_clear_cells(int arg, int num, bool delete, bool selective)
+{
 	ASSERT(num >= 0);
 
-	if (num == 0) return;
-
+	int col1, col2, ccol;
 	int start = celloffset(tty.c.row, 0);
-	int max = start + row_length(tty.c.row);
-	int beg = min(start + col, max - 1);
-	int end = min(beg + num, max);
-	int delta = end - beg;
+	int len = row_length(tty.c.row);
+	(void)selective; /* DECSEL */
+	ASSERT(len == rowptr(tty.c.row)->len);
 
-	memclear(tty.data + beg, delta, sizeof(*tty.data));
-	memshift(tty.data + end, -delta, max - end, sizeof(*tty.data));
+	num = DEFAULT(num, len);
 
-	if (beg < tty.c.offset) {
-		cursor_set_col_abs(beg);
-		update_cursor();
+	switch (arg) {
+	case -1:
+		col2 = tty.c.col;
+		col1 = max(0, col2 - num);
+		ccol = col1;
+		break;
+	case +1:
+		col1 = tty.c.col;
+		col2 = min(len, col1 + num);
+		ccol = col1;
+		break;
+	default:
+		col1 = 0;
+		col2 = len;
+		ccol = col1;
+		break;
 	}
 
-	rowptr(tty.c.row)->len -= delta;
+	int beg = celloffset(tty.c.row, col1);
+	int end = celloffset(tty.c.row, col2);
+	int delta = ABS(end - beg);
+
+	if (delta == 0) return;
+
+	int glyph = (end < start + len) ? ' ' : 0;
+
+	if (delete) {
+		memcshift(tty.data + end, -delta, start + len - end, sizeof(*tty.data));
+		memcshift(tty.attr + end, -delta, start + len - end, sizeof(*tty.attr));
+	} else {
+		memset(tty.data + beg, glyph, delta * sizeof(*tty.data));
+		memset(tty.attr + beg, 0, delta * sizeof(*tty.attr));
+	}
+
+	cursor_set_col_abs(ccol);
+	update_cursor();
+
+	if (!glyph || delete) {
+		rowptr(tty.c.row)->len -= delta;
+	}
 
 	LOG_STATE;
 }
 
 void
-stream_clear_from_cursor(int arg)
+stream_clear_screen(int arg)
 {
 	struct { int col, row; } pos1, pos2, cpos;
 
@@ -336,15 +395,21 @@ stream_clear_from_cursor(int arg)
 
 	int beg = celloffset(pos1.row, pos1.col);
 	int end = celloffset(pos2.row, pos2.col);
-	int delta = end - beg;
+	int delta = ABS(end - beg);
 
 	if (delta == 0) return;
 
 	memclear(tty.data + beg, delta, sizeof(*tty.data));
+	memclear(tty.attr + beg, delta, sizeof(*tty.attr));
 	// empty rows store some persistent attributes
 	for (int n = pos1.row; n <= pos2.row; n++) {
 		rowptr(n)->len = 0;
-		rowptr(n)->newline = (n <= cpos.row);
+		if (n != cpos.row || n > pos1.row) {
+			rowptr(n)->newline = true;
+		}
+		if (n == pos2.row && n + 1 < tty.rows.count) {
+			rowptr(n+1)->newline = true;
+		}
 	}
 
 	rowptr(cpos.row)->len = cpos.col;

@@ -3,31 +3,42 @@
 
 typedef char Cell;
 
-typedef struct attr_t_ {
-	uint flags;
+enum {
+	ATTR_NONE,
+	ATTR_DUMMY_TAB  = (1 << 0),
+	ATTR_DUMMY_WIDE = (1 << 1),
+	ATTR_INVERT     = (1 << 2),
+	ATTR_MAX        = (1 << 3)
+};
+
+#define ATTR_MASK (ATTR_MAX-1)
+
+typedef struct {
+	uint16 flags;
+	struct { uint16 bg, fg; } color;
 	uint8 width;
 } Attr;
 
-typedef struct row_t_ {
+typedef struct {
 	uint offset;
 	int len;
 	bool newline;
 } Row;
 
-typedef struct histbuf_t_ {
+typedef struct {
 	int *buf; // buffer of lines (stored as row numbers)
 	int max;  // max index of buffer
 	int r, w; // internal read/write indices
 	uint lap; // write index lap (gets reset after row-pruning)
 } HistBuf;
 
-typedef struct pty_t_ {
+typedef struct {
 	pid_t pid; // process id
 	int mfd;   // master file descriptor
 	int sfd;   // slave file descriptor
 } PTY;
 
-typedef struct tty_t_ {
+typedef struct {
 	Cell *data; // text stream
 	Attr *attr; // text attributes stream
 	int size, max; // size of parallel stream
@@ -58,8 +69,9 @@ size_t pty_write(const char *, size_t);
 int stream_write(int);
 void stream_realloc(size_t);
 size_t stream_get_row(uint, char **);
-void stream_clear_columns(int, int);
-void stream_clear_from_cursor(int);
+void stream_clear_cells(int, int, bool, bool);
+void stream_insert_cells(int);
+void stream_clear_screen(int);
 void stream_set_cursor_col(int);
 void stream_set_cursor_row(int);
 void stream_set_cursor_pos(int, int);
