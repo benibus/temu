@@ -293,7 +293,7 @@ parse_codepoint(int ucode)
 				ESC_CSI("ICH");
 #else
 				SEQBEG(CSI, ICH);
-				stream_insert_cells(DEFAULT(parser.args[0], 1));
+				stream_insert_cells(' ', DEFAULT(parser.args[0], 1));
 				SEQEND(1);
 #endif
 			case 'A':
@@ -332,7 +332,7 @@ parse_codepoint(int ucode)
 			case 'M': ESC_CSI("DL");
 			case 'P':
 				SEQBEG(CSI, DCH);
-				stream_clear_cells(+1, DEFAULT(parser.args[0], 1), true, false);
+				stream_clear_row_cells(tty.c.row, tty.c.col, DEFAULT(parser.args[0], 1), true, false);
 				SEQEND(1);
 			case 'S': ESC_CSI("SU");
 			case 'T': ESC_CSI("SD");
@@ -355,13 +355,16 @@ parse_codepoint(int ucode)
 				SEQBEG(CSI, ED);
 				switch (parser.args[0]) {
 				case 0:
-					stream_clear_screen(+1);
+					stream_clear_rows(tty.c.row + 1, tty.maxrows);
+					stream_clear_row_cells(tty.c.row, tty.c.col, tty.maxcols, true, false);
 					break;
 				case 1:
-					stream_clear_screen(-1);
+					stream_clear_rows(tty.rows.top, tty.c.row - tty.rows.top);
+					stream_clear_row_cells(tty.c.row, 0, tty.c.col, false, false);
 					break;
 				case 2:
-					stream_clear_screen(0);
+					stream_clear_rows(tty.rows.top, tty.maxrows);
+					stream_set_cursor_row(0);
 					break;
 				}
 				SEQEND(1);
@@ -376,13 +379,14 @@ parse_codepoint(int ucode)
 				SEQBEG(CSI, EL);
 				switch (parser.args[0]) {
 				case 0:
-					stream_clear_cells(+1, 0, false, false);
+					stream_clear_row_cells(tty.c.row, tty.c.col, tty.maxcols, true, false);
 					break;
 				case 1:
-					stream_clear_cells(-1, 0, false, false);
+					stream_clear_row_cells(tty.c.row, 0, tty.c.col, false, false);
 					break;
 				case 2:
-					stream_clear_cells(0, 0, false, false);
+					stream_clear_row_cells(tty.c.row, 0, tty.maxcols, true, false);
+					stream_set_cursor_col(0);
 					break;
 				}
 				SEQEND(1);

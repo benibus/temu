@@ -10,6 +10,18 @@
 #include "term.h"
 #include "ring.h"
 
+typedef struct {
+	int16 y, x;
+	int32 i;
+} CellPos;
+
+typedef struct { int    x, y, w, h; } Rect;
+typedef struct { int32  x, y, w, h; } Rect32;
+typedef struct { int64  x, y, w, h; } Rect64;
+typedef struct { uint   x, y, w, h; } URect;
+typedef struct { uint32 x, y, w, h; } URect32;
+typedef struct { uint64 x, y, w, h; } URect64;
+
 static void put_glyph(int);
 static void put_linefeed(void);
 static void put_tab(void);
@@ -35,7 +47,7 @@ static size_t row_length(int);
 	    tty.size, tty.max,                                         \
 	    tty.rows.count, tty.rows.max, tty.rows.top, tty.rows.bot,  \
 	    tty.c.col, tty.c.row, tty.c.offset,                        \
-	    crow_.offset, tty.size, crow_.len, crow_.newline);         \
+	    crow_.offset, tty.size, crow_.len, crow_.attr & ROWATTR_NEWLINE); \
 } while (0)
 #else
 #define LOG_STATE
@@ -44,6 +56,7 @@ static size_t row_length(int);
 #define celloffset(row,col) (((row) * tty.maxcols * sizeof(Cell)) + ((col) * sizeof(Cell)))
 #define cellptr(row,col)    (tty.data + celloffset(row, col))
 #define rowptr(row)         (tty.rows.buf + (row))
+#define rowlen(row)         (rowptr(row)->len)
 
 void dummy__(void) { LOG_STATE; }
 
@@ -77,7 +90,7 @@ row_create(int index, bool isnewline)
 	}
 
 	rp->len = 0;
-	rp->newline = isnewline;
+	rp->attr |= (isnewline) ? ROWATTR_NEWLINE : 0;
 
 	tty.size = celloffset(tty.rows.count + 1, 0);
 	tty.rows.count++;
@@ -101,7 +114,7 @@ row_alloc(int index, bool isnewline)
 		rp[0].offset = rp[-1].offset + celloffset(1, 0);
 	}
 
-	rp->newline = isnewline;
+	rp->attr |= (isnewline) ? ROWATTR_NEWLINE : 0;
 
 	return rp;
 }
@@ -290,133 +303,101 @@ stream_realloc(size_t max)
 	tty.max = max;
 }
 
-void
-stream_insert_cells(int num)
+static inline Rect32
+get_bounded_rect(int x, int y, int w, int h)
 {
-	int len = row_length(tty.c.row);
-	(void)len;
-	int col1 = tty.c.col;
-	int col2 = min(tty.c.col + num, tty.maxcols);
-	ASSERT(col2 >= col1);
-	int delta = ABS(col2 - col1);
+	Rect32 rect = { 0 };
 
-	if (delta == 0) return;
+	rect.x = CLAMP(x, 0, tty.maxcols);
+	rect.y = CLAMP(y, tty.rows.top, tty.rows.bot);
+	rect.w = CLAMP(w, 0, tty.maxcols - rect.x);
+	rect.h = CLAMP(h, 0, tty.rows.bot - rect.y + 1);
 
-	int beg = celloffset(tty.c.row, col1);
-	int end = celloffset(tty.c.row, col2);
-
-	memmove(tty.data + end, tty.data + beg, max(tty.maxcols - col2, 0) * sizeof(*tty.data));
-	memmove(tty.attr + end, tty.attr + beg, max(tty.maxcols - col2, 0) * sizeof(*tty.attr));
-	memset(tty.data + beg, ' ', delta * sizeof(*tty.data));
-	memset(tty.attr + beg, 0, delta * sizeof(*tty.attr));
-
-	rowptr(tty.c.row)->len = min(len + delta, tty.maxcols);
+	return rect;
 }
 
 void
-stream_clear_cells(int arg, int num, bool delete, bool selective)
+stream_shift_row_cells(int row, int col, int delta_)
 {
-	ASSERT(num >= 0);
+	Rect32 rect1 = get_bounded_rect(col, row, tty.maxcols, 1);
+	Rect32 rect2 = get_bounded_rect(rect1.x + delta_, rect1.y, tty.maxcols, 1);
 
-	int col1, col2, ccol;
-	int start = celloffset(tty.c.row, 0);
-	int len = row_length(tty.c.row);
-	(void)selective; /* DECSEL */
-	ASSERT(len == rowptr(tty.c.row)->len);
+	int offset = celloffset(rect1.y, rect1.x);
+	int delta = rect2.x - rect1.x;
+	int count = MIN(rect1.w, rect2.w);
 
-	num = DEFAULT(num, len);
+	memcshift(tty.data + offset, delta, count, sizeof(*tty.data));
+	memcshift(tty.attr + offset, delta, count, sizeof(*tty.attr));
 
-	switch (arg) {
-	case -1:
-		col2 = tty.c.col;
-		col1 = max(0, col2 - num);
-		ccol = col1;
-		break;
-	case +1:
-		col1 = tty.c.col;
-		col2 = min(len, col1 + num);
-		ccol = col1;
-		break;
-	default:
-		col1 = 0;
-		col2 = len;
-		ccol = col1;
-		break;
-	}
+	rowptr(rect1.y)->len = row_length(rect1.y);
+}
 
-	int beg = celloffset(tty.c.row, col1);
-	int end = celloffset(tty.c.row, col2);
-	int delta = ABS(end - beg);
+void
+stream_set_row_cells(int row, int col, int c, int num)
+{
+	Rect32 rect = get_bounded_rect(col, row, num, 1);
 
-	if (delta == 0) return;
+	if (rect.w == 0) return;
 
-	int glyph = (end < start + len) ? ' ' : 0;
+	int offset = celloffset(rect.y, rect.x);
+	memset(tty.data + offset, c, rect.w * sizeof(*tty.data));
+	memset(tty.attr + offset, 0, rect.w * sizeof(*tty.attr));
 
-	if (delete) {
-		memcshift(tty.data + end, -delta, start + len - end, sizeof(*tty.data));
-		memcshift(tty.attr + end, -delta, start + len - end, sizeof(*tty.attr));
-	} else {
-		memset(tty.data + beg, glyph, delta * sizeof(*tty.data));
-		memset(tty.attr + beg, 0, delta * sizeof(*tty.attr));
-	}
+	rowptr(rect.y)->len = row_length(rect.y);
+}
 
-	cursor_set_col_abs(ccol);
-	update_cursor();
-
-	if (!glyph || delete) {
-		rowptr(tty.c.row)->len -= delta;
-	}
+void
+stream_insert_cells(int c, uint num)
+{
+	stream_shift_row_cells(tty.c.row, tty.c.col, num);
+	stream_set_row_cells(tty.c.row, tty.c.col, c, num);
 
 	LOG_STATE;
 }
 
 void
-stream_clear_screen(int arg)
+stream_clear_row_cells(int row, int col, int num, bool delete, bool selective)
 {
-	struct { int col, row; } pos1, pos2, cpos;
+	Rect32 rect = get_bounded_rect(col, row, num, 1);
+	int clearchar = ' ';
 
-	switch (arg) {
-	case -1: // cursor to top corner of screen
-		pos1.row = tty.rows.top, pos1.col = 0;
-		pos2.row = tty.c.row,    pos2.col = tty.c.col;
-		cpos = pos2;
-		break;
-	case +1: // cursor to bottom corner of screen
-		pos1.row = tty.c.row,    pos1.col = tty.c.col;
-		pos2.row = tty.rows.bot, pos2.col = tty.maxcols;
-		cpos = pos1;
-		break;
-	default: // entire screen (cursor moves to orgin)
-		pos1.row = tty.rows.top, pos1.col = 0;
-		pos2.row = tty.rows.bot, pos2.col = tty.maxcols;
-		cpos = pos1;
-		break;
+	if (delete) {
+		if (rect.x + rect.w < rowlen(rect.y)) {
+			stream_shift_row_cells(rect.y, rect.x + rect.w, -rect.w);
+			return;
+		}
+		clearchar = '\0';
 	}
 
-	int beg = celloffset(pos1.row, pos1.col);
-	int end = celloffset(pos2.row, pos2.col);
-	int delta = ABS(end - beg);
+	stream_set_row_cells(rect.y, rect.x, clearchar, rect.w);
+}
 
-	if (delta == 0) return;
+void
+clear_row(int row)
+{
+	memclear(tty.rows.buf + row, 1, sizeof(*tty.rows.buf));
+	stream_clear_row_cells(row, 0, tty.maxcols, true, false);
+}
 
-	memclear(tty.data + beg, delta, sizeof(*tty.data));
-	memclear(tty.attr + beg, delta, sizeof(*tty.attr));
-	// empty rows store some persistent attributes
-	for (int n = pos1.row; n <= pos2.row; n++) {
-		rowptr(n)->len = 0;
-		if (n != cpos.row || n > pos1.row) {
-			rowptr(n)->newline = true;
-		}
-		if (n == pos2.row && n + 1 < tty.rows.count) {
-			rowptr(n+1)->newline = true;
+void
+stream_clear_rows(int row, int count)
+{
+	Rect32 rect = get_bounded_rect(0, row, tty.maxcols, count);
+
+	// If we overshoot the screen bounds, cancel silently.
+	// If we undershoot, the rect orgin clamps up to the top row;
+	if (rect.h == 0 || rect.y < row) {
+		return;
+	}
+
+	for (int y = rect.y; y - rect.y < rect.h; y++) {
+		clear_row(y);
+		if (y - rect.y + 1 == rect.h && rect.h < tty.rows.count) {
+			rowptr(y+1)->attr |= ROWATTR_NEWLINE;
 		}
 	}
 
-	rowptr(cpos.row)->len = cpos.col;
-	cursor_set_col_abs(cpos.col);
-	cursor_set_row_abs(cpos.row);
-
-	update_cursor();
+	LOG_STATE;
 }
 
 void

@@ -203,7 +203,7 @@ render(void)
 
 	wsr_clear_screen(rc);
 	for (int n = 0; n <= tty.rows.bot - tty.rows.top; n++) {
-		Str cells;
+		String cells;
 		if ((cells.len = stream_get_row(tty.rows.top + n, &cells.str))) {
 			wsr_draw_string(rc, cells.str, cells.len, 0, n, false);
 			if (n == tty.c.row && isprint(cells.str[tty.c.col])) {

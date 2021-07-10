@@ -4,11 +4,15 @@
 typedef char Cell;
 
 enum {
-	ATTR_NONE,
-	ATTR_DUMMY_TAB  = (1 << 0),
-	ATTR_DUMMY_WIDE = (1 << 1),
-	ATTR_INVERT     = (1 << 2),
-	ATTR_MAX        = (1 << 3)
+	CELLATTR_NONE,
+	CELLATTR_DUMMY_TAB  = (1 << 0),
+	CELLATTR_DUMMY_WIDE = (1 << 1),
+	CELLATTR_BOLD       = (1 << 2),
+	CELLATTR_ITALIC     = (1 << 3),
+	CELLATTR_UNDERLINE  = (1 << 4),
+	CELLATTR_BLINK      = (1 << 5),
+	CELLATTR_INVERT     = (1 << 6),
+	CELLATTR_MAX        = (1 << 7)
 };
 
 #define ATTR_MASK (ATTR_MAX-1)
@@ -19,10 +23,18 @@ typedef struct {
 	uint8 width;
 } Attr;
 
+enum {
+	ROWATTR_NONE,
+	ROWATTR_NEWLINE = (1 << 0),
+	ROWATTR_DIRTY   = (1 << 1),
+	ROWATTR_INVALID = (1 << 2),
+	ROWATTR_MAX     = (1 << 3)
+};
+
 typedef struct {
 	uint offset;
 	int len;
-	bool newline;
+	uint16 attr;
 } Row;
 
 typedef struct {
@@ -69,9 +81,10 @@ size_t pty_write(const char *, size_t);
 int stream_write(int);
 void stream_realloc(size_t);
 size_t stream_get_row(uint, char **);
-void stream_clear_cells(int, int, bool, bool);
-void stream_insert_cells(int);
-void stream_clear_screen(int);
+void stream_set_row_cells(int, int, int, int);
+void stream_clear_row_cells(int, int, int, bool, bool);
+void stream_insert_cells(int, uint);
+void stream_clear_rows(int, int);
 void stream_set_cursor_col(int);
 void stream_set_cursor_row(int);
 void stream_set_cursor_pos(int, int);
