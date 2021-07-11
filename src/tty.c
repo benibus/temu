@@ -15,12 +15,13 @@
 
 #if 1
 #define PRINTSEQ(s_) do { \
-	msg_log("Parser", "%-6s %-15s (%02u)  lc:%-6s #%02u:", \
-	    asciistr(g_ucode), (s_), parser.state, asciistr(parser.lastc), parser.narg); \
-	for (uint i = 0; i < parser.narg; i++) {               \
-		msg_log("\0", " %04zu", parser.args[i]);       \
-	}                                                      \
-	fprintf(stderr, "\n");                                 \
+	msg_log("Parser", "%-6s %-15s (%#.4x|%#.4x)  bg:%03u fg:%03u  lc:%-6s #%02u:",             \
+	    asciistr(g_ucode), (s_), parser.state, parser.flags, parser.color.bg, parser.color.fg, \
+	    asciistr(parser.lastc), parser.args.count);                                            \
+	for (uint i = 0; i < parser.args.count; i++) {       \
+		msg_log("\0", " %04zu", parser.args.buf[i]); \
+	}                                                    \
+	fprintf(stderr, "\n");                               \
 } while (0)
 #else
 #define PRINTSEQ(s_)
@@ -50,7 +51,8 @@ enum ctrlcodes_e_ {
 	CTRL_APC = 0x9f
 };
 
-enum stateflags_e_ {
+enum {
+	// Active escape modes
 	STATE_DEFAULT,
 	STATE_ESC = (1 << 0),
 	STATE_CSI = (1 << 1),
@@ -59,16 +61,22 @@ enum stateflags_e_ {
 	STATE_MAX = (1 << 4)
 };
 
-#define ESC_MASK (STATE_MAX-1)
+#define STATE_MASK  (STATE_MAX - 1)
 
 #define MAX_ARGS 256
 typedef struct parser_s_ {
-	u32 state;
-	char buf[BUFSIZ];
-	size_t idx;
-	size_t args[MAX_ARGS];
-	uint narg;
+	uint8 state;
+	uint16 flags;
 	int lastc;
+	struct { uint16 bg, fg; } color;
+	struct {
+		size_t buf[MAX_ARGS];
+		uint count;
+	} args;
+	struct {
+		char buf[BUFSIZ];
+		uint count;
+	} chars;
 } Parser;
 
 static int g_ucode = 0; // debug only
@@ -146,20 +154,20 @@ tty_write(const char *str, size_t len)
 void
 buf_reset(void)
 {
-	parser.idx = 0;
-	parser.buf[parser.idx] = 0;
-	if (parser.narg) {
-		memclear(parser.args, parser.narg, sizeof(*parser.args));
-		parser.narg = 0;
+	parser.chars.count = 0;
+	parser.chars.buf[parser.chars.count] = 0;
+	if (parser.args.count) {
+		memclear(parser.args.buf, parser.args.count, sizeof(*parser.args.buf));
+		parser.args.count = 0;
 	}
 }
 
 void
 buf_push(int ucode)
 {
-	ASSERT(parser.idx < BUFSIZ); // temporary
-	parser.buf[parser.idx++] = ucode;
-	parser.idx = 0;
+	ASSERT(parser.chars.count < BUFSIZ); // temporary
+	parser.chars.buf[parser.chars.count++] = ucode;
+	parser.chars.count = 0;
 }
 
 static bool
@@ -170,14 +178,14 @@ get_arg_csi(int ucode)
 	switch (ucode) {
 	case '0': case '1': case '2': case '3': case '4':
 	case '5': case '6': case '7': case '8': case '9':
-		parser.narg += (!parser.narg);
-		arg = &parser.args[parser.narg-1];
+		parser.args.count += (!parser.args.count);
+		arg = &parser.args.buf[parser.args.count-1];
 		*arg *= 10;
 		*arg += ucode - '0';
 		break;
 	case ';':
-		ASSERT(parser.narg > 0);
-		parser.narg++;
+		ASSERT(parser.args.count > 0);
+		parser.args.count++;
 		break;
 	default:
 		return false;
@@ -205,7 +213,7 @@ parse_codepoint(int ucode)
 		return 1;
 	}
 
-	u32 state = (parser.state & ESC_MASK);
+	u32 state = (parser.state & STATE_MASK);
 
 	if (state & STATE_STR) {
 		if (state & STATE_ESC) {
@@ -293,24 +301,24 @@ parse_codepoint(int ucode)
 				ESC_CSI("ICH");
 #else
 				SEQBEG(CSI, ICH);
-				stream_insert_cells(' ', DEFAULT(parser.args[0], 1));
+				stream_insert_cells(' ', DEFAULT(parser.args.buf[0], 1));
 				SEQEND(1);
 #endif
 			case 'A':
 				SEQBEG(CSI, CUU);
-				stream_move_cursor_row(-DEFAULT(parser.args[0], 1));
+				stream_move_cursor_row(-DEFAULT(parser.args.buf[0], 1));
 				SEQEND(1);
 			case 'B':
 				SEQBEG(CSI, CUD);
-				stream_move_cursor_row(+DEFAULT(parser.args[0], 1));
+				stream_move_cursor_row(+DEFAULT(parser.args.buf[0], 1));
 				SEQEND(1);
 			case 'C':
 				SEQBEG(CSI, CUF);
-				stream_move_cursor_col(+DEFAULT(parser.args[0], 1));
+				stream_move_cursor_col(+DEFAULT(parser.args.buf[0], 1));
 				SEQEND(1);
 			case 'D':
 				SEQBEG(CSI, CUB);
-				stream_move_cursor_col(-DEFAULT(parser.args[0], 1));
+				stream_move_cursor_col(-DEFAULT(parser.args.buf[0], 1));
 				SEQEND(1);
 			case 'E': ESC_CSI("CNL");
 			case 'F': ESC_CSI("CPL");
@@ -318,13 +326,13 @@ parse_codepoint(int ucode)
 			case 'H':
 				SEQBEG(CSI, CUP);
 				stream_set_cursor_pos(
-				    parser.args[1],
-				    parser.args[0]
+				    parser.args.buf[1],
+				    parser.args.buf[0]
 				);
 				SEQEND(1);
 			case 'I':
 				SEQBEG(CSI, CHT);
-				for (size_t i = 0; i < DEFAULT(parser.args[0], 1); i++) {
+				for (size_t i = 0; i < DEFAULT(parser.args.buf[0], 1); i++) {
 					  if (!stream_write('\t')) break;
 				}
 				SEQEND(1);
@@ -332,7 +340,9 @@ parse_codepoint(int ucode)
 			case 'M': ESC_CSI("DL");
 			case 'P':
 				SEQBEG(CSI, DCH);
-				stream_clear_row_cells(tty.c.row, tty.c.col, DEFAULT(parser.args[0], 1), true, false);
+				stream_clear_row_cells(
+				    tty.c.row, tty.c.col, DEFAULT(parser.args.buf[0], 1), true, false
+				);
 				SEQEND(1);
 			case 'S': ESC_CSI("SU");
 			case 'T': ESC_CSI("SD");
@@ -343,7 +353,73 @@ parse_codepoint(int ucode)
 			case 'd': ESC_CSI("VPA");
 			case 'f': ESC_CSI("HVP");
 			case 'g': ESC_CSI("TBC");
-			case 'm': ESC_CSI("SGR");
+			case 'm':
+				SEQBEG(CSI, SGR);
+				for (size_t i = 0; i < parser.args.count; i++) {
+					switch (parser.args.buf[i]) {
+					case 0:
+						parser.flags &= ~ATTR_MASK;
+						parser.color.bg = 0;
+						parser.color.fg = 7;
+						break;
+					case 1:  parser.flags |= ATTR_BOLD;       break;
+					case 4:  parser.flags |= ATTR_UNDERLINE;  break;
+					case 5:  parser.flags |= ATTR_BLINK;      break;
+					case 7:  parser.flags |= ATTR_INVERT;     break;
+					case 8:  parser.flags |= ATTR_INVISIBLE;  break;
+					case 22: parser.flags &= ~ATTR_BOLD;      break;
+					case 24: parser.flags &= ~ATTR_UNDERLINE; break;
+					case 25: parser.flags &= ~ATTR_BLINK;     break;
+					case 27: parser.flags &= ~ATTR_INVERT;    break;
+					case 28: parser.flags &= ~ATTR_INVISIBLE; break;
+
+					case 30: case 40:
+					case 31: case 41:
+					case 32: case 42:
+					case 33: case 43:
+					case 34: case 44:
+					case 35: case 45:
+					case 36: case 46:
+					case 37: case 47:
+						if (parser.args.buf[i] < 40) {
+							parser.color.fg = parser.args.buf[i] - 30;
+						} else {
+							parser.color.bg = parser.args.buf[i] - 40;
+						}
+						break;
+					case 38:
+					case 48:
+						if (i + 2 < parser.args.count && parser.args.buf[i+1] == 5) {
+							if (parser.args.buf[i] < 40) {
+								parser.color.fg = parser.args.buf[i+2] - 30;
+							} else {
+								parser.color.bg = parser.args.buf[i+2] - 40;
+							}
+						}
+						break;
+					case 39:
+						parser.color.fg = 7;
+						break;
+					case 49:
+						parser.color.fg = 0;
+						break;
+					case 90: case 100:
+					case 91: case 101:
+					case 92: case 102:
+					case 93: case 103:
+					case 94: case 104:
+					case 95: case 105:
+					case 96: case 106:
+					case 97: case 107:
+						if (parser.args.buf[i] < 100) {
+							parser.color.fg = parser.args.buf[i] + 8 - 90;
+						} else {
+							parser.color.bg = parser.args.buf[i] + 8 - 100;
+						}
+						break;
+					}
+				}
+				SEQEND(1);
 			case 'u': ESC_CSI("[u");
 			}
 		}
@@ -353,7 +429,7 @@ parse_codepoint(int ucode)
 			case '[':
 #if 1
 				SEQBEG(CSI, ED);
-				switch (parser.args[0]) {
+				switch (parser.args.buf[0]) {
 				case 0:
 					stream_clear_rows(tty.c.row + 1, tty.maxrows);
 					stream_clear_row_cells(tty.c.row, tty.c.col, tty.maxcols, true, false);
@@ -377,7 +453,7 @@ parse_codepoint(int ucode)
 			switch (parser.lastc) {
 			case '[':
 				SEQBEG(CSI, EL);
-				switch (parser.args[0]) {
+				switch (parser.args.buf[0]) {
 				case 0:
 					stream_clear_row_cells(tty.c.row, tty.c.col, tty.maxcols, true, false);
 					break;
@@ -490,7 +566,7 @@ state_set(uint mask, bool opt, int ucode)
 void
 state_reset(void)
 {
-	parser.state &= ~(ESC_MASK);
+	parser.state &= ~(STATE_MASK);
 	parser.lastc = 0;
 	buf_reset();
 }

@@ -79,14 +79,18 @@ typedef struct {
 
 typedef XftColor Color;
 typedef XftDraw *Surface;
+typedef XftFont FontData;
+typedef FcPattern FontPattern;
+typedef FcFontSet FontSet;
 #define Font Font_
 
 typedef struct {
-	XftFont *self;
-	FcFontSet *set;
-	FcPattern *pattern;
+	FontData *self;
+	FontSet *set;
+	FontPattern *pattern;
 	int height, width;
 	int ascent, descent;
+	int advance;
 } FontFace;
 
 typedef struct {
@@ -806,33 +810,74 @@ wsr_load_font(Win *win, const char *name)
 	WinHdr *hdr = WINHEADER(win);
 	WinEnv *env = hdr->env;
 
-	if (!env || !env->dpy || !name) {
+	if (!env || !env->dpy || !name || pool.fonts.count >= MAX_FONTS) {
 		return ID_NULL;
 	}
-	assert(!g_rc.hdr); // temporary
+	ASSERT(!g_rc.hdr); // temporary
 
-	if (pool.fonts.count == MAX_FONTS) {
-		return ID_NULL;
-	}
+	FontPattern *pattern;
 
-	FontFace *face = getface(pool.fonts.count, FACE_REGULAR);
+	for (int type = FACE_REGULAR; type < NUM_FACE; type++) {
+		FontFace *face = getface(pool.fonts.count, type);
 
-	if ((face->pattern = FcNameParse((FcChar8 *)name))) {
-		if (!(face->self = XftFontOpenName(env->dpy, env->screen, name))) {
-		    return ID_NULL;
+		switch (type) {
+		case FACE_REGULAR:
+			if (!(pattern = FcNameParse((FcChar8 *)name))) {
+				return ID_NULL;
+			}
+			break;
+		case FACE_ITALIC:
+			FcPatternDel(pattern, FC_SLANT);
+			FcPatternAddInteger(pattern, FC_SLANT, FC_SLANT_ITALIC);
+			break;
+		case FACE_BOLD_ITALIC:
+			FcPatternDel(pattern, FC_WEIGHT);
+			FcPatternAddInteger(pattern, FC_WEIGHT, FC_WEIGHT_BOLD);
+			break;
+		case FACE_BOLD:
+			FcPatternDel(pattern, FC_SLANT);
+			FcPatternAddInteger(pattern, FC_SLANT, FC_SLANT_ROMAN);
+			break;
+		default:
+			continue;
 		}
 
-		XGlyphInfo extents;
-		XftTextExtents8(env->dpy, face->self,
-		    (FcChar8 *)ascii_, LEN(ascii_), &extents);
+		FontPattern *pat_conf, *pat_match;
+		FcResult fc_res;
 
+		if (!(pat_conf = FcPatternDuplicate(pattern))) {
+			return ID_NULL;
+		}
+
+		FcConfigSubstitute(NULL, pat_conf, FcMatchPattern);
+		XftDefaultSubstitute(env->dpy, env->screen, pat_conf);
+
+		if (!(pat_match = FcFontMatch(NULL, pat_conf, &fc_res))) {
+			FcPatternDestroy(pat_conf);
+			return ID_NULL;
+		}
+
+		if (!(face->self = XftFontOpenPattern(env->dpy, pat_match))) {
+			FcPatternDestroy(pat_conf);
+			FcPatternDestroy(pat_match);
+			return ID_NULL;
+		}
+
+		// TODO(ben): Check for case where we get a non-matching bold/italic face
+
+		XGlyphInfo extents;
+		XftTextExtents8(env->dpy, face->self, (FcChar8 *)ascii_, LEN(ascii_), &extents);
+
+		face->set     = NULL;
+		face->pattern = pat_conf;
 		face->ascent  = face->self->ascent;
 		face->descent = face->self->descent;
 		face->width   = (extents.xOff + (LEN(ascii_) - 1)) / LEN(ascii_);
 		face->height  = face->ascent + face->descent;
-	} else {
-		return ID_NULL;
+		face->advance = face->self->max_advance_width;
 	}
+
+	FcPatternDestroy(pattern);
 
 	return pool.fonts.count++;
 }

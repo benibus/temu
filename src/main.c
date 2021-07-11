@@ -18,7 +18,7 @@ typedef struct Config {
 	char *wm_title;
 	char *geometry;
 	char *font;
-	char *colors[2];
+	char *colors[MAX_COLORS];
 	char *shell;
 	uint tabstop;
 	uint border_px;
@@ -38,6 +38,9 @@ u32 log_flags = 0;
 
 TTY tty = { 0 };
 PTY pty = { 0 };
+
+#define COLOR_BG 0
+#define COLOR_FG 7
 
 static int fonts[MAX_FONTS];
 static int colors[MAX_COLORS];
@@ -157,7 +160,7 @@ error_invalid:
 
 		assert(n >= 2);
 	}
-	assert(wsr_set_colors(rc, colors[0], colors[1]));
+	assert(wsr_set_colors(rc, colors[COLOR_BG], colors[COLOR_FG]));
 
 	if (!tty_init(cols, rows))
 		return 6;

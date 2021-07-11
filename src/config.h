@@ -8,8 +8,28 @@ static Config config = {
 	.geometry = NULL,
 	.font = "monospace:size=10.5",
 	.colors = {
+#if 0
 		[0] = "black",
 		[1] = "white"
+#else
+		[0]  = "black",
+		[1]  = "red3",
+		[2]  = "green3",
+		[3]  = "yellow3",
+		[4]  = "blue2",
+		[5]  = "magenta3",
+		[6]  = "cyan3",
+		[7]  = "gray90",
+
+		[8]  = "gray50",
+		[9]  = "red",
+		[10] = "green",
+		[11] = "yellow",
+		[12] = "#5c5cff",
+		[13] = "magenta",
+		[14] = "cyan",
+		[15] = "white",
+#endif
 	},
 	.shell = "/bin/dash",
 	.tabstop = 8,

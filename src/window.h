@@ -31,9 +31,9 @@ typedef struct {
 
 enum {
 	FACE_REGULAR,
-	FACE_BOLD,
 	FACE_ITALIC,
 	FACE_BOLD_ITALIC,
+	FACE_BOLD,
 	NUM_FACE
 };
 

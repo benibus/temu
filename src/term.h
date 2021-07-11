@@ -4,18 +4,26 @@
 typedef char Cell;
 
 enum {
-	CELLATTR_NONE,
-	CELLATTR_DUMMY_TAB  = (1 << 0),
-	CELLATTR_DUMMY_WIDE = (1 << 1),
-	CELLATTR_BOLD       = (1 << 2),
-	CELLATTR_ITALIC     = (1 << 3),
-	CELLATTR_UNDERLINE  = (1 << 4),
-	CELLATTR_BLINK      = (1 << 5),
-	CELLATTR_INVERT     = (1 << 6),
-	CELLATTR_MAX        = (1 << 7)
+	DESC_NONE,
+	DESC_DUMMY_TAB  = (1 << 0),
+	DESC_DUMMY_WIDE = (1 << 1),
+	DESC_NEWLINE    = (1 << 2),
+	DESC_DIRTY      = (1 << 3),
+	DESC_MAX        = (1 << 4)
 };
 
-#define ATTR_MASK (ATTR_MAX-1)
+enum {
+	ATTR_NONE,
+	ATTR_BOLD       = (1 << 0),
+	ATTR_UNDERLINE  = (1 << 1),
+	ATTR_BLINK      = (1 << 2),
+	ATTR_ITALIC     = (1 << 3),
+	ATTR_INVERT     = (1 << 4),
+	ATTR_INVISIBLE  = (1 << 5),
+	ATTR_MAX        = (1 << 6)
+};
+
+#define ATTR_MASK (ATTR_MAX - 1)
 
 typedef struct {
 	uint16 flags;
@@ -23,18 +31,10 @@ typedef struct {
 	uint8 width;
 } Attr;
 
-enum {
-	ROWATTR_NONE,
-	ROWATTR_NEWLINE = (1 << 0),
-	ROWATTR_DIRTY   = (1 << 1),
-	ROWATTR_INVALID = (1 << 2),
-	ROWATTR_MAX     = (1 << 3)
-};
-
 typedef struct {
 	uint offset;
 	int len;
-	uint16 attr;
+	uint16 flags;
 } Row;
 
 typedef struct {

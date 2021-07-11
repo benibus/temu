@@ -47,7 +47,7 @@ static size_t row_length(int);
 	    tty.size, tty.max,                                         \
 	    tty.rows.count, tty.rows.max, tty.rows.top, tty.rows.bot,  \
 	    tty.c.col, tty.c.row, tty.c.offset,                        \
-	    crow_.offset, tty.size, crow_.len, crow_.attr & ROWATTR_NEWLINE); \
+	    crow_.offset, tty.size, crow_.len, crow_.flags & DESC_NEWLINE); \
 } while (0)
 #else
 #define LOG_STATE
@@ -90,7 +90,7 @@ row_create(int index, bool isnewline)
 	}
 
 	rp->len = 0;
-	rp->attr |= (isnewline) ? ROWATTR_NEWLINE : 0;
+	rp->flags |= (isnewline) ? DESC_NEWLINE : 0;
 
 	tty.size = celloffset(tty.rows.count + 1, 0);
 	tty.rows.count++;
@@ -114,7 +114,7 @@ row_alloc(int index, bool isnewline)
 		rp[0].offset = rp[-1].offset + celloffset(1, 0);
 	}
 
-	rp->attr |= (isnewline) ? ROWATTR_NEWLINE : 0;
+	rp->flags |= (isnewline) ? DESC_NEWLINE : 0;
 
 	return rp;
 }
@@ -393,7 +393,7 @@ stream_clear_rows(int row, int count)
 	for (int y = rect.y; y - rect.y < rect.h; y++) {
 		clear_row(y);
 		if (y - rect.y + 1 == rect.h && rect.h < tty.rows.count) {
-			rowptr(y+1)->attr |= ROWATTR_NEWLINE;
+			rowptr(y+1)->flags |= DESC_NEWLINE;
 		}
 	}
 
