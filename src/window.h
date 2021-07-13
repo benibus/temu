@@ -29,15 +29,34 @@ typedef struct {
 	} events;
 } Win;
 
+#if 1
 enum {
-	FACE_REGULAR,
-	FACE_ITALIC,
-	FACE_BOLD_ITALIC,
-	FACE_BOLD,
-	NUM_FACE
+	STYLE_REGULAR,
+	STYLE_ITALIC = (1 << 0),
+	STYLE_BOLD   = (1 << 1),
+	STYLE_MAX    = (1 << 2)
 };
+#else
+enum {
+	STYLE_REGULAR,
+	STYLE_ITALIC,
+	STYLE_BOLD_ITALIC,
+	STYLE_BOLD,
+	NUM_STYLE
+};
+#endif
 
-typedef struct RC_ RC;
+typedef struct {
+	struct {
+		int face;
+		int style;
+	} font;
+	struct {
+		int default_bg, bg;
+		int default_fg, fg;
+	} color;
+	bool invert;
+} RC;
 
 #define MAX_FONTS  2
 #define MAX_COLORS 16
@@ -60,9 +79,11 @@ bool wsr_get_avg_font_size(int, int, int *, int *);
 bool wsr_set_colors(RC *, int, int);
 int wsr_load_color_name(RC *, const char *);
 void wsr_fill_region(RC *, uint, uint, uint, uint, uint, uint);
+void wsr_fill_color_region(RC *, int, uint, uint, uint, uint, uint, uint);
 void wsr_clear_region(RC *, uint, uint, uint, uint, uint, uint);
 void wsr_clear_screen(RC *);
 void wsr_draw_string(RC *, const char *, uint, uint, uint, bool);
+void wsr_draw_color_string(RC *, int, int, bool, const char *, uint, uint, uint);
 
 u64 timer_current_ns(void);
 double timer_elapsed_s(u64, u64 *);

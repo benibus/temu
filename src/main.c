@@ -39,9 +39,6 @@ u32 log_flags = 0;
 TTY tty = { 0 };
 PTY pty = { 0 };
 
-#define COLOR_BG 0
-#define COLOR_FG 7
-
 static int fonts[MAX_FONTS];
 static int colors[MAX_COLORS];
 static Win *win;
@@ -124,7 +121,7 @@ error_invalid:
 	if ((fonts[0] = wsr_load_font(win, config.font)) < 0)
 		return 3;
 	{
-		assert(wsr_get_avg_font_size(fonts[0], FACE_REGULAR, &cw, &ch));
+		assert(wsr_get_avg_font_size(fonts[0], STYLE_REGULAR, &cw, &ch));
 
 		win->title = config.wm_title;
 		win->instance = config.wm_instance;
@@ -144,7 +141,7 @@ error_invalid:
 	}
 	if (!(rc = wsr_init_context(win)))
 		return 5;
-	wsr_set_font(rc, fonts[0], FACE_REGULAR);
+	wsr_set_font(rc, fonts[0], STYLE_REGULAR);
 	{
 		int n = 0;
 
@@ -206,14 +203,35 @@ render(void)
 
 	wsr_clear_screen(rc);
 	for (int n = 0; n <= tty.rows.bot - tty.rows.top; n++) {
+#if 1
+		Cell *cells;
+		Attr *attrs;
+		size_t len;
+
+		len = stream_get_row(tty.rows.top + n, &cells, &attrs);
+		for (size_t i = 0; i < len; i++) {
+			bool invert = (attrs[i].flags & ATTR_INVERT);
+			rc->color.bg = attrs[i].color.bg;
+			rc->color.fg = attrs[i].color.fg;
+			wsr_draw_string(rc, cells + i, 1, i, n, invert);
+		}
+		if (len && n == tty.c.row && isprint(cells[tty.c.col])) {
+			cursor[0] = cells[tty.c.col];
+		}
+	}
+
+	rc->color.bg = rc->color.default_bg;
+	rc->color.fg = rc->color.default_fg;
+#else
 		String cells;
-		if ((cells.len = stream_get_row(tty.rows.top + n, &cells.str))) {
+		if ((cells.len = stream_get_row_string(tty.rows.top + n, &cells.str))) {
 			wsr_draw_string(rc, cells.str, cells.len, 0, n, false);
 			if (n == tty.c.row && isprint(cells.str[tty.c.col])) {
 				cursor[0] = cells.str[tty.c.col];
 			}
 		}
 	}
+#endif
 
 	wsr_draw_string(rc,
 	    cursor, strlen(cursor),

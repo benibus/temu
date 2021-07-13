@@ -78,40 +78,50 @@ typedef struct {
 } WinHdr;
 
 typedef XftColor Color;
-typedef XftDraw *Surface;
-typedef XftFont FontData;
-typedef FcPattern FontPattern;
-typedef FcFontSet FontSet;
 #define Font Font_
 
 typedef struct {
-	FontData *self;
-	FontSet *set;
-	FontPattern *pattern;
+	XftFont *self;
 	int height, width;
 	int ascent, descent;
 	int advance;
-} FontFace;
+} FontStyle;
 
 typedef struct {
-	FontFace face[NUM_FACE];
+	FontStyle style[STYLE_MAX];
 	char *name;
+	struct { int pt, px; } size;
 } Font;
 
+#if 0
 struct RC_ {
 	WinHdr *hdr;
-	Surface srf;
+	XftDraw *srf;
 	int fontid;
-	int faceid;
+	int styleid;
 	struct {
 		int bg;
 		int fg;
 	} colorid;
+	struct {
+		int face, style;
+	} font;
+	struct {
+		int default_bg, bg;
+		int default_fg, fg;
+	} color;
 };
+#endif
+typedef struct RCData_ {
+	RC pub;
+	WinHdr *hdr;
+	XftDraw *srf;
+} RCData;
 
 static Atom wm_atoms[NUM_ATOM];
 static WinEnv g_env;
 static RC g_rc;
+static RCData rcdata;
 static struct {
 	struct { Font data[MAX_FONTS]; int count; } fonts;
 	struct { Color data[MAX_COLORS]; int count; } colors;
@@ -129,19 +139,20 @@ static void ws_poll_events(Win *);
 static Win *ws_validate(Win *win);
 static size_t ws_get_property(Display *, Window, Atom, Atom, uchar **);
 static int ws_translate_key(uint, uint, int *, int *);
+static bool wsr__init_font_style(WinEnv *, const FcPattern *, int, int);
 
 static void wsr_draw_rect(RC *, Color *, uint, uint, uint, uint, uint, uint, uint, uint);
 
 static inline Font *
-getfont(int fontid)
+fontface(int fontid)
 {
 	return pool.fonts.data + fontid;
 }
 
-static inline FontFace *
-getface(int fontid, int faceid)
+static inline FontStyle *
+fontstyle(int fontid, int styleid)
 {
-	return getfont(fontid)->face + faceid;
+	return fontface(fontid)->style + styleid;
 }
 
 static inline Color *
@@ -784,112 +795,130 @@ wsr_init_context(Win *win)
 	if (!hdr->env || !hdr->env->dpy || !hdr->env->vis || !hdr->colormap) {
 		return NULL;
 	}
+#if 1
+	rcdata.srf = XftDrawCreate(hdr->env->dpy, hdr->buf, hdr->env->vis->visual, hdr->colormap);
+	if (!rcdata.srf) {
+		return NULL;
+	}
+	rcdata.hdr = hdr;
 
+	return &rcdata.pub;
+#else
 	g_rc.srf = XftDrawCreate(hdr->env->dpy, hdr->buf, hdr->env->vis->visual, hdr->colormap);
 	if (!g_rc.srf) return NULL;
 
 	g_rc.hdr = hdr;
 
 	return &g_rc;
+#endif
 }
 
 bool
-wsr_set_font(RC *rc, int fontid, int faceid)
+wsr_set_font(RC *rc_, int fontid, int styleid)
 {
+	RCData *rc = (void *)rc_;
+
 	if (!rc) return false;
 
-	rc->fontid = fontid;
-	rc->faceid = faceid;
+	rc->pub.font.face = fontid;
+	rc->pub.font.style = styleid;
 
 	return true;
+}
+
+bool
+wsr__init_font_style(WinEnv *env, const FcPattern *basepat, int fontid, int styleid)
+{
+	FontStyle *style = fontstyle(fontid, styleid);
+	bool ret = false;
+	FcResult res;
+	struct {
+		FcPattern *conf;
+		FcPattern *match;
+	} pat = { 0 };
+	XGlyphInfo info;
+
+	pat.conf = FcPatternDuplicate(basepat);
+
+	if (styleid & STYLE_ITALIC) {
+		FcPatternDel(pat.conf, FC_SLANT);
+		FcPatternAddInteger(pat.conf, FC_SLANT, FC_SLANT_ITALIC);
+	}
+	if (styleid & STYLE_BOLD) {
+		FcPatternDel(pat.conf, FC_WEIGHT);
+		FcPatternAddInteger(pat.conf, FC_WEIGHT, FC_WEIGHT_BOLD);
+	}
+
+	FcConfigSubstitute(NULL, pat.conf, FcMatchPattern);
+	XftDefaultSubstitute(env->dpy, env->screen, pat.conf);
+	if (!(pat.match = FcFontMatch(NULL, pat.conf, &res))) {
+		goto cleanup;
+	}
+
+	style->self = XftFontOpenPattern(env->dpy, pat.match);
+	if (!style->self) {
+		goto cleanup;
+	}
+
+	XftTextExtents8(env->dpy, style->self, (FcChar8 *)ascii_, LEN(ascii_), &info);
+
+	style->ascent  = style->self->ascent;
+	style->descent = style->self->descent;
+	style->width   = (info.xOff + (LEN(ascii_) - 1)) / LEN(ascii_);
+	style->height  = style->ascent + style->descent;
+	style->advance = style->self->max_advance_width;
+
+	ret = true;
+cleanup:
+	if (pat.conf)  FcPatternDestroy(pat.conf);
+	if (pat.match) FcPatternDestroy(pat.match);
+	return ret;
 }
 
 int
 wsr_load_font(Win *win, const char *name)
 {
-	WinHdr *hdr = WINHEADER(win);
-	WinEnv *env = hdr->env;
+	WinEnv *env = WINHEADER(win)->env;
+	FcPattern *pat = NULL;
+	int ret = ID_NULL;
 
 	if (!env || !env->dpy || !name || pool.fonts.count >= MAX_FONTS) {
 		return ID_NULL;
 	}
-	ASSERT(!g_rc.hdr); // temporary
 
-	FontPattern *pattern;
+	/* ASSERT(!g_rc.hdr); // temporary */
+	ASSERT(!rcdata.hdr); // temporary
 
-	for (int type = FACE_REGULAR; type < NUM_FACE; type++) {
-		FontFace *face = getface(pool.fonts.count, type);
-
-		switch (type) {
-		case FACE_REGULAR:
-			if (!(pattern = FcNameParse((FcChar8 *)name))) {
-				return ID_NULL;
-			}
-			break;
-		case FACE_ITALIC:
-			FcPatternDel(pattern, FC_SLANT);
-			FcPatternAddInteger(pattern, FC_SLANT, FC_SLANT_ITALIC);
-			break;
-		case FACE_BOLD_ITALIC:
-			FcPatternDel(pattern, FC_WEIGHT);
-			FcPatternAddInteger(pattern, FC_WEIGHT, FC_WEIGHT_BOLD);
-			break;
-		case FACE_BOLD:
-			FcPatternDel(pattern, FC_SLANT);
-			FcPatternAddInteger(pattern, FC_SLANT, FC_SLANT_ROMAN);
-			break;
-		default:
-			continue;
-		}
-
-		FontPattern *pat_conf, *pat_match;
-		FcResult fc_res;
-
-		if (!(pat_conf = FcPatternDuplicate(pattern))) {
-			return ID_NULL;
-		}
-
-		FcConfigSubstitute(NULL, pat_conf, FcMatchPattern);
-		XftDefaultSubstitute(env->dpy, env->screen, pat_conf);
-
-		if (!(pat_match = FcFontMatch(NULL, pat_conf, &fc_res))) {
-			FcPatternDestroy(pat_conf);
-			return ID_NULL;
-		}
-
-		if (!(face->self = XftFontOpenPattern(env->dpy, pat_match))) {
-			FcPatternDestroy(pat_conf);
-			FcPatternDestroy(pat_match);
-			return ID_NULL;
-		}
-
-		// TODO(ben): Check for case where we get a non-matching bold/italic face
-
-		XGlyphInfo extents;
-		XftTextExtents8(env->dpy, face->self, (FcChar8 *)ascii_, LEN(ascii_), &extents);
-
-		face->set     = NULL;
-		face->pattern = pat_conf;
-		face->ascent  = face->self->ascent;
-		face->descent = face->self->descent;
-		face->width   = (extents.xOff + (LEN(ascii_) - 1)) / LEN(ascii_);
-		face->height  = face->ascent + face->descent;
-		face->advance = face->self->max_advance_width;
+	pat = FcNameParse((FcChar8 *)name);
+	if (!pat) {
+		goto cleanup;
 	}
 
-	FcPatternDestroy(pattern);
+	int fontid = pool.fonts.count;
 
-	return pool.fonts.count++;
+	if (!wsr__init_font_style(env, pat, fontid, STYLE_REGULAR))
+		goto cleanup;
+	if (!wsr__init_font_style(env, pat, fontid, STYLE_ITALIC))
+		goto cleanup;
+	if (!wsr__init_font_style(env, pat, fontid, STYLE_ITALIC|STYLE_BOLD))
+		goto cleanup;
+	if (!wsr__init_font_style(env, pat, fontid, STYLE_BOLD))
+		goto cleanup;
+
+	ret = pool.fonts.count++;
+cleanup:
+	if (pat) FcPatternDestroy(pat);
+	return ret;
 }
 
 bool
-wsr_get_avg_font_size(int fontid, int faceid, int *w_, int *h_)
+wsr_get_avg_font_size(int fontid, int styleid, int *w_, int *h_)
 {
-	FontFace *face = getface(fontid, faceid);
+	FontStyle *style = fontstyle(fontid, styleid);
 
-	if (face->self) {
-		if (w_) *w_ = face->width;
-		if (h_) *h_ = face->height;
+	if (style->self) {
+		if (w_) *w_ = style->width;
+		if (h_) *h_ = style->height;
 
 		return true;
 	}
@@ -898,19 +927,25 @@ wsr_get_avg_font_size(int fontid, int faceid, int *w_, int *h_)
 }
 
 bool
-wsr_set_colors(RC *rc, int colorbg, int colorfg)
+wsr_set_colors(RC *rc_, int bg, int fg)
 {
+	RCData *rc = (void *)rc_;
+
 	if (!rc) return false;
 
-	if (colorbg != ID_NULL) rc->colorid.bg = colorbg;
-	if (colorfg != ID_NULL) rc->colorid.fg = colorfg;
+	if (bg != ID_NULL)
+		rc->pub.color.default_bg = rc->pub.color.bg = bg;
+	if (fg != ID_NULL)
+		rc->pub.color.default_fg = rc->pub.color.fg = fg;
 
 	return true;
 }
 
 int
-wsr_load_color_name(RC *rc, const char *name)
+wsr_load_color_name(RC *rc_, const char *name)
 {
+	RCData *rc = (void *)rc_;
+
 	if (!rc || !name) {
 		return ID_NULL;
 	}
@@ -931,12 +966,14 @@ wsr_load_color_name(RC *rc, const char *name)
 }
 
 void
-wsr_draw_rect(RC *rc, Color *color,
+wsr_draw_rect(RC *rc_, Color *color,
              uint x1, uint y1,
              uint x2, uint y2,
              uint dx, uint dy,
              uint ox, uint oy)
 {
+	RCData *rc = (void *)rc_;
+
 	if (!rc) return;
 
 	uint x = ox + (x1 * dx);
@@ -948,44 +985,83 @@ wsr_draw_rect(RC *rc, Color *color,
 }
 
 void
-wsr_fill_region(RC *rc, uint x1, uint y1, uint x2, uint y2, uint dx, uint dy)
+wsr_fill_color_region(RC *rc_, int fg, uint x1, uint y1, uint x2, uint y2, uint dx, uint dy)
 {
-	wsr_draw_rect(rc, getcolor(rc->colorid.fg),
+	RCData *rc = (void *)rc_;
+
+	wsr_draw_rect(rc_, getcolor(fg),
 	    x1, y1, x2, y2, dx, dy, rc->hdr->win.bw, rc->hdr->win.bw);
 }
 
 void
-wsr_clear_region(RC *rc, uint x1, uint y1, uint x2, uint y2, uint dx, uint dy)
+wsr_fill_region(RC *rc_, uint x1, uint y1, uint x2, uint y2, uint dx, uint dy)
 {
-	wsr_draw_rect(rc, getcolor(rc->colorid.bg),
+	RCData *rc = (void *)rc_;
+
+	wsr_draw_rect(rc_, getcolor(rc->pub.color.fg),
 	    x1, y1, x2, y2, dx, dy, rc->hdr->win.bw, rc->hdr->win.bw);
 }
 
 void
-wsr_clear_screen(RC *rc)
+wsr_clear_region(RC *rc_, uint x1, uint y1, uint x2, uint y2, uint dx, uint dy)
 {
-	wsr_clear_region(rc, 0, 0, rc->hdr->win.w, rc->hdr->win.h, 1, 1);
+	RCData *rc = (void *)rc_;
+
+	wsr_draw_rect(rc_, getcolor(rc->pub.color.bg),
+	    x1, y1, x2, y2, dx, dy, rc->hdr->win.bw, rc->hdr->win.bw);
 }
 
 void
-wsr_draw_string(RC *rc, const char *str, uint len, uint col, uint row, bool invert)
+wsr_clear_screen(RC *rc_)
 {
+	RCData *rc = (void *)rc_;
+
+	wsr_clear_region(rc_, 0, 0, rc->hdr->win.w, rc->hdr->win.h, 1, 1);
+}
+
+void
+wsr_draw_color_string(RC *rc_, int bg, int fg, bool invert, const char *str, uint len, uint col, uint row)
+{
+	RCData *rc = (void *)rc_;
+
 	if (!rc || !len) return;
 
-	FontFace *face = getface(rc->fontid, rc->faceid);
-	Color *color;
+	FontStyle *style = fontstyle(rc->pub.font.face, rc->pub.font.style);
 
-	if (!invert) {
-		color = getcolor(rc->colorid.fg);
-	} else {
-		wsr_fill_region(rc,
-		    col, row, col + len, row + 1, face->width, face->height);
-		color = getcolor(rc->colorid.bg);
+	if (invert) { int tmp = fg; fg = bg, bg = tmp; }
+
+	if (bg != rc->pub.color.default_bg) {
+		wsr_fill_color_region(rc_, bg,
+		    col, row, col + len, row + 1, style->width, style->height);
 	}
 
-	XftDrawString8(rc->srf, color, face->self,
-	    rc->hdr->win.bw + (col * face->width),
-	    rc->hdr->win.bw + (row * face->height) + face->ascent,
+	XftDrawString8(rc->srf, getcolor(fg), style->self,
+	    rc->hdr->win.bw + (col * style->width),
+	    rc->hdr->win.bw + (row * style->height) + style->ascent,
+	    (FcChar8 *)str, len);
+}
+
+void
+wsr_draw_string(RC *rc_, const char *str, uint len, uint col, uint row, bool invert)
+{
+	RCData *rc = (void *)rc_;
+
+	if (!rc || !len) return;
+
+	FontStyle *style = fontstyle(rc->pub.font.face, rc->pub.font.style);
+	struct { int bg, fg; } color;
+
+	if (!invert) {
+		color.fg = rc->pub.color.fg;
+	} else {
+		wsr_fill_region(rc_,
+		    col, row, col + len, row + 1, style->width, style->height);
+		color.fg = rc->pub.color.bg;
+	}
+
+	XftDrawString8(rc->srf, getcolor(color.fg), style->self,
+	    rc->hdr->win.bw + (col * style->width),
+	    rc->hdr->win.bw + (row * style->height) + style->ascent,
 	    (FcChar8 *)str, len);
 }
 

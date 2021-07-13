@@ -78,9 +78,10 @@ size_t pty_read(void);
 void pty_resize(int, int, int, int);
 size_t pty_write(const char *, size_t);
 
-int stream_write(int);
+int stream_write(int, uint16, uint16, uint16);
 void stream_realloc(size_t);
-size_t stream_get_row(uint, char **);
+size_t stream_get_row(uint, Cell **, Attr **);
+size_t stream_get_row_string(uint, char **);
 void stream_set_row_cells(int, int, int, int);
 void stream_clear_row_cells(int, int, int, bool, bool);
 void stream_insert_cells(int, uint);
@@ -104,6 +105,8 @@ extern int histsize;
 extern double min_latency;
 extern double max_latency;
 
-#define TAB_LEN(i)          (tabstop - (i) % tabstop)
+#define TAB_LEN(i) (tabstop - (i) % tabstop)
+#define COLOR_BG 0
+#define COLOR_FG 7
 
 #endif

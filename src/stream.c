@@ -22,9 +22,9 @@ typedef struct { uint   x, y, w, h; } URect;
 typedef struct { uint32 x, y, w, h; } URect32;
 typedef struct { uint64 x, y, w, h; } URect64;
 
-static void put_glyph(int);
+static void put_glyph(int, uint16, uint16, uint16);
 static void put_linefeed(void);
-static void put_tab(void);
+static void put_tab(uint16, uint16, uint16);
 static Row *row_create(int, bool);
 static Row *row_alloc(int, bool);
 static void cursor_set_row_abs(int);
@@ -120,7 +120,11 @@ row_alloc(int index, bool isnewline)
 }
 
 int
+#if 1
+stream_write(int u, uint16 bg, uint16 fg, uint16 flags)
+#else
 stream_write(int u)
+#endif
 {
 	int offset = tty.c.offset;
 
@@ -143,12 +147,13 @@ stream_write(int u)
 		cursor_set_col_rel(-1);
 		break;
 	case '\t':
-		put_tab();
+		put_tab(bg, fg, flags);
 		break;
 	case 0x07:
 		break;
 	default:
-		put_glyph(u);
+		/* put_glyph(u); */
+		put_glyph(u, bg, fg, flags);
 		break;
 	}
 
@@ -160,7 +165,11 @@ stream_write(int u)
 }
 
 void
+#if 1
+put_glyph(int u, uint16 bg, uint16 fg, uint16 flags)
+#else
 put_glyph(int u)
+#endif
 {
 	Row *rp = rowptr(tty.c.row);
 	int rcurr = tty.c.row;
@@ -182,6 +191,10 @@ put_glyph(int u)
 	int occupant = tty.data[base+column];
 
 	tty.data[base+column] = u;
+	tty.attr[base+column].color.bg = bg;
+	tty.attr[base+column].color.fg = fg;
+	tty.attr[base+column].flags = flags;
+
 	if (!occupant) rp->len = column + 1;
 
 	if (rnext > rcurr) {
@@ -217,12 +230,12 @@ put_linefeed(void)
 }
 
 void
-put_tab(void)
+put_tab(uint16 bg, uint16 fg, uint16 flags)
 {
 	for (int n = 0; tty.c.col + 1 < tty.maxcols; n++) {
 		if (tty.tabs[tty.c.col] && n > 0)
 			break;
-		put_glyph(' ');
+		put_glyph(' ', bg, fg, flags);
 	}
 }
 
@@ -445,7 +458,27 @@ stream_set_cursor_pos(int col, int row)
 }
 
 size_t
-stream_get_row(uint n, char **str)
+stream_get_row(uint n, Cell **cells, Attr **attrs)
+{
+	if ((int)n < tty.rows.count) {
+		uint offset = celloffset(n, 0);
+
+		if (tty.data[offset]) {
+			if (cells) *cells = tty.data + offset;
+			if (attrs) *attrs = tty.attr + offset;
+
+			return tty.rows.buf[n].len;
+		}
+	}
+
+	if (cells) *cells = NULL;
+	if (attrs) *attrs = NULL;
+
+	return 0;
+}
+
+size_t
+stream_get_row_string(uint n, char **str)
 {
 	if ((int)n < tty.rows.count) {
 		Cell *cell = cellptr(n, 0);

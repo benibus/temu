@@ -105,6 +105,11 @@ tty_init(int cols, int rows)
 		tty.tabs[i] |= (i % tabstop == 0) ? 1 : 0;
 	}
 
+	parser.flags = ATTR_NONE;
+	parser.state = STATE_DEFAULT;
+	parser.color.bg = COLOR_BG;
+	parser.color.fg = COLOR_FG;
+
 	return (tty.data && tty.attr);
 }
 
@@ -140,7 +145,7 @@ tty_write(const char *str, size_t len)
 					i++;
 				}
 			}
-			stream_write(u);
+			stream_write(u, parser.color.bg, parser.color.fg, parser.flags);
 		} else {
 			dummy__();
 		}
@@ -333,7 +338,12 @@ parse_codepoint(int ucode)
 			case 'I':
 				SEQBEG(CSI, CHT);
 				for (size_t i = 0; i < DEFAULT(parser.args.buf[0], 1); i++) {
-					  if (!stream_write('\t')) break;
+					if (!stream_write('\t', parser.color.bg,
+					                        parser.color.fg,
+					                        parser.flags))
+					{
+						break;
+					}
 				}
 				SEQEND(1);
 			case 'L': ESC_CSI("IL");
