@@ -211,6 +211,7 @@ render(void)
 		len = stream_get_row(tty.rows.top + n, &cells, &attrs);
 		for (size_t i = 0; i < len; i++) {
 			bool invert = (attrs[i].flags & ATTR_INVERT);
+			SET_COND(rc->font.style, attrs[i].flags & ATTR_BOLD, STYLE_BOLD);
 			rc->color.bg = attrs[i].color.bg;
 			rc->color.fg = attrs[i].color.fg;
 			wsr_draw_string(rc, cells + i, 1, i, n, invert);
@@ -223,7 +224,7 @@ render(void)
 	rc->color.bg = rc->color.default_bg;
 	rc->color.fg = rc->color.default_fg;
 #else
-		String cells;
+		struct String_ cells;
 		if ((cells.len = stream_get_row_string(tty.rows.top + n, &cells.str))) {
 			wsr_draw_string(rc, cells.str, cells.len, 0, n, false);
 			if (n == tty.c.row && isprint(cells.str[tty.c.col])) {
