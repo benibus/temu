@@ -98,6 +98,7 @@ typedef struct {
 Win *win_create_client(void);
 bool win_init_client(Win *);
 void win_show_client(Win *);
+void win_resize_client(Win *, uint, uint);
 double win_process_events(Win *, double);
 void win_get_size(Win *, uint *, uint *);
 void win_get_coords(Win *, int *, int *);

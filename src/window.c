@@ -367,6 +367,28 @@ win_init_client(Win *pub)
 	return true;
 }
 
+void
+win_resize_client(Win *pub, uint w, uint h)
+{
+	WinData *win = (WinData *)pub;
+
+	if (win && win->pub.w != w && win->pub.h != h) {
+		XRenderFreePicture(win->x11->dpy, win->pic);
+		XFreePixmap(win->x11->dpy, win->buf);
+		win->buf = XCreatePixmap(win->x11->dpy,
+		                         win->buf, w, h,
+		                         win->x11->vis->depth);
+		ASSERT(win->buf);
+		XRenderPictureAttributes attr = { 0 };
+		win->pic = XRenderCreatePicture(win->x11->dpy,
+		                                win->buf,
+		                                win->x11->fmt,
+		                                0, &attr);
+		ASSERT(win->pic);
+		win_get_size(&win->pub, &win->pub.w, &win->pub.h);
+	}
+}
+
 Win *
 win_validate_config(Win *pub)
 {

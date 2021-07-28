@@ -157,6 +157,13 @@ tty_write(const char *str, size_t len)
 }
 
 void
+tty_resize(uint cols, uint rows)
+{
+	tty.maxcols = cols;
+	tty.maxrows = rows;
+}
+
+void
 buf_reset(void)
 {
 	parser.chars.count = 0;

@@ -72,6 +72,7 @@ typedef struct {
 
 bool tty_init(int, int);
 size_t tty_write(const char *, size_t);
+void tty_resize(uint, uint);
 
 int pty_init(char *);
 size_t pty_read(void);
