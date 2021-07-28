@@ -1,6 +1,8 @@
 #ifndef WINDOW_H__
 #define WINDOW_H__
 
+#include <X11/extensions/Xrender.h>
+
 #include "keymap.h"
 
 enum {
@@ -21,7 +23,7 @@ typedef struct {
 	uint bw;
 	uint minw, minh;
 	uint maxw, maxh;
-	u32 flags;
+	uint32 flags;
 	struct {
 		void (*resize)(int, int);
 		void (*key_press)(int, int, char *, int);
@@ -29,33 +31,62 @@ typedef struct {
 	} events;
 } Win;
 
-#if 1
 enum {
 	STYLE_REGULAR,
-	STYLE_ITALIC = (1 << 0),
-	STYLE_BOLD   = (1 << 1),
-	STYLE_MAX    = (1 << 2)
+	STYLE_ITALIC  = (1 << 0),
+	STYLE_OBLIQUE = (1 << 1),
+	STYLE_BOLD    = (1 << 2),
+	STYLE_MAX     = (1 << 3)
 };
-#else
-enum {
-	STYLE_REGULAR,
-	STYLE_ITALIC,
-	STYLE_BOLD_ITALIC,
-	STYLE_BOLD,
-	NUM_STYLE
-};
-#endif
+
+typedef struct FontFace_ FontFace;
 
 typedef struct {
+	bool embolden;
+	bool transform;
+	int width, height;
+	int ascent, descent;
+	int max_advance;
+	struct { long  x, y; } size_px;
+	struct { float x, y; } size_pt;
+} FontMetrics;
+
+typedef struct {
+	Picture fill;
+	ulong pixel;
+	XRenderColor values;
+} Color;
+
+typedef struct {
+	uint width, height;
+	int pitch;
+	struct { int x, y; } bearing;
+	struct { int x, y; } advance;
+} GlyphMetrics;
+
+typedef struct {
+	uint32 ucs4;
+	FontFace *font;
+	Color *foreground;
+	Color *background;
+	uint32 flags;
+} GlyphRender;
+
+enum {
+	RC_MODE_DEFAULT,
+	RC_MODE_FILL =   (1 << 0),
+	RC_MODE_INVERT = (1 << 1),
+	RC_MODE_MAX  =   (1 << 2)
+};
+
+typedef struct {
+	Win *win;
+	uint16 mode;
+	FontFace *font;
 	struct {
-		int face;
-		int style;
-	} font;
-	struct {
-		int default_bg, bg;
-		int default_fg, fg;
+		Color *fg;
+		Color *bg;
 	} color;
-	bool invert;
 } RC;
 
 #define MAX_FONTS  2
@@ -64,28 +95,29 @@ typedef struct {
 
 #define ID_NULL (-1)
 
-Win *ws_init_window(void);
-bool ws_create_window(Win *);
-double ws_process_events(Win *, double);
-void ws_get_win_size(Win *, uint *, uint *);
-void ws_get_win_pos(Win *, int *, int *);
-void ws_show_window(Win *);
-void ws_swap_buffers(Win *);
-
-RC *wsr_init_context(Win *);
-bool wsr_set_font(RC *, int, int);
-int wsr_load_font(Win *, const char *);
-bool wsr_get_avg_font_size(int, int, int *, int *);
-bool wsr_set_colors(RC *, int, int);
-int wsr_load_color_name(RC *, const char *);
-void wsr_fill_region(RC *, uint, uint, uint, uint, uint, uint);
-void wsr_fill_color_region(RC *, int, uint, uint, uint, uint, uint, uint);
-void wsr_clear_region(RC *, uint, uint, uint, uint, uint, uint);
-void wsr_clear_screen(RC *);
-void wsr_draw_string(RC *, const char *, uint, uint, uint, bool);
-void wsr_draw_color_string(RC *, int, int, bool, const char *, uint, uint, uint);
+Win *win_create_client(void);
+bool win_init_client(Win *);
+void win_show_client(Win *);
+double win_process_events(Win *, double);
+void win_get_size(Win *, uint *, uint *);
+void win_get_coords(Win *, int *, int *);
+void win_render_frame(Win *);
+bool win_init_render_context(Win *, RC *);
 
 u64 timer_current_ns(void);
 double timer_elapsed_s(u64, u64 *);
+
+FontFace *font_create_face(RC *, const char *);
+FontFace *font_create_derived_face(FontFace *, uint);
+bool font_get_face_metrics(FontFace *, FontMetrics *);
+bool font_init_face(FontFace *);
+void font_destroy_face(FontFace *);
+Color *color_create_name(RC *, Color *, const char *);
+void color_free_data(RC *, Color *);
+void draw_rect_solid(const RC *, const Color *, int, int, int, int);
+void draw_string8(const RC *, int, int, const char *, uint);
+void draw_string16(const RC *, int, int, const uint16 *, uint);
+void draw_string32(const RC *, int, int, const uint32 *, uint);
+void draw_text_utf8(const RC *, const GlyphRender *, uint, int, int);
 
 #endif

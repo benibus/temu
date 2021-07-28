@@ -6,8 +6,8 @@ SRC := $(wildcard $(SRC_DIR)/*.c)
 OBJ := $(SRC:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 
 PKG_CONFIG = pkg-config
-IDLIBS = $(shell $(PKG_CONFIG) --cflags freetype2 fontconfig)
-LDLIBS = $(shell $(PKG_CONFIG) --libs freetype2 fontconfig) -lX11 -lutil -lXft
+IDLIBS = $(shell $(PKG_CONFIG) --cflags xrender freetype2 fontconfig)
+LDLIBS = $(shell $(PKG_CONFIG) --libs xrender freetype2 fontconfig) -lutil -lm
 LFLAGS =
 IFLAGS =
 

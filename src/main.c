@@ -39,11 +39,11 @@ u32 log_flags = 0;
 TTY tty = { 0 };
 PTY pty = { 0 };
 
-static int fonts[MAX_FONTS];
-static int colors[MAX_COLORS];
+static FontFace *fonts[4];
+static FontMetrics metrics;
+static Color colors[MAX_COLORS];
 static Win *win;
-static RC *rc;
-static int cw, ch;
+static RC rc;
 
 static void event_key_press(int, int, char *, int);
 static void run(void);
@@ -116,54 +116,72 @@ error_invalid:
 
 	int cols, rows;
 
-	if (!(win = ws_init_window()))
+	if (!(win = win_create_client()))
 		return 2;
-	if ((fonts[0] = wsr_load_font(win, config.font)) < 0)
+	if (!win_init_render_context(win, &rc))
 		return 3;
 	{
-		assert(wsr_get_avg_font_size(fonts[0], STYLE_REGULAR, &cw, &ch));
+		int n = 0;
 
+		for (uint i = 0; i < LEN(config.colors); i++) {
+			if (n == MAX_COLORS) {
+				break;
+			}
+			if (config.colors[i]) {
+				Color *res;
+				res = color_create_name(&rc, &colors[n], config.colors[i]);
+				ASSERT(res);
+				n++;
+			}
+		}
+
+		ASSERT(n >= 2);
+	}
+
+	fonts[0] = font_create_face(&rc, config.font);
+	ASSERT(fonts[0]);
+
+	fonts[1] = font_create_derived_face(fonts[0], STYLE_ITALIC);
+	fonts[2] = font_create_derived_face(fonts[0], STYLE_ITALIC|STYLE_BOLD);
+	fonts[3] = font_create_derived_face(fonts[0], STYLE_BOLD);
+	ASSERT(fonts[1] && fonts[2] && fonts[3]);
+
+	ASSERT(font_init_face(fonts[0]));
+	ASSERT(font_init_face(fonts[1]));
+	ASSERT(font_init_face(fonts[2]));
+	ASSERT(font_init_face(fonts[3]));
+	font_get_face_metrics(fonts[0], &metrics);
+
+	{
 		win->title = config.wm_title;
 		win->instance = config.wm_instance;
 		win->class = config.wm_class;
-		win->iw = cw;
-		win->ih = ch;
+		win->iw = metrics.width;
+		win->ih = metrics.ascent + metrics.descent;
 		win->w = win->iw * config.columns;
 		win->h = win->ih * config.rows;
 		win->bw = config.border_px;
 		win->flags = WINATTR_RESIZABLE;
 	}
-	if (!(ws_create_window(win)))
+
+	if (!win_init_client(win)) {
 		return 4;
-	{
-		assert((cols = (win->w / cw) - (2 * win->bw)) == (int)config.columns);
-		assert((rows = (win->h / ch) - (2 * win->bw)) == (int)config.rows);
 	}
-	if (!(rc = wsr_init_context(win)))
-		return 5;
-	wsr_set_font(rc, fonts[0], STYLE_REGULAR);
-	{
-		int n = 0;
 
-		for (int i = 0; i < (ssize_t)LEN(config.colors); i++) {
-			if (n == MAX_COLORS)
-				break;
-			if (config.colors[i]) {
-				colors[n] = wsr_load_color_name(rc, config.colors[i]);
-				assert(colors[n] >= 0);
-				n++;
-			}
-		}
+	cols = (win->w / metrics.width) - (2 * win->bw);
+	rows = (win->h / (metrics.ascent + metrics.descent)) - (2 * win->bw);
+	ASSERT(cols == (int)config.columns);
+	ASSERT(rows == (int)config.rows);
 
-		assert(n >= 2);
-	}
-	assert(wsr_set_colors(rc, colors[COLOR_BG], colors[COLOR_FG]));
+	rc.font = fonts[0];
+	rc.color.fg = &colors[COLOR_FG];
+	rc.color.bg = &colors[COLOR_BG];
 
 	if (!tty_init(cols, rows))
 		return 6;
 
 	win->events.key_press = event_key_press;
-	ws_show_window(win);
+	win_show_client(win);
 
 	run();
 
@@ -191,7 +209,7 @@ run(void)
 			pty_read();
 		}
 
-		ws_process_events(win, timeout);
+		win_process_events(win, timeout);
 		render();
 	}
 }
@@ -199,47 +217,62 @@ run(void)
 void
 render(void)
 {
-	char cursor[3] = { ' ' };
+	rc.color.fg = &colors[COLOR_FG];
+	rc.color.bg = &colors[COLOR_BG];
+	draw_rect_solid(&rc, rc.color.bg, 0, 0, win->w, win->h);
 
-	wsr_clear_screen(rc);
-	for (int n = 0; n <= tty.rows.bot - tty.rows.top; n++) {
-#if 1
+	for (int y = 0; y <= tty.rows.bot - tty.rows.top; y++) {
+		GlyphRender glyphs[256] = { 0 };
+		FontFace *font = rc.font;
 		Cell *cells;
 		Attr *attrs;
-		size_t len;
+		int x, len;
 
-		len = stream_get_row(tty.rows.top + n, &cells, &attrs);
-		for (size_t i = 0; i < len; i++) {
-			bool invert = (attrs[i].flags & ATTR_INVERT);
-			SET_COND(rc->font.style, attrs[i].flags & ATTR_BOLD, STYLE_BOLD);
-			rc->color.bg = attrs[i].color.bg;
-			rc->color.fg = attrs[i].color.fg;
-			wsr_draw_string(rc, cells + i, 1, i, n, invert);
-		}
-		if (len && n == tty.c.row && isprint(cells[tty.c.col])) {
-			cursor[0] = cells[tty.c.col];
-		}
-	}
+		len = stream_get_row(tty.rows.top + y,
+		                     &cells, &attrs);
 
-	rc->color.bg = rc->color.default_bg;
-	rc->color.fg = rc->color.default_fg;
-#else
-		struct String_ cells;
-		if ((cells.len = stream_get_row_string(tty.rows.top + n, &cells.str))) {
-			wsr_draw_string(rc, cells.str, cells.len, 0, n, false);
-			if (n == tty.c.row && isprint(cells.str[tty.c.col])) {
-				cursor[0] = cells.str[tty.c.col];
+		for (x = 0; x < len && x < (int)LEN(glyphs); x++) {
+			Color *fg = &colors[attrs[x].color.fg];
+			Color *bg = NULL;
+
+			if (attrs[x].flags & ATTR_INVERT) {
+				fg = &colors[attrs[x].color.bg];
+				bg = &colors[attrs[x].color.fg];
+			} else {
+				fg = &colors[attrs[x].color.fg];
+				bg = &colors[attrs[x].color.bg];
 			}
+			bg = (bg != rc.color.bg) ? bg : NULL;
+
+			font = fonts[0];
+			if (attrs[x].flags & ATTR_ITALIC) {
+				font = fonts[1];
+				if (attrs[x].flags & ATTR_BOLD) {
+					font = fonts[2];
+				}
+			} else if (attrs[x].flags & ATTR_BOLD) {
+				font = fonts[3];
+			}
+
+			glyphs[x].ucs4 = cells[x];
+			glyphs[x].foreground = fg;
+			glyphs[x].background = bg;
+			glyphs[x].font = font;
 		}
+
+		if (y + tty.rows.top == tty.c.row) {
+			int crs = tty.c.col;
+			glyphs[crs].ucs4 = DEFAULT(glyphs[crs].ucs4, L' ');
+			glyphs[crs].foreground = &colors[COLOR_BG];
+			glyphs[crs].background = &colors[COLOR_FG];
+			glyphs[crs].font = DEFAULT(glyphs[crs].font, font);
+			x += (crs == len);
+		}
+
+		draw_text_utf8(&rc, glyphs, x, 0, y * (metrics.ascent + metrics.descent));
 	}
-#endif
 
-	wsr_draw_string(rc,
-	    cursor, strlen(cursor),
-	    tty.c.col, tty.c.row - tty.rows.top,
-	    true);
-
-	ws_swap_buffers(win);
+	win_render_frame(win);
 }
 
 void
