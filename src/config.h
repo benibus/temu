@@ -6,7 +6,7 @@ static Config config = {
 	.wm_instance = "win_floating",
 	.wm_title = "temu",
 	.geometry = NULL,
-	.font = "monospace:size=16.0",
+	.font = "monospace:size=13.0",
 	.colors = {
 		[0]  = "#07070A",
 		[1]  = "#803A41",
@@ -30,8 +30,8 @@ static Config config = {
 	.tabstop = 8,
 	.border_px = 0,
 	.history_size = 120,
-	.columns = 80,
-	.rows = 24,
+	.columns = 140,
+	.rows = 40,
 	.position = { .x = 0, .y = 0 },
 	.latency = { .min = 8, .max = 33 }
 };

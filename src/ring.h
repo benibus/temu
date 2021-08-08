@@ -1,21 +1,25 @@
 #ifndef RING_H__
 #define RING_H__
 
-typedef void (*hist_set_fn_)(int, int, void *, int);
+typedef struct Ring_ Ring;
+typedef struct Ring_ RingBuf;
 
-void *hist_init(size_t);
-void  hist_reset(void);
-void  hist_append(int);
-void  hist_decrement(void);
-void  hist_delete_entry(int, int);
-void  hist_iterate(hist_set_fn_, int);
-void  hist_iterate_rev(hist_set_fn_, int);
-void  hist_shift_from_row(int, int);
-int   hist_get_size(void);
-int   hist_get_value(int);
-int   hist_get_first(void);
-int   hist_get_last(void);
-bool  hist_is_full(void);
-bool  hist_is_empty(void);
+struct Ring_ {
+	int read, write;
+	int count, max;
+	int stride;
+	uchar *data;
+};
+
+Ring *ring_init(Ring *, uint, uint);
+void ring_free(Ring *);
+void *ring_push(Ring *, void *);
+int ring_count(Ring *);
+int ring_index(Ring *, int);
+void *ring_data(Ring *, int);
+
+/* #define RING_FULL(r)  ((r)->write < (r)->read || !(r)->read) */
+#define RING_FULL(r)  ((r)->count + 1 >= (r)->max)
+#define RING_EMPTY(r) ((r)->write == (r)->read)
 
 #endif

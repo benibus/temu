@@ -137,27 +137,43 @@ key_get_sequence(uint key, uint mod, char *buf, size_t size)
 		switch (key) {
 		case KEY_RETURN:
 		case KEY_KP_ENTER:
-			str = "\r";
-			if (mod == MOD_ALT)
+			switch (mod) {
+			case MOD_ALT:
 				str = ESC"\r";
-			else if (mod == MOD_CTRL)
+				break;
+			case MOD_CTRL:
 				str = CSI"27;5;13~";
+				break;
+			default:
+				str = "\r";
+				break;
+			}
 			break;
 		case KEY_TAB:
 		case KEY_KP_TAB:
-			str = "\t";
-			if (mod == MOD_ALT)
+			switch (mod) {
+			case MOD_ALT:
 				str = ESC"\t";
-			else if (mod == MOD_CTRL)
+				break;
+			case MOD_CTRL:
 				str = CSI"27;5;13~";
+				break;
+			default:
+				str = "\t";
+				break;
+			}
 			break;
 		case KEY_BACKSPACE:
-			str = "\177";
-			if (mod == MOD_ALT)
+			switch (mod) {
+			case MOD_ALT:
 				str = ESC"\177";
+				break;
+			default:
+				str = "\177";
+				break;
+			}
 			break;
 		}
-
 		if (str) {
 			len = snprintf(buf, size-1, "%s", str);
 		} else {

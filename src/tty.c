@@ -13,7 +13,7 @@
 #define SET(base_,mask_,opt_) \
 ( (base_) = ((opt_)) ? ((base_) | (mask_)) : ((base_) & ~(mask_)) )
 
-#if 1
+#if 0
 #define PRINTSEQ(s_) do { \
 	msg_log("Parser", "%-6s %-15s (%#.4x|%#.4x)  bg:%03u fg:%03u  lc:%-6s #%02u:",             \
 	    asciistr(g_ucode), (s_), parser.state, parser.flags, parser.color.bg, parser.color.fg, \
@@ -68,7 +68,7 @@ typedef struct parser_s_ {
 	uint8 state;
 	uint16 flags;
 	int lastc;
-	struct { uint16 bg, fg; } color;
+	ColorSet color;
 	struct {
 		size_t buf[MAX_ARGS];
 		uint count;
@@ -96,12 +96,20 @@ bool
 tty_init(int cols, int rows)
 {
 	memclear(&tty, 1, sizeof(tty));
-	tty.maxcols = cols;
-	tty.maxrows = rows;
-	stream_realloc(bitround(histsize * tty.maxcols, 1) + 1);
+#if 0
+	tty.cols = cols;
+	tty.rows = rows;
+	stream_realloc(bitround(histsize * tty.cols, 1) + 1);
+#else
+	stream_init(&tty, cols, rows, histsize);
+#endif
+	for (int i = 0; i < tty.hist.max; i++) {
+		Row *row = ring_data(&tty.hist, i);
+		row->offset = i * tty.cols;
+	}
 
 	ASSERT(tabstop > 0);
-	for (int i = 0; ++i < tty.maxcols; ) {
+	for (int i = 0; ++i < tty.cols; ) {
 		tty.tabs[i] |= (i % tabstop == 0) ? 1 : 0;
 	}
 
@@ -110,7 +118,7 @@ tty_init(int cols, int rows)
 	parser.color.bg = COLOR_BG;
 	parser.color.fg = COLOR_FG;
 
-	return (tty.data && tty.attr);
+	return !!tty.cells;
 }
 
 size_t
@@ -134,9 +142,9 @@ tty_write(const char *str, size_t len)
 	}
 #endif
 	for (i = 0; str[i] && i < len; i++) {
-		if (tty.size + tty.maxcols >= tty.max) {
-			stream_realloc(bitround(tty.size * 2, 1) + 1);
-		}
+		/* if (tty.size + tty.cols >= tty.max) { */
+		/* 	stream_realloc(bitround(tty.size * 2, 1) + 1); */
+		/* } */
 		if (!parse_codepoint(str[i])) {
 			int u = str[i];
 			if (u == '\r' && i + 1 < len) {
@@ -145,13 +153,13 @@ tty_write(const char *str, size_t len)
 					i++;
 				}
 			}
-			stream_write(u, parser.color.bg, parser.color.fg, parser.flags);
+			stream_write(u, parser.color, parser.flags);
 		} else {
 			dummy__();
 		}
 	}
 
-	tty.data[tty.size] = 0;
+	tty.cells[tty.size].ucs4 = 0;
 
 	return i;
 }
@@ -159,8 +167,8 @@ tty_write(const char *str, size_t len)
 void
 tty_resize(uint cols, uint rows)
 {
-	tty.maxcols = cols;
-	tty.maxrows = rows;
+	tty.cols = cols;
+	tty.rows = rows;
 }
 
 void
@@ -345,9 +353,7 @@ parse_codepoint(int ucode)
 			case 'I':
 				SEQBEG(CSI, CHT);
 				for (size_t i = 0; i < DEFAULT(parser.args.buf[0], 1); i++) {
-					if (!stream_write('\t', parser.color.bg,
-					                        parser.color.fg,
-					                        parser.flags))
+					if (!stream_write('\t', parser.color, parser.flags))
 					{
 						break;
 					}
@@ -358,7 +364,7 @@ parse_codepoint(int ucode)
 			case 'P':
 				SEQBEG(CSI, DCH);
 				stream_clear_row_cells(
-				    tty.c.row, tty.c.col, DEFAULT(parser.args.buf[0], 1), true, false
+				    tty.pos.y, tty.pos.x, DEFAULT(parser.args.buf[0], 1), true, false
 				);
 				SEQEND(1);
 			case 'S': ESC_CSI("SU");
@@ -372,6 +378,9 @@ parse_codepoint(int ucode)
 			case 'g': ESC_CSI("TBC");
 			case 'm':
 				SEQBEG(CSI, SGR);
+				if (!parser.args.count) {
+					parser.args.buf[parser.args.count++] = 0;
+				}
 				for (size_t i = 0; i < parser.args.count; i++) {
 					switch (parser.args.buf[i]) {
 					case 0:
@@ -406,12 +415,15 @@ parse_codepoint(int ucode)
 						break;
 					case 38:
 					case 48:
-						if (i + 2 < parser.args.count && parser.args.buf[i+1] == 5) {
+						if (i + 2 < parser.args.count &&
+						    parser.args.buf[i+1] == 5)
+						{
 							if (parser.args.buf[i] < 40) {
-								parser.color.fg = parser.args.buf[i+2] - 30;
+								parser.color.fg = parser.args.buf[i+2];
 							} else {
-								parser.color.bg = parser.args.buf[i+2] - 40;
+								parser.color.bg = parser.args.buf[i+2];
 							}
+							i += 2;
 						}
 						break;
 					case 39:
@@ -435,6 +447,12 @@ parse_codepoint(int ucode)
 						}
 						break;
 					}
+					/* if (parser.color.fg > 15) { */
+					/* 	parser.color.fg = 7; */
+					/* } */
+					/* if (parser.color.bg > 15) { */
+					/* 	parser.color.bg = 0; */
+					/* } */
 				}
 				SEQEND(1);
 			case 'u': ESC_CSI("[u");
@@ -448,15 +466,15 @@ parse_codepoint(int ucode)
 				SEQBEG(CSI, ED);
 				switch (parser.args.buf[0]) {
 				case 0:
-					stream_clear_rows(tty.c.row + 1, tty.maxrows);
-					stream_clear_row_cells(tty.c.row, tty.c.col, tty.maxcols, true, false);
+					stream_clear_rows(tty.pos.y + 1, tty.rows);
+					stream_clear_row_cells(tty.pos.y, tty.pos.x, tty.cols, true, false);
 					break;
 				case 1:
-					stream_clear_rows(tty.rows.top, tty.c.row - tty.rows.top);
-					stream_clear_row_cells(tty.c.row, 0, tty.c.col, false, false);
+					stream_clear_rows(tty.top, tty.pos.y - tty.top);
+					stream_clear_row_cells(tty.pos.y, 0, tty.pos.x, false, false);
 					break;
 				case 2:
-					stream_clear_rows(tty.rows.top, tty.maxrows);
+					stream_clear_rows(tty.top, tty.rows);
 					stream_set_cursor_row(0);
 					break;
 				}
@@ -472,13 +490,13 @@ parse_codepoint(int ucode)
 				SEQBEG(CSI, EL);
 				switch (parser.args.buf[0]) {
 				case 0:
-					stream_clear_row_cells(tty.c.row, tty.c.col, tty.maxcols, true, false);
+					stream_clear_row_cells(tty.pos.y, tty.pos.x, tty.cols, true, false);
 					break;
 				case 1:
-					stream_clear_row_cells(tty.c.row, 0, tty.c.col, false, false);
+					stream_clear_row_cells(tty.pos.y, 0, tty.pos.x, false, false);
 					break;
 				case 2:
-					stream_clear_row_cells(tty.c.row, 0, tty.maxcols, true, false);
+					stream_clear_row_cells(tty.pos.y, 0, tty.cols, true, false);
 					stream_set_cursor_col(0);
 					break;
 				}

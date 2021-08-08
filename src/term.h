@@ -1,7 +1,9 @@
 #ifndef TERM_H__
 #define TERM_H__
 
-typedef char Cell;
+#include "ring.h"
+
+/* typedef char Cell; */
 
 enum {
 	DESC_NONE,
@@ -23,26 +25,47 @@ enum {
 	ATTR_MAX        = (1 << 6)
 };
 
+enum {
+	CELLTYPE_BLANK,
+	CELLTYPE_NORMAL,
+	CELLTYPE_COMPLEX,
+	CELLTYPE_DUMMY_TAB,
+	CELLTYPE_DUMMY_WIDE,
+	CELLTYPE_COUNT
+};
+
 #define ATTR_MASK (ATTR_MAX - 1)
+
+typedef struct { int x, y; } Pos;
+
+typedef struct {
+	uint16 fg; // foreground color index
+	uint16 bg; // background color index
+	uint16 hl; // highlight color index (rarely used)
+} ColorSet;
+
+#if 1
+typedef struct {
+	uint32 ucs4;    // UCS4 character code
+	ColorSet color; // color context
+	uint16 attr;    // visual attribute flags
+	uint8 type;     // cell type ID
+	uint8 width;    // glyph width in columns
+} Cell;
+#endif
 
 typedef struct {
 	uint16 flags;
-	struct { uint16 bg, fg; } color;
+	ColorSet color;
 	uint8 width;
 } Attr;
 
 typedef struct {
+	Cell *data;
 	uint offset;
 	int len;
 	uint16 flags;
 } Row;
-
-typedef struct {
-	int *buf; // buffer of lines (stored as row numbers)
-	int max;  // max index of buffer
-	int r, w; // internal read/write indices
-	uint lap; // write index lap (gets reset after row-pruning)
-} HistBuf;
 
 typedef struct {
 	pid_t pid; // process id
@@ -51,23 +74,15 @@ typedef struct {
 } PTY;
 
 typedef struct {
-	Cell *data; // text stream
-	Attr *attr; // text attributes stream
-	int size, max; // size of parallel stream
+	Cell *cells;
+	int size, max;
+	Ring hist;
 	uint8 *tabs;
-	struct {
-		Row *buf;
-		int count, max;
-		int top, bot;
-	} rows;
-	struct {
-		int offset;
-		int col, row;
-		bool wrap;
-	} c; // cursor
-	HistBuf hist;
-	int maxcols, maxrows;
+	Pos pos;
+	int top, bot;
+	int cols, rows;
 	int scroll;
+	bool wrap_next;
 } TTY;
 
 bool tty_init(int, int);
@@ -79,10 +94,11 @@ size_t pty_read(void);
 void pty_resize(int, int, int, int);
 size_t pty_write(const char *, size_t);
 
-int stream_write(int, uint16, uint16, uint16);
+TTY *stream_init(TTY *, uint, uint, uint);
+
+int stream_write(int, ColorSet, uint16);
 void stream_realloc(size_t);
-size_t stream_get_row(uint, Cell **, Attr **);
-size_t stream_get_row_string(uint, char **);
+Cell *stream_get_row(const TTY *, uint, uint *);
 void stream_set_row_cells(int, int, int, int);
 void stream_clear_row_cells(int, int, int, bool, bool);
 void stream_insert_cells(int, uint);
@@ -97,6 +113,7 @@ void stream_move_cursor_pos(int, int);
 size_t key_get_sequence(uint, uint, char *, size_t);
 
 void dummy__(void);
+void dbg_dump_history(TTY *);
 
 extern TTY tty;
 extern PTY pty;

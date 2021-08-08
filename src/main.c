@@ -52,6 +52,18 @@ static void render(void);
 int
 main(int argc, char **argv)
 {
+#if 0
+	{
+		float n = 0.000f;
+
+		for (int i = 0; i < 64; i++) {
+			printf("> %.6f (%.6f)\n", n, 1.0f / 1E3);
+			n += 1.0f / 1E3;
+		}
+
+		return 0;
+	}
+#endif
 	for (int opt; (opt = getopt(argc, argv, "T:N:C:f:c:r:x:y:b:m:")) != -1; ) {
 		union {
 			char *s;
@@ -195,7 +207,7 @@ run(void)
 	double timeout = min_latency / 1E3;
 
 	pty_init(config.shell);
-	pty_resize(win->w, win->h, tty.maxcols, tty.maxrows);
+	pty_resize(win->w, win->h, tty.cols, tty.rows);
 
 	while (win->state) {
 		FD_ZERO(&rset);
@@ -221,14 +233,66 @@ render(void)
 	rc.color.bg = &colors[COLOR_BG];
 	draw_rect_solid(&rc, rc.color.bg, 0, 0, win->w, win->h);
 
-	for (int y = 0; y <= tty.rows.bot - tty.rows.top; y++) {
+	for (uint y = 0; (int)y <= tty.bot - tty.top; y++) {
+#if 1
+		GlyphRender glyphs[256] = { 0 };
+
+		FontFace *font = rc.font;
+		Cell *cells = NULL;
+		uint x, len = 0;
+
+		cells = stream_get_row(&tty, tty.top + y, &len);
+		ASSERT((int)len <= tty.cols);
+
+		for (x = 0; cells && x < len && x < LEN(glyphs); x++) {
+			Cell cell = cells[x];
+			ColorSet color = { 0 };
+
+			if (cell.attr & ATTR_ITALIC) {
+				font = fonts[1];
+				if (cell.attr & ATTR_BOLD) {
+					font = fonts[2];
+				}
+			} else if (cell.attr & ATTR_BOLD) {
+				font = fonts[3];
+			} else {
+				font = fonts[0];
+			}
+
+			if (cell.attr & ATTR_INVERT) {
+				color.fg = cell.color.bg;
+				color.bg = cell.color.fg;
+			} else {
+				color.fg = cell.color.fg;
+				color.bg = cell.color.bg;
+			}
+			color.hl = cell.color.hl;
+
+			glyphs[x].ucs4 = cell.ucs4;
+			glyphs[x].font = font;
+			glyphs[x].foreground = &colors[color.fg];
+			glyphs[x].background = (color.bg != COLOR_BG)
+			                     ? &colors[color.bg]
+			                     : NULL;
+		}
+
+		// draw cursor
+		if (tty.top + (int)y == tty.pos.y) {
+			uint cx = tty.pos.x;
+			glyphs[cx].ucs4 = DEFAULT(glyphs[cx].ucs4, L' ');
+			glyphs[cx].foreground = &colors[COLOR_BG];
+			glyphs[cx].background = &colors[COLOR_FG];
+			glyphs[cx].font = DEFAULT(glyphs[cx].font, font);
+			x += (cx == len);
+		}
+#else
 		GlyphRender glyphs[256] = { 0 };
 		FontFace *font = rc.font;
 		Cell *cells;
 		Attr *attrs;
 		int x, len;
 
-		len = stream_get_row(tty.rows.top + y,
+		len = stream_get_row(tty.top + y,
 		                     &cells, &attrs);
 
 		for (x = 0; x < len && x < (int)LEN(glyphs); x++) {
@@ -260,15 +324,15 @@ render(void)
 			glyphs[x].font = font;
 		}
 
-		if (y + tty.rows.top == tty.c.row) {
-			int crs = tty.c.col;
+		if (y + tty.top == tty.pos.y) {
+			int crs = tty.pos.x;
 			glyphs[crs].ucs4 = DEFAULT(glyphs[crs].ucs4, L' ');
 			glyphs[crs].foreground = &colors[COLOR_BG];
 			glyphs[crs].background = &colors[COLOR_FG];
 			glyphs[crs].font = DEFAULT(glyphs[crs].font, font);
 			x += (crs == len);
 		}
-
+#endif
 		draw_text_utf8(&rc, glyphs, x, 0, y * (metrics.ascent + metrics.descent));
 	}
 
@@ -280,6 +344,11 @@ event_key_press(int key, int mod, char *buf, int len)
 {
 	char seq[64];
 	int seqlen = 0;
+
+	if (mod == MOD_ALT && key == KEY_F9) {
+		dbg_dump_history(&tty);
+		return;
+	}
 
 	if ((seqlen = key_get_sequence(key, mod, seq, LEN(seq)))) {
 		pty_write(seq, seqlen);
