@@ -11,6 +11,7 @@ typedef struct {
 	Display *dpy;
 	int screen;
 	Window root;
+	int fd;
 	XIM im;
 	XVisualInfo *vis;
 	XRenderPictFormat *fmt;

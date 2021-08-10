@@ -9,6 +9,7 @@
 
 #include "utils.h"
 #include "term.h"
+#include "utf8.h"
 
 #define SET(base_,mask_,opt_) \
 ( (base_) = ((opt_)) ? ((base_) | (mask_)) : ((base_) & ~(mask_)) )
@@ -65,16 +66,17 @@ enum {
 
 #define MAX_ARGS 256
 typedef struct parser_s_ {
+	Cell spec;
 	uint8 state;
 	uint16 flags;
-	int lastc;
+	uint32 lastc;
 	ColorSet color;
 	struct {
 		size_t buf[MAX_ARGS];
 		uint count;
 	} args;
 	struct {
-		char buf[BUFSIZ];
+		uint32 buf[BUFSIZ];
 		uint count;
 	} chars;
 } Parser;
@@ -85,24 +87,19 @@ static Parser parser = { 0 };
 static char mbuf[BUFSIZ];
 static size_t msize = 0;
 
-static void state_set(uint, bool, int);
+static void state_set(uint, bool, uint32);
 static void state_reset(void);
 static void state_set_esc(bool);
-static void buf_push(int);
+static void buf_push(uint32);
 static void buf_reset(void);
-static int parse_codepoint(int);
+static int parse_codepoint(uint32);
 
 bool
 tty_init(int cols, int rows)
 {
 	memclear(&tty, 1, sizeof(tty));
-#if 0
-	tty.cols = cols;
-	tty.rows = rows;
-	stream_realloc(bitround(histsize * tty.cols, 1) + 1);
-#else
 	stream_init(&tty, cols, rows, histsize);
-#endif
+
 	for (int i = 0; i < tty.hist.max; i++) {
 		Row *row = ring_data(&tty.hist, i);
 		row->offset = i * tty.cols;
@@ -124,7 +121,6 @@ tty_init(int cols, int rows)
 size_t
 tty_write(const char *str, size_t len)
 {
-	size_t i = 0;
 #if 1
 	{
 		for (size_t j = 0; j < len; j++) {
@@ -132,7 +128,6 @@ tty_write(const char *str, size_t len)
 			if (msize >= LEN(mbuf)-1-1)
 				break;
 			tmp = snprintf(&mbuf[msize], LEN(mbuf)-msize-1-1, "%s ", asciistr(str[j]));
-			/* printf("%zu/%zu\n", msize, LEN(mbuf)); */
 			if (tmp <= 0) break;
 			msize += tmp;
 		}
@@ -141,22 +136,23 @@ tty_write(const char *str, size_t len)
 		mbuf[msize] = 0;
 	}
 #endif
-	for (i = 0; str[i] && i < len; i++) {
-		/* if (tty.size + tty.cols >= tty.max) { */
-		/* 	stream_realloc(bitround(tty.size * 2, 1) + 1); */
-		/* } */
-		if (!parse_codepoint(str[i])) {
-			int u = str[i];
-			if (u == '\r' && i + 1 < len) {
-				if (str[i+1] == CTRL_LF) {
-					u = '\n';
-					i++;
-				}
-			}
-			stream_write(u, parser.color, parser.flags);
+	uint i = 0;
+
+	while (str[i] && i < len) {
+		uint width = 1;
+		uint err = 0;
+		uint32 ucs4 = 0;
+
+		width = utf8_decode(str + i, &ucs4, &err);
+		ASSERT(!err);
+
+		if (!parse_codepoint(ucs4)) {
+			stream_write(ucs4, parser.color, parser.flags);
 		} else {
 			dummy__();
 		}
+
+		i += width;
 	}
 
 	tty.cells[tty.size].ucs4 = 0;
@@ -174,6 +170,7 @@ tty_resize(uint cols, uint rows)
 void
 buf_reset(void)
 {
+	memclear(&parser.spec, 1, sizeof(parser.spec));
 	parser.chars.count = 0;
 	parser.chars.buf[parser.chars.count] = 0;
 	if (parser.args.count) {
@@ -183,25 +180,25 @@ buf_reset(void)
 }
 
 void
-buf_push(int ucode)
+buf_push(uint32 ucs4)
 {
 	ASSERT(parser.chars.count < BUFSIZ); // temporary
-	parser.chars.buf[parser.chars.count++] = ucode;
+	parser.chars.buf[parser.chars.count++] = ucs4;
 	parser.chars.count = 0;
 }
 
 static bool
-get_arg_csi(int ucode)
+get_arg_csi(uint32 ucs4)
 {
 	size_t *arg;
 
-	switch (ucode) {
+	switch (ucs4) {
 	case '0': case '1': case '2': case '3': case '4':
 	case '5': case '6': case '7': case '8': case '9':
-		parser.args.count += (!parser.args.count);
+		parser.args.count += !parser.args.count;
 		arg = &parser.args.buf[parser.args.count-1];
 		*arg *= 10;
-		*arg += ucode - '0';
+		*arg += ucs4 - '0';
 		break;
 	case ';':
 		ASSERT(parser.args.count > 0);
@@ -222,41 +219,41 @@ get_arg_csi(int ucode)
 #define SEQEND(ret)   do { state_reset(); } while (0); return (ret)
 
 int
-parse_codepoint(int ucode)
+parse_codepoint(uint32 ucs4)
 {
-	g_ucode = ucode;
+	g_ucode = ucs4;
 
-	switch (ucode) {
+	switch (ucs4) {
 	case CTRL_ESC:
 		PRINTSEQ("BEG>ESC");
 		state_set_esc(true);
 		return 1;
 	}
 
-	u32 state = (parser.state & STATE_MASK);
+	uint32 state = (parser.state & STATE_MASK);
 
 	if (state & STATE_STR) {
 		if (state & STATE_ESC) {
-			switch (ucode) {
+			switch (ucs4) {
 			case '\\':
 				PRINTSEQ("END");
-				state_set(STATE_STR, false, ucode);
+				state_set(STATE_STR, false, ucs4);
 				break;
 			default:
 				buf_push(CTRL_ESC);
-				buf_push(ucode);
+				buf_push(ucs4);
 				break;
 			}
 			state_reset();
 		} else {
-			switch (ucode) {
+			switch (ucs4) {
 			case CTRL_ST:
 			case CTRL_BEL:
 				PRINTSEQ("END");
 				state_reset();
 				break;
 			default:
-				buf_push(ucode);
+				buf_push(ucs4);
 				break;
 			}
 		}
@@ -264,7 +261,7 @@ parse_codepoint(int ucode)
 	}
 
 	if (state & STATE_ESC) {
-		switch (ucode) {
+		switch (ucs4) {
 		case CTRL_CAN:
 		case CTRL_SUB:
 			PRINTSEQ("ESC:CAN/SUB>END");
@@ -273,12 +270,12 @@ parse_codepoint(int ucode)
 		case '[':
 			PRINTSEQ("ESC>CSI");
 			state_set_esc(false);
-			state_set(STATE_CSI, true, ucode);
+			state_set(STATE_CSI, true, ucs4);
 			break;
 		case ']':
 			PRINTSEQ("ESC>OSC");
 			state_set_esc(false);
-			state_set(STATE_STR, true, ucode);
+			state_set(STATE_STR, true, ucs4);
 			break;
 		case 'E':
 			PRINTSEQ("ESC:NEL");
@@ -290,7 +287,7 @@ parse_codepoint(int ucode)
 			break;
 		case 'M':
 			SEQBEG(ESC, RI);
-			stream_move_cursor_row(-1);
+			cmd_move_cursor_y(&tty, -1);
 			SEQEND(1);
 			break;
 		default:
@@ -298,14 +295,14 @@ parse_codepoint(int ucode)
 		}
 		return 3;
 	} else if (state & STATE_CSI) {
-		if (get_arg_csi(ucode)) {
+		if (get_arg_csi(ucs4)) {
 			PRINTSEQ("CSI#ARG");
 			return 5;
 		}
 #define ESC_CSI(str_) do { PRINTSEQ("CSI:"str_); state_reset(); } while(0); return 4
 		if (parser.lastc == '[') {
 			// we check for an alt char as the first non-arg only
-			switch (ucode) {
+			switch (ucs4) {
 			case '?':
 			case '!':
 			case '"':
@@ -313,42 +310,39 @@ parse_codepoint(int ucode)
 			case '$':
 			case '>':
 				PRINTSEQ("CSI>DEC");
-				state_set(STATE_DEC, true, ucode);
+				state_set(STATE_DEC, true, ucs4);
 				return 5;
 			// CSI terminators with no alt variations (VT100)
 			case '@':
-#if 0
-				ESC_CSI("ICH");
-#else
 				SEQBEG(CSI, ICH);
-				stream_insert_cells(' ', DEFAULT(parser.args.buf[0], 1));
+				parser.spec.ucs4 = ' ';
+				parser.spec.width = 1;
+				cmd_insert_cells(&tty, &parser.spec,
+				                 DEFAULT(parser.args.buf[0], 1));
 				SEQEND(1);
-#endif
 			case 'A':
 				SEQBEG(CSI, CUU);
-				stream_move_cursor_row(-DEFAULT(parser.args.buf[0], 1));
+				cmd_move_cursor_y(&tty, -DEFAULT(parser.args.buf[0], 1));
 				SEQEND(1);
 			case 'B':
 				SEQBEG(CSI, CUD);
-				stream_move_cursor_row(+DEFAULT(parser.args.buf[0], 1));
+				cmd_move_cursor_y(&tty, +DEFAULT(parser.args.buf[0], 1));
 				SEQEND(1);
 			case 'C':
 				SEQBEG(CSI, CUF);
-				stream_move_cursor_col(+DEFAULT(parser.args.buf[0], 1));
+				cmd_move_cursor_x(&tty, +DEFAULT(parser.args.buf[0], 1));
 				SEQEND(1);
 			case 'D':
 				SEQBEG(CSI, CUB);
-				stream_move_cursor_col(-DEFAULT(parser.args.buf[0], 1));
+				cmd_move_cursor_x(&tty, -DEFAULT(parser.args.buf[0], 1));
 				SEQEND(1);
 			case 'E': ESC_CSI("CNL");
 			case 'F': ESC_CSI("CPL");
 			case 'G': ESC_CSI("CHA");
 			case 'H':
 				SEQBEG(CSI, CUP);
-				stream_set_cursor_pos(
-				    parser.args.buf[1],
-				    parser.args.buf[0]
-				);
+				cmd_set_cursor_x(&tty, parser.args.buf[1]);
+				cmd_set_cursor_y(&tty, parser.args.buf[0]);
 				SEQEND(1);
 			case 'I':
 				SEQBEG(CSI, CHT);
@@ -361,12 +355,13 @@ parse_codepoint(int ucode)
 				SEQEND(1);
 			case 'L': ESC_CSI("IL");
 			case 'M': ESC_CSI("DL");
-			case 'P':
+			case 'P': {
 				SEQBEG(CSI, DCH);
-				stream_clear_row_cells(
-				    tty.pos.y, tty.pos.x, DEFAULT(parser.args.buf[0], 1), true, false
-				);
+				int dx = DEFAULT(parser.args.buf[0], 1);
+				ASSERT(dx >= 0);
+				cmd_shift_cells(&tty, tty.cursor.x + dx, tty.cursor.y, -dx);
 				SEQEND(1);
+			}
 			case 'S': ESC_CSI("SU");
 			case 'T': ESC_CSI("SD");
 			case 'X': ESC_CSI("ECH");
@@ -447,41 +442,37 @@ parse_codepoint(int ucode)
 						}
 						break;
 					}
-					/* if (parser.color.fg > 15) { */
-					/* 	parser.color.fg = 7; */
-					/* } */
-					/* if (parser.color.bg > 15) { */
-					/* 	parser.color.bg = 0; */
-					/* } */
 				}
 				SEQEND(1);
 			case 'u': ESC_CSI("[u");
 			}
 		}
-		switch (ucode) {
+		switch (ucs4) {
 		case 'J':
 			switch (parser.lastc) {
 			case '[':
-#if 1
 				SEQBEG(CSI, ED);
 				switch (parser.args.buf[0]) {
 				case 0:
-					stream_clear_rows(tty.pos.y + 1, tty.rows);
-					stream_clear_row_cells(tty.pos.y, tty.pos.x, tty.cols, true, false);
+					cmd_clear_rows(&tty, tty.cursor.y + 1, tty.rows);
+					cmd_set_cells(&tty, &parser.spec,
+					              tty.cursor.x, tty.cursor.y,
+					              tty.cols);
 					break;
 				case 1:
-					stream_clear_rows(tty.top, tty.pos.y - tty.top);
-					stream_clear_row_cells(tty.pos.y, 0, tty.pos.x, false, false);
+					parser.spec.ucs4  = ' ';
+					parser.spec.width = 1;
+					cmd_clear_rows(&tty, tty.top, tty.cursor.y - tty.top);
+					cmd_set_cells(&tty, &parser.spec,
+					              0, tty.cursor.y,
+					              tty.cursor.x);
 					break;
 				case 2:
-					stream_clear_rows(tty.top, tty.rows);
-					stream_set_cursor_row(0);
+					cmd_clear_rows(&tty, tty.top, tty.rows);
+					cmd_set_cursor_y(&tty, 0);
 					break;
 				}
 				SEQEND(1);
-#else
-				ESC_CSI("ED");
-#endif
 			case '?': ESC_CSI("DECSED");
 			} break;
 		case 'K':
@@ -490,14 +481,22 @@ parse_codepoint(int ucode)
 				SEQBEG(CSI, EL);
 				switch (parser.args.buf[0]) {
 				case 0:
-					stream_clear_row_cells(tty.pos.y, tty.pos.x, tty.cols, true, false);
+					cmd_set_cells(&tty, &parser.spec,
+					              tty.cursor.x, tty.cursor.y,
+					              tty.cols - tty.cursor.x);
 					break;
 				case 1:
-					stream_clear_row_cells(tty.pos.y, 0, tty.pos.x, false, false);
+					parser.spec.ucs4 = ' ';
+					parser.spec.width = 1;
+					cmd_set_cells(&tty, &parser.spec,
+					              0, tty.cursor.y,
+					              tty.cursor.x);
 					break;
 				case 2:
-					stream_clear_row_cells(tty.pos.y, 0, tty.cols, true, false);
-					stream_set_cursor_col(0);
+					cmd_set_cells(&tty, &parser.spec,
+					              0, tty.cursor.y,
+					              tty.cols);
+					cmd_set_cursor_x(&tty, 0);
 					break;
 				}
 				SEQEND(1);
@@ -511,7 +510,15 @@ parse_codepoint(int ucode)
 		case 'h':
 			switch (parser.lastc) {
 			case '[': ESC_CSI("SM");
-			case '?': ESC_CSI("DECSET");
+			case '?':
+				  SEQBEG(CSI, DECSET);
+				  switch (parser.args.buf[0]) {
+				  	  case 25: {
+				  	  	  tty.cursor.hide = false;
+				  	  	  break;
+				  	  }
+				  }
+				  SEQEND(1);
 			} break;
 		case 'i':
 			switch (parser.lastc) {
@@ -521,7 +528,15 @@ parse_codepoint(int ucode)
 		case 'l':
 			switch (parser.lastc) {
 			case '[': ESC_CSI("RM");
-			case '?': ESC_CSI("DECRST");
+			case '?':
+				  SEQBEG(CSI, DECRST);
+				  switch (parser.args.buf[0]) {
+				  	  case 25: {
+				  	  	  tty.cursor.hide = true;
+				  	  	  break;
+				  	  }
+				  }
+				  SEQEND(1);
 			} break;
 		case 'n':
 			switch (parser.lastc) {
@@ -592,10 +607,10 @@ quit:
 }
 
 void
-state_set(uint mask, bool opt, int ucode)
+state_set(uint mask, bool opt, uint32 ucs4)
 {
 	SET(parser.state, mask, opt);
-	parser.lastc = ucode; // cache the transition character
+	parser.lastc = ucs4; // cache the transition character
 }
 
 void

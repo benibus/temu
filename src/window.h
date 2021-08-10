@@ -17,6 +17,7 @@ enum {
 typedef struct {
 	bool state;
 	char *title, *instance, *class;
+	int fd;
 	int x, y;
 	uint w, h;
 	uint iw, ih;
@@ -99,11 +100,12 @@ Win *win_create_client(void);
 bool win_init_client(Win *);
 void win_show_client(Win *);
 void win_resize_client(Win *, uint, uint);
-double win_process_events(Win *, double);
+int win_process_events(Win *, double);
 void win_get_size(Win *, uint *, uint *);
 void win_get_coords(Win *, int *, int *);
 void win_render_frame(Win *);
 bool win_init_render_context(Win *, RC *);
+int win_events_pending(Win *);
 
 u64 timer_current_ns(void);
 double timer_elapsed_s(u64, u64 *);

@@ -3,8 +3,6 @@
 
 #include "ring.h"
 
-/* typedef char Cell; */
-
 enum {
 	DESC_NONE,
 	DESC_DUMMY_TAB  = (1 << 0),
@@ -44,7 +42,6 @@ typedef struct {
 	uint16 hl; // highlight color index (rarely used)
 } ColorSet;
 
-#if 1
 typedef struct {
 	uint32 ucs4;    // UCS4 character code
 	ColorSet color; // color context
@@ -52,13 +49,6 @@ typedef struct {
 	uint8 type;     // cell type ID
 	uint8 width;    // glyph width in columns
 } Cell;
-#endif
-
-typedef struct {
-	uint16 flags;
-	ColorSet color;
-	uint8 width;
-} Attr;
 
 typedef struct {
 	Cell *data;
@@ -78,11 +68,14 @@ typedef struct {
 	int size, max;
 	Ring hist;
 	uint8 *tabs;
-	Pos pos;
 	int top, bot;
 	int cols, rows;
 	int scroll;
-	bool wrap_next;
+	struct {
+		int x, y;
+		bool wrap_next;
+		bool hide;
+	} cursor;
 } TTY;
 
 bool tty_init(int, int);
@@ -95,20 +88,17 @@ void pty_resize(int, int, int, int);
 size_t pty_write(const char *, size_t);
 
 TTY *stream_init(TTY *, uint, uint, uint);
-
-int stream_write(int, ColorSet, uint16);
-void stream_realloc(size_t);
+int stream_write(uint32, ColorSet, uint16);
 Cell *stream_get_row(const TTY *, uint, uint *);
-void stream_set_row_cells(int, int, int, int);
-void stream_clear_row_cells(int, int, int, bool, bool);
-void stream_insert_cells(int, uint);
-void stream_clear_rows(int, int);
-void stream_set_cursor_col(int);
-void stream_set_cursor_row(int);
-void stream_set_cursor_pos(int, int);
-void stream_move_cursor_col(int);
-void stream_move_cursor_row(int);
-void stream_move_cursor_pos(int, int);
+
+void cmd_set_cells(TTY *, const Cell *, uint, uint, uint);
+void cmd_shift_cells(TTY *, uint, uint, int);
+void cmd_insert_cells(TTY *, const Cell *, uint);
+void cmd_clear_rows(TTY *, uint, uint);
+void cmd_move_cursor_x(TTY *, int);
+void cmd_move_cursor_y(TTY *, int);
+void cmd_set_cursor_x(TTY *, uint);
+void cmd_set_cursor_y(TTY *, uint);
 
 size_t key_get_sequence(uint, uint, char *, size_t);
 
@@ -123,8 +113,24 @@ extern int histsize;
 extern double min_latency;
 extern double max_latency;
 
-#define TAB_LEN(i) (tabstop - (i) % tabstop)
-#define COLOR_BG 0
-#define COLOR_FG 7
+#define COLOR_DARK_BLACK    0x00
+#define COLOR_DARK_RED      0x01
+#define COLOR_DARK_GREEN    0x02
+#define COLOR_DARK_YELLOW   0x03
+#define COLOR_DARK_BLUE     0x04
+#define COLOR_DARK_MAGENTA  0x05
+#define COLOR_DARK_CYAN     0x06
+#define COLOR_DARK_WHITE    0x07
+#define COLOR_LIGHT_BLACK   0x08
+#define COLOR_LIGHT_RED     0x09
+#define COLOR_LIGHT_GREEN   0x0a
+#define COLOR_LIGHT_YELLOW  0x0b
+#define COLOR_LIGHT_BLUE    0x0c
+#define COLOR_LIGHT_MAGENTA 0x0d
+#define COLOR_LIGHT_CYAN    0x0e
+#define COLOR_LIGHT_WHITE   0x0f
+
+#define COLOR_BG COLOR_DARK_BLACK
+#define COLOR_FG COLOR_DARK_WHITE
 
 #endif

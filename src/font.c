@@ -462,7 +462,7 @@ if (FcPatternGet(pattern.conf, (obj), 0, &dummy) == FcResultNoMatch) { \
 
 	FcPatternDestroy(pattern.base);
 	FcPatternDestroy(pattern.conf);
-	FcPatternPrint(pattern.match);
+	/* FcPatternPrint(pattern.match); */
 
 	FontFace *font = font_insert_face(pattern.match);
 	if (font && !font->src->dpy) {
@@ -496,7 +496,7 @@ font_create_derived_face(FontFace *font, uint style)
 	FcDefaultSubstitute(pattern.conf);
 	pattern.match = FcFontMatch(NULL, pattern.conf, &res);
 	FcPatternDestroy(pattern.conf);
-	FcPatternPrint(pattern.match);
+	/* FcPatternPrint(pattern.match); */
 
 	FontFace *new_font = font_insert_face(pattern.match);
 
@@ -627,9 +627,9 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 		Color *background;
 	} brush = { 0 };
 	struct {
-		int x0, y0, x1, y1;
-		int dx, dy;
-		int kx, ky;
+		int x0, y0, x1, y1; // current region (in pixels)
+		int dx, dy;         // advance of previous glyph
+		int kx, ky;         // constant offset from start of region
 	} pos = { 0 };
 	struct { uint32 buf[2048]; uint n; } text = { 0 };
 	struct { XGlyphElt32 buf[32]; uint n; } elts = { 0 };
@@ -646,10 +646,8 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 	bool flushed = true;
 
 	for (uint i = 0; i < max; i++) {
-		uint32 ucs4 = glyphs[i].ucs4;
-
-		uint32 entry = font_load_glyph(brush.font, ucs4);
-		/* uint32 index = glyph_get_index(brush.font, entry); */
+		uint32 entry = font_load_glyph(brush.font, glyphs[i].ucs4);
+		uint32 idx = glyph_get_index(brush.font, entry);
 		GlyphMetrics metrics = glyph_get_metrics(brush.font, entry);
 
 		int chdx = metrics.advance.x;
@@ -669,7 +667,7 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 			pos.kx = 0;
 			pos.ky = brush.font->ascent;
 		}
-		// Elt positions have to specified relative to the previous elt in the array.
+		// Elt positions must be specified relative to the previous elt in the array.
 		// This is why only the first elt (per draw call) receives the offset from
 		// the drawing orgin
 		if (pos.x1 != pos.x0 || pos.y1 != pos.y0) {
@@ -681,7 +679,7 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 		elts.buf[elts.n].yOff = pos.y0 + pos.ky + adjy;
 		elts.buf[elts.n].glyphset = brush.font->glyphset;
 		elts.buf[elts.n].nchars++;
-		text.buf[text.n++] = ucs4;
+		text.buf[text.n++] = idx;
 
 		flushed = false;
 		// accumulate position so we can set the new leading elt after drawing
@@ -741,8 +739,16 @@ font_add_glyph(FontFace *font, uint32 addr, uint32 ucs4)
 
 	FT_Library_SetLcdFilter(shared.ft, font->lcd_filter);
 	{
-		glyph.index = FcFreeTypeCharIndex(face, ucs4);
-		glyph.ucs4 = ucs4;
+		if (addr) {
+			glyph.index = FcFreeTypeCharIndex(face, ucs4);
+			glyph.ucs4 = ucs4;
+#if 1
+			// temporary, until missing glyph lookups
+			if (!glyph.index) {
+				return NULL;
+			}
+#endif
+		}
 
 		FT_Error err;
 		err = FT_Load_Glyph(face, glyph.index, font->loadflags);
@@ -783,7 +789,7 @@ font_add_glyph(FontFace *font, uint32 addr, uint32 ucs4)
 
 	XRenderAddGlyphs(font->src->dpy,
 		         font->glyphset,
-		         (XGlyph *)&glyph.ucs4,
+		         (XGlyph *)&glyph.index,
 		         &info, 1,
 		         (char *)buf, size);
 
@@ -799,7 +805,9 @@ font_load_glyph(FontFace *font, uint32 ucs4)
 	uint32 addr = glyph_lookup_ucs4(font, ucs4);
 
 	if (addr && !glyph_get_ucs4(font, addr)) {
-		font_add_glyph(font, addr, ucs4);
+		if (!font_add_glyph(font, addr, ucs4)) {
+			return 0;
+		}
 	}
 
 	return addr;
@@ -811,6 +819,9 @@ font_load_glyphs(FontFace *font)
 	if (!font->glyphset) {
 		font->glyphset = XRenderCreateGlyphSet(font->src->dpy, font->picfmt);
 	}
+
+	// Initialize the table and force-render the placeholder glyph first.
+	// Otherwise, the lookup logic will always treat it as "found" and never autoload it.
 	if (!font->table.items) {
 		glyph_table_init(font);
 		font_add_glyph(font, 0, 0);

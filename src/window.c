@@ -62,7 +62,7 @@ static bool x11_test_im_style(XIM);
 static bool x11_set_visual_format(X11 *);
 static bool x11_wait_sys(Display *, double *);
 static int x11_translate_key(uint, uint, int *, int *);
-static void win_poll_events(WinData *);
+static int win_poll_events(WinData *);
 static Win *win_validate_config(Win *);
 static size_t win_get_property(Display *, Window, Atom, Atom, uchar **);
 
@@ -82,6 +82,7 @@ x11_init(void)
 	g_x11.maxh = DisplayHeight(g_x11.dpy, g_x11.screen);
 	g_x11.dpi = (((double)g_x11.maxh * 25.4) / // 1 inch == 25.4 mm
 	              (double)DisplayHeightMM(g_x11.dpy, g_x11.screen));
+	g_x11.fd = ConnectionNumber(g_x11.dpy);
 
 	if (XSupportsLocale()) {
 		XSetLocaleModifiers("");
@@ -204,6 +205,8 @@ win_create_client(void)
 		                                win->x11->vis->visual,
 		                                AllocNone);
 	}
+
+	win->pub.fd = win->x11->fd;
 
 	return &win->pub;
 }
@@ -491,11 +494,11 @@ x11_wait_sys(Display *dpy, double *timeout)
 	int fd = xwfd + 1;
 	int count = 0;
 
-	while (true) {
+	for (;;) {
 		FD_ZERO(&fdsr);
 		FD_SET(xwfd, &fdsr);
 
-		if (timeout != NULL) {
+		if (timeout) {
 			const long sec = (long)*timeout;
 			const long usec = (long)((*timeout - sec) * 1E6);
 			struct timeval tv = { sec, usec };
@@ -620,14 +623,31 @@ done:
 	return id;
 }
 
-void
+int
+win_events_pending(Win *pub)
+{
+	return XPending(((WinData *)pub)->x11->dpy);
+}
+
+int
+win_get_session_fd(Win *pub)
+{
+	return ConnectionNumber(((WinData *)pub)->x11->dpy);
+}
+
+int
 win_poll_events(WinData *win)
 {
+	int count = 0;
 	assert(win);
 
+#if 1
+	for (; XPending(win->x11->dpy); count++) {
+#else
 	XPending(win->x11->dpy);
 
 	while (XQLength(win->x11->dpy)) {
+#endif
 		XEvent event = { 0 };
 		XNextEvent(win->x11->dpy, &event);
 		if (XFilterEvent(&event, None)) {
@@ -694,12 +714,14 @@ win_poll_events(WinData *win)
 	}
 
 	XFlush(win->x11->dpy);
+	return count;
 }
 
-double
+int
 win_process_events(Win *pub, double timeout)
 {
 	WinData *win = (WinData *)pub;
+	int count = 0;
 	assert(win);
 
 	while (!XPending(win->x11->dpy)) {
@@ -708,9 +730,9 @@ win_process_events(Win *pub, double timeout)
 		}
 	}
 
-	win_poll_events(win);
+	count = win_poll_events(win);
 done:
-	return timeout;
+	return count;
 }
 
 bool

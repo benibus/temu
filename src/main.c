@@ -7,6 +7,7 @@
 #include <locale.h>
 #include <unistd.h>
 #include <sys/select.h>
+#include <time.h>
 
 #include "utils.h"
 #include "term.h"
@@ -44,10 +45,11 @@ static FontMetrics metrics;
 static Color colors[MAX_COLORS];
 static Win *win;
 static RC rc;
+static bool toggle_render = true;
 
 static void event_key_press(int, int, char *, int);
 static void run(void);
-static void render(void);
+static void render_frame(void);
 
 int
 main(int argc, char **argv)
@@ -203,38 +205,71 @@ error_invalid:
 void
 run(void)
 {
-	fd_set rset;
-	double timeout = min_latency / 1E3;
+	double timeout = -1.0;
+	bool busy = false;
+	TimeVal t0 = { 0 };
+	TimeVal t1 = { 0 };
 
 	pty_init(config.shell);
 	pty_resize(win->w, win->h, tty.cols, tty.rows);
 
+	fd_set rset;
+	int maxfd = MAX(win->fd, pty.mfd);
+
 	while (win->state) {
 		FD_ZERO(&rset);
 		FD_SET(pty.mfd, &rset);
+		FD_SET(win->fd, &rset);
 
-		struct timeval dummy = { 0 };
-		if (select(pty.mfd + 1, &rset, NULL, NULL, &dummy) < 0) {
+		if (win_events_pending(win)) {
+			timeout = 0.0;
+		}
+
+		struct timespec *ts, ts_ = { 0 };
+		ts_.tv_sec = timeout / 1E3;
+		ts_.tv_nsec = 1E6 * (timeout - 1E3 * ts_.tv_sec);
+		ts = (timeout >= 0.0) ? &ts_ : NULL;
+
+		if (pselect(maxfd + 1, &rset, NULL, NULL, ts, NULL) < 0) {
 			exit(2);
 		}
+		time_get_mono(&t1);
+
 		if (FD_ISSET(pty.mfd, &rset)) {
 			pty_read();
 		}
 
-		win_process_events(win, timeout);
-		render();
+		int num_events = win_process_events(win, 0.0);
+
+		if (FD_ISSET(pty.mfd, &rset) || num_events) {
+			if (!busy) {
+				busy = true;
+				t0 = t1;
+			}
+
+			double elapsed = time_diff_msec(&t1, &t0);
+			timeout = (max_latency - elapsed) / max_latency;
+			timeout *= min_latency;
+
+			if (timeout > 0.0) continue;
+		}
+		timeout = -1.0;
+		busy = false;
+
+		if (toggle_render) {
+			render_frame();
+		}
 	}
 }
 
 void
-render(void)
+render_frame(void)
 {
 	rc.color.fg = &colors[COLOR_FG];
 	rc.color.bg = &colors[COLOR_BG];
 	draw_rect_solid(&rc, rc.color.bg, 0, 0, win->w, win->h);
 
 	for (uint y = 0; (int)y <= tty.bot - tty.top; y++) {
-#if 1
 		GlyphRender glyphs[256] = { 0 };
 
 		FontFace *font = rc.font;
@@ -271,69 +306,21 @@ render(void)
 			glyphs[x].ucs4 = cell.ucs4;
 			glyphs[x].font = font;
 			glyphs[x].foreground = &colors[color.fg];
-			glyphs[x].background = (color.bg != COLOR_BG)
-			                     ? &colors[color.bg]
-			                     : NULL;
+			glyphs[x].background = &colors[color.bg];
 		}
 
 		// draw cursor
-		if (tty.top + (int)y == tty.pos.y) {
-			uint cx = tty.pos.x;
+		if (!tty.cursor.hide && tty.top + (int)y == tty.cursor.y) {
+			uint cx = tty.cursor.x;
 			glyphs[cx].ucs4 = DEFAULT(glyphs[cx].ucs4, L' ');
+			glyphs[cx].font = DEFAULT(glyphs[cx].font, font);
 			glyphs[cx].foreground = &colors[COLOR_BG];
 			glyphs[cx].background = &colors[COLOR_FG];
-			glyphs[cx].font = DEFAULT(glyphs[cx].font, font);
 			x += (cx == len);
 		}
-#else
-		GlyphRender glyphs[256] = { 0 };
-		FontFace *font = rc.font;
-		Cell *cells;
-		Attr *attrs;
-		int x, len;
 
-		len = stream_get_row(tty.top + y,
-		                     &cells, &attrs);
-
-		for (x = 0; x < len && x < (int)LEN(glyphs); x++) {
-			Color *fg = &colors[attrs[x].color.fg];
-			Color *bg = NULL;
-
-			if (attrs[x].flags & ATTR_INVERT) {
-				fg = &colors[attrs[x].color.bg];
-				bg = &colors[attrs[x].color.fg];
-			} else {
-				fg = &colors[attrs[x].color.fg];
-				bg = &colors[attrs[x].color.bg];
-			}
-			bg = (bg != rc.color.bg) ? bg : NULL;
-
-			font = fonts[0];
-			if (attrs[x].flags & ATTR_ITALIC) {
-				font = fonts[1];
-				if (attrs[x].flags & ATTR_BOLD) {
-					font = fonts[2];
-				}
-			} else if (attrs[x].flags & ATTR_BOLD) {
-				font = fonts[3];
-			}
-
-			glyphs[x].ucs4 = cells[x];
-			glyphs[x].foreground = fg;
-			glyphs[x].background = bg;
-			glyphs[x].font = font;
-		}
-
-		if (y + tty.top == tty.pos.y) {
-			int crs = tty.pos.x;
-			glyphs[crs].ucs4 = DEFAULT(glyphs[crs].ucs4, L' ');
-			glyphs[crs].foreground = &colors[COLOR_BG];
-			glyphs[crs].background = &colors[COLOR_FG];
-			glyphs[crs].font = DEFAULT(glyphs[crs].font, font);
-			x += (crs == len);
-		}
-#endif
-		draw_text_utf8(&rc, glyphs, x, 0, y * (metrics.ascent + metrics.descent));
+		draw_text_utf8(&rc, glyphs,
+		               x, 0, y * (metrics.ascent + metrics.descent));
 	}
 
 	win_render_frame(win);
@@ -347,6 +334,10 @@ event_key_press(int key, int mod, char *buf, int len)
 
 	if (mod == MOD_ALT && key == KEY_F9) {
 		dbg_dump_history(&tty);
+		return;
+	}
+	if (mod == MOD_ALT && key == KEY_F10) {
+		toggle_render = !toggle_render;
 		return;
 	}
 
