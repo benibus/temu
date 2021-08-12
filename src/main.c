@@ -54,18 +54,6 @@ static void render_frame(void);
 int
 main(int argc, char **argv)
 {
-#if 0
-	{
-		float n = 0.000f;
-
-		for (int i = 0; i < 64; i++) {
-			printf("> %.6f (%.6f)\n", n, 1.0f / 1E3);
-			n += 1.0f / 1E3;
-		}
-
-		return 0;
-	}
-#endif
 	for (int opt; (opt = getopt(argc, argv, "T:N:C:f:c:r:x:y:b:m:")) != -1; ) {
 		union {
 			char *s;

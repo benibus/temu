@@ -9,24 +9,8 @@
 
 #include "utils.h"
 #include "term.h"
+#include "vte.h"
 #include "utf8.h"
-
-#define SET(base_,mask_,opt_) \
-( (base_) = ((opt_)) ? ((base_) | (mask_)) : ((base_) & ~(mask_)) )
-
-#if 0
-#define PRINTSEQ(s_) do { \
-	msg_log("Parser", "%-6s %-15s (%#.4x|%#.4x)  bg:%03u fg:%03u  lc:%-6s #%02u:",             \
-	    asciistr(g_ucode), (s_), parser.state, parser.flags, parser.color.bg, parser.color.fg, \
-	    asciistr(parser.lastc), parser.args.count);                                            \
-	for (uint i = 0; i < parser.args.count; i++) {       \
-		msg_log("\0", " %04zu", parser.args.buf[i]); \
-	}                                                    \
-	fprintf(stderr, "\n");                               \
-} while (0)
-#else
-#define PRINTSEQ(s_)
-#endif
 
 enum ctrlcodes_e_ {
 	CTRL_NUL,
@@ -58,41 +42,56 @@ enum {
 	STATE_ESC = (1 << 0),
 	STATE_CSI = (1 << 1),
 	STATE_DEC = (1 << 2),
-	STATE_STR = (1 << 3),
-	STATE_MAX = (1 << 4)
+	STATE_DCS = (1 << 3),
+	STATE_OSC = (1 << 4),
+	STATE_MAX = (1 << 5)
 };
+
+// temporary
+#define STATE_STR STATE_DCS
 
 #define STATE_MASK  (STATE_MAX - 1)
 
-#define MAX_ARGS 256
-typedef struct parser_s_ {
-	Cell spec;
-	uint8 state;
-	uint16 flags;
-	uint32 lastc;
-	ColorSet color;
-	struct {
-		size_t buf[MAX_ARGS];
-		uint count;
-	} args;
-	struct {
-		uint32 buf[BUFSIZ];
-		uint count;
-	} chars;
-} Parser;
+static VTState state_ = { 0 };
 
-static int g_ucode = 0; // debug only
-
-static Parser parser = { 0 };
 static char mbuf[BUFSIZ];
 static size_t msize = 0;
 
-static void state_set(uint, bool, uint32);
-static void state_reset(void);
-static void state_set_esc(bool);
-static void buf_push(uint32);
-static void buf_reset(void);
-static int parse_codepoint(uint32);
+static void vte_print_func(VTState *, uint);
+static void vte_set_state(VTState *, uint);
+static void vte_set_state_mask(VTState *, uint, int);
+static void vte_reset_buffers(VTState *);
+static void vte_reset_template(VTState *);
+static uint vte_parse_token(VTState *, uint32);
+static uint vte_parse_mode_str(VTState *, uint32);
+static uint vte_parse_mode_esc(VTState *, uint32);
+static uint vte_parse_mode_csi(VTState *, uint32);
+static bool vte_dispatch(TTY *, VTState *, uint);
+static VTArgDesc *vte_push_arg_numeric(VTArgs *, uint32);
+static bool vte_get_arg_numeric(VTArgs *, uint32);
+static void vte_add_char(VTArgs *, uint32);
+
+void
+vte_print_func(VTState *state, uint id)
+{
+	VTFunc fn = vtfuncs[id];
+	fprintf(stderr, "\033[01;33m"
+	                "VtCode("
+	                "\033[0m%02u"
+	                "\033[01;33m)\033[0m "
+	                "%s: ",
+	                fn.id, fn.name);
+	fprintf(stderr, "%#.2x (%u|%u) [%u/%lu] ",
+	                state->flags,
+	                state->args.count,
+	                state->args.index,
+	                state->depth,
+	                arr_count(state->chars));
+	for (uint i = 0; i < arr_count(state->chars); i++) {
+		fprintf(stderr, "%s%s", asciistr(state->chars[i]), " ");
+	}
+	fputc('\n', stderr);
+}
 
 bool
 tty_init(int cols, int rows)
@@ -110,10 +109,10 @@ tty_init(int cols, int rows)
 		tty.tabs[i] |= (i % tabstop == 0) ? 1 : 0;
 	}
 
-	parser.flags = ATTR_NONE;
-	parser.state = STATE_DEFAULT;
-	parser.color.bg = COLOR_BG;
-	parser.color.fg = COLOR_FG;
+	vte_set_state(&state_, STATE_DEFAULT);
+	vte_reset_buffers(&state_);
+	vte_reset_template(&state_);
+	state_.chars = NULL;
 
 	return !!tty.cells;
 }
@@ -146,8 +145,8 @@ tty_write(const char *str, size_t len)
 		width = utf8_decode(str + i, &ucs4, &err);
 		ASSERT(!err);
 
-		if (!parse_codepoint(ucs4)) {
-			stream_write(ucs4, parser.color, parser.flags);
+		if (!vte_parse_token(&state_, ucs4)) {
+			stream_write(ucs4, state_.spec.color, state_.spec.attr);
 		} else {
 			dummy__();
 		}
@@ -168,468 +167,565 @@ tty_resize(uint cols, uint rows)
 }
 
 void
-buf_reset(void)
+vte_set_state(VTState *state, uint flags)
 {
-	memclear(&parser.spec, 1, sizeof(parser.spec));
-	parser.chars.count = 0;
-	parser.chars.buf[parser.chars.count] = 0;
-	if (parser.args.count) {
-		memclear(parser.args.buf, parser.args.count, sizeof(*parser.args.buf));
-		parser.args.count = 0;
-	}
+	ASSERT(state);
+
+	state->flags = flags;
 }
 
 void
-buf_push(uint32 ucs4)
+vte_set_state_mask(VTState *state, uint mask, int enable)
 {
-	ASSERT(parser.chars.count < BUFSIZ); // temporary
-	parser.chars.buf[parser.chars.count++] = ucs4;
-	parser.chars.count = 0;
+	ASSERT(state);
+
+	state->flags = (!!enable)
+	             ? state->flags | mask
+	             : state->flags & ~mask;
 }
 
-static bool
-get_arg_csi(uint32 ucs4)
+void
+vte_reset_buffers(VTState *state)
 {
-	size_t *arg;
+	ASSERT(state);
+
+	memclear(state->args.buf, 1, sizeof(*state->args.buf));
+	state->args.count = 0;
+	state->args.index = 0;
+	state->args.data[0] = 0;
+	state->tokens[0] = 0;
+	state->depth = 0;
+	arr_clear(state->chars);
+}
+
+void
+vte_reset_template(VTState *state)
+{
+	ASSERT(state);
+
+	memclear(&state->spec, 1, sizeof(state->spec));
+	state->spec.color.fg = COLOR_FG;
+	state->spec.color.bg = COLOR_BG;
+	state->spec.width = 1;
+}
+
+bool
+vte_dispatch(TTY *this, VTState *state, uint id)
+{
+	ASSERT(id < VT_COUNT);
+	bool res = false;
+
+	if (vtfuncs[id].handler) {
+		vte_print_func(state, id);
+		vtfuncs[id].handler(this, state, id);
+		res = true;
+	}
+
+	if (id != VT_CONTINUE) {
+		vte_set_state(state, STATE_DEFAULT);
+		vte_reset_buffers(state);
+	}
+
+	return res;
+}
+
+VTArgDesc *
+vte_push_arg_numeric(VTArgs *args, uint32 ucs4)
+{
+	VTArgDesc *arg = args->buf + args->count;
+
+	args->data[args->index] = ucs4;
+	{
+		arg->index = args->index;
+		arg->len   = 1;
+		arg->type  = ARG_DEFAULT;
+	}
+	args->count++;
+	args->index++;
+	memclear(args->buf + args->count, 1, sizeof(*args->buf));
+
+	return arg;
+}
+
+bool
+vte_get_arg_numeric(VTArgs *args, uint32 ucs4)
+{
+	ASSERT(args);
+	VTArgDesc *arg = NULL;
 
 	switch (ucs4) {
-	case '0': case '1': case '2': case '3': case '4':
-	case '5': case '6': case '7': case '8': case '9':
-		parser.args.count += !parser.args.count;
-		arg = &parser.args.buf[parser.args.count-1];
-		*arg *= 10;
-		*arg += ucs4 - '0';
-		break;
-	case ';':
-		ASSERT(parser.args.count > 0);
-		parser.args.count++;
-		break;
-	default:
-		return false;
+		case ';': {
+			if (!args->count) {
+				vte_push_arg_numeric(args, 0);
+			}
+			vte_push_arg_numeric(args, 0);
+			break;
+		}
+		case '0': case '1':
+		case '2': case '3':
+		case '4': case '5':
+		case '6': case '7':
+		case '8': case '9': {
+			if (!args->count) {
+				vte_push_arg_numeric(args, 0);
+			}
+			ASSERT(args->count);
+			arg = args->buf + args->count - 1;
+
+			size_t tmp = args->data[arg->index];
+			tmp = (tmp * 10) + (ucs4 - '0');
+			ASSERT(tmp < UINT32_MAX);
+			args->data[arg->index] = tmp;
+			break;
+		}
+		default: {
+			return false;
+		}
 	}
 
 	return true;
 }
 
-#if 1
-  #define SEQBEG(s1,s2) do { PRINTSEQ(#s1":"#s2); } while (0)
-#else
-  #define SEQBEG(s1,s2)
-#endif
-#define SEQEND(ret)   do { state_reset(); } while (0); return (ret)
-
-int
-parse_codepoint(uint32 ucs4)
+void
+vte_add_char(VTArgs *args, uint32 ucs4)
 {
-	g_ucode = ucs4;
+#if 1
+	return;
+#else
+	ASSERT(args->index < LEN(args->data));
+	VTArgDesc *arg = args->buf + MAX(0, (int)args->count - 1);
 
+	ASSERT(arg->type == ARG_STRING);
+	arg->len++;
+	args->data[args->index] = ucs4;
+	args->index++;
+#endif
+}
+
+uint
+vte_parse_mode_str(VTState *state, uint32 ucs4)
+{
+	// Will get replaced by separate DCS and OSC parsers.
+	// This just consumes the strings for the time being;
+	if (state->flags & STATE_ESC) {
+		if (ucs4 != '\\') {
+			vte_add_char(&state->args, CTRL_ESC);
+			vte_add_char(&state->args, ucs4);
+		}
+	} else if (ucs4 != CTRL_ST && ucs4 != CTRL_BEL) {
+		vte_add_char(&state->args, ucs4);
+		return VT_CONTINUE;
+	}
+
+	return VT_TERMINATE;
+}
+
+uint
+vte_parse_mode_esc(VTState *state, uint32 ucs4)
+{
 	switch (ucs4) {
-	case CTRL_ESC:
-		PRINTSEQ("BEG>ESC");
-		state_set_esc(true);
-		return 1;
-	}
-
-	uint32 state = (parser.state & STATE_MASK);
-
-	if (state & STATE_STR) {
-		if (state & STATE_ESC) {
-			switch (ucs4) {
-			case '\\':
-				PRINTSEQ("END");
-				state_set(STATE_STR, false, ucs4);
-				break;
-			default:
-				buf_push(CTRL_ESC);
-				buf_push(ucs4);
-				break;
-			}
-			state_reset();
-		} else {
-			switch (ucs4) {
-			case CTRL_ST:
-			case CTRL_BEL:
-				PRINTSEQ("END");
-				state_reset();
-				break;
-			default:
-				buf_push(ucs4);
-				break;
-			}
-		}
-		return 2;
-	}
-
-	if (state & STATE_ESC) {
-		switch (ucs4) {
 		case CTRL_CAN:
-		case CTRL_SUB:
-			PRINTSEQ("ESC:CAN/SUB>END");
-			state_reset();
-			break;
-		case '[':
-			PRINTSEQ("ESC>CSI");
-			state_set_esc(false);
-			state_set(STATE_CSI, true, ucs4);
-			break;
-		case ']':
-			PRINTSEQ("ESC>OSC");
-			state_set_esc(false);
-			state_set(STATE_STR, true, ucs4);
-			break;
-		case 'E':
-			PRINTSEQ("ESC:NEL");
-			state_reset();
-			break;
-		case 'H':
-			PRINTSEQ("ESC:HTS");
-			state_reset();
-			break;
-		case 'M':
-			SEQBEG(ESC, RI);
-			cmd_move_cursor_y(&tty, -1);
-			SEQEND(1);
-			break;
-		default:
-			goto quit;
+		case CTRL_SUB: {
+			return VT_TERMINATE;
 		}
-		return 3;
-	} else if (state & STATE_CSI) {
-		if (get_arg_csi(ucs4)) {
-			PRINTSEQ("CSI#ARG");
-			return 5;
+		case '[': {
+			vte_set_state(state, STATE_CSI);
+			state->tokens[state->depth++] = ucs4;
+			return VT_CONTINUE;
 		}
-#define ESC_CSI(str_) do { PRINTSEQ("CSI:"str_); state_reset(); } while(0); return 4
-		if (parser.lastc == '[') {
-			// we check for an alt char as the first non-arg only
-			switch (ucs4) {
-			case '?':
-			case '!':
-			case '"':
-			case '\'':
-			case '$':
-			case '>':
-				PRINTSEQ("CSI>DEC");
-				state_set(STATE_DEC, true, ucs4);
-				return 5;
-			// CSI terminators with no alt variations (VT100)
-			case '@':
-				SEQBEG(CSI, ICH);
-				parser.spec.ucs4 = ' ';
-				parser.spec.width = 1;
-				cmd_insert_cells(&tty, &parser.spec,
-				                 DEFAULT(parser.args.buf[0], 1));
-				SEQEND(1);
-			case 'A':
-				SEQBEG(CSI, CUU);
-				cmd_move_cursor_y(&tty, -DEFAULT(parser.args.buf[0], 1));
-				SEQEND(1);
-			case 'B':
-				SEQBEG(CSI, CUD);
-				cmd_move_cursor_y(&tty, +DEFAULT(parser.args.buf[0], 1));
-				SEQEND(1);
-			case 'C':
-				SEQBEG(CSI, CUF);
-				cmd_move_cursor_x(&tty, +DEFAULT(parser.args.buf[0], 1));
-				SEQEND(1);
-			case 'D':
-				SEQBEG(CSI, CUB);
-				cmd_move_cursor_x(&tty, -DEFAULT(parser.args.buf[0], 1));
-				SEQEND(1);
-			case 'E': ESC_CSI("CNL");
-			case 'F': ESC_CSI("CPL");
-			case 'G': ESC_CSI("CHA");
-			case 'H':
-				SEQBEG(CSI, CUP);
-				cmd_set_cursor_x(&tty, parser.args.buf[1]);
-				cmd_set_cursor_y(&tty, parser.args.buf[0]);
-				SEQEND(1);
-			case 'I':
-				SEQBEG(CSI, CHT);
-				for (size_t i = 0; i < DEFAULT(parser.args.buf[0], 1); i++) {
-					if (!stream_write('\t', parser.color, parser.flags))
-					{
-						break;
-					}
-				}
-				SEQEND(1);
-			case 'L': ESC_CSI("IL");
-			case 'M': ESC_CSI("DL");
-			case 'P': {
-				SEQBEG(CSI, DCH);
-				int dx = DEFAULT(parser.args.buf[0], 1);
-				ASSERT(dx >= 0);
-				cmd_shift_cells(&tty, tty.cursor.x + dx, tty.cursor.y, -dx);
-				SEQEND(1);
-			}
-			case 'S': ESC_CSI("SU");
-			case 'T': ESC_CSI("SD");
-			case 'X': ESC_CSI("ECH");
-			case 'Z': ESC_CSI("CBT");
-			case '`': ESC_CSI("HPA");
-			case 'b': ESC_CSI("REP");
-			case 'd': ESC_CSI("VPA");
-			case 'f': ESC_CSI("HVP");
-			case 'g': ESC_CSI("TBC");
-			case 'm':
-				SEQBEG(CSI, SGR);
-				if (!parser.args.count) {
-					parser.args.buf[parser.args.count++] = 0;
-				}
-				for (size_t i = 0; i < parser.args.count; i++) {
-					switch (parser.args.buf[i]) {
-					case 0:
-						parser.flags &= ~ATTR_MASK;
-						parser.color.bg = 0;
-						parser.color.fg = 7;
-						break;
-					case 1:  parser.flags |= ATTR_BOLD;       break;
-					case 4:  parser.flags |= ATTR_UNDERLINE;  break;
-					case 5:  parser.flags |= ATTR_BLINK;      break;
-					case 7:  parser.flags |= ATTR_INVERT;     break;
-					case 8:  parser.flags |= ATTR_INVISIBLE;  break;
-					case 22: parser.flags &= ~ATTR_BOLD;      break;
-					case 24: parser.flags &= ~ATTR_UNDERLINE; break;
-					case 25: parser.flags &= ~ATTR_BLINK;     break;
-					case 27: parser.flags &= ~ATTR_INVERT;    break;
-					case 28: parser.flags &= ~ATTR_INVISIBLE; break;
-
-					case 30: case 40:
-					case 31: case 41:
-					case 32: case 42:
-					case 33: case 43:
-					case 34: case 44:
-					case 35: case 45:
-					case 36: case 46:
-					case 37: case 47:
-						if (parser.args.buf[i] < 40) {
-							parser.color.fg = parser.args.buf[i] - 30;
-						} else {
-							parser.color.bg = parser.args.buf[i] - 40;
-						}
-						break;
-					case 38:
-					case 48:
-						if (i + 2 < parser.args.count &&
-						    parser.args.buf[i+1] == 5)
-						{
-							if (parser.args.buf[i] < 40) {
-								parser.color.fg = parser.args.buf[i+2];
-							} else {
-								parser.color.bg = parser.args.buf[i+2];
-							}
-							i += 2;
-						}
-						break;
-					case 39:
-						parser.color.fg = 7;
-						break;
-					case 49:
-						parser.color.fg = 0;
-						break;
-					case 90: case 100:
-					case 91: case 101:
-					case 92: case 102:
-					case 93: case 103:
-					case 94: case 104:
-					case 95: case 105:
-					case 96: case 106:
-					case 97: case 107:
-						if (parser.args.buf[i] < 100) {
-							parser.color.fg = parser.args.buf[i] + 8 - 90;
-						} else {
-							parser.color.bg = parser.args.buf[i] + 8 - 100;
-						}
-						break;
-					}
-				}
-				SEQEND(1);
-			case 'u': ESC_CSI("[u");
-			}
+		case ']': {
+			vte_set_state(state, STATE_OSC);
+			state->tokens[state->depth++] = ucs4;
+			return VT_CONTINUE;
 		}
-		switch (ucs4) {
-		case 'J':
-			switch (parser.lastc) {
-			case '[':
-				SEQBEG(CSI, ED);
-				switch (parser.args.buf[0]) {
-				case 0:
-					cmd_clear_rows(&tty, tty.cursor.y + 1, tty.rows);
-					cmd_set_cells(&tty, &parser.spec,
-					              tty.cursor.x, tty.cursor.y,
-					              tty.cols);
-					break;
-				case 1:
-					parser.spec.ucs4  = ' ';
-					parser.spec.width = 1;
-					cmd_clear_rows(&tty, tty.top, tty.cursor.y - tty.top);
-					cmd_set_cells(&tty, &parser.spec,
-					              0, tty.cursor.y,
-					              tty.cursor.x);
-					break;
-				case 2:
-					cmd_clear_rows(&tty, tty.top, tty.rows);
-					cmd_set_cursor_y(&tty, 0);
-					break;
-				}
-				SEQEND(1);
-			case '?': ESC_CSI("DECSED");
-			} break;
-		case 'K':
-			switch (parser.lastc) {
-			case '[':
-				SEQBEG(CSI, EL);
-				switch (parser.args.buf[0]) {
-				case 0:
-					cmd_set_cells(&tty, &parser.spec,
-					              tty.cursor.x, tty.cursor.y,
-					              tty.cols - tty.cursor.x);
-					break;
-				case 1:
-					parser.spec.ucs4 = ' ';
-					parser.spec.width = 1;
-					cmd_set_cells(&tty, &parser.spec,
-					              0, tty.cursor.y,
-					              tty.cursor.x);
-					break;
-				case 2:
-					cmd_set_cells(&tty, &parser.spec,
-					              0, tty.cursor.y,
-					              tty.cols);
-					cmd_set_cursor_x(&tty, 0);
-					break;
-				}
-				SEQEND(1);
-			case '?': ESC_CSI("DECSEL");
-			} break;
-		case 'c':
-			switch (parser.lastc) {
-			case '[': ESC_CSI("DA");
-			case '>': ESC_CSI("DA2"); // made-up name
-			} break;
-		case 'h':
-			switch (parser.lastc) {
-			case '[': ESC_CSI("SM");
-			case '?':
-				  SEQBEG(CSI, DECSET);
-				  switch (parser.args.buf[0]) {
-				  	  case 25: {
-				  	  	  tty.cursor.hide = false;
-				  	  	  break;
-				  	  }
-				  }
-				  SEQEND(1);
-			} break;
-		case 'i':
-			switch (parser.lastc) {
-			case '[': ESC_CSI("MC");
-			case '?': ESC_CSI("DECMC");
-			} break;
-		case 'l':
-			switch (parser.lastc) {
-			case '[': ESC_CSI("RM");
-			case '?':
-				  SEQBEG(CSI, DECRST);
-				  switch (parser.args.buf[0]) {
-				  	  case 25: {
-				  	  	  tty.cursor.hide = true;
-				  	  	  break;
-				  	  }
-				  }
-				  SEQEND(1);
-			} break;
-		case 'n':
-			switch (parser.lastc) {
-			case '?': ESC_CSI("DECDSR");
-			} break;
-		case 'p':
-			switch (parser.lastc) {
-			case '!': ESC_CSI("DECSTR");
-			case '"': ESC_CSI("DECSCL");
-			} break;
-		case 'q':
-			switch (parser.lastc) {
-			case '?': ESC_CSI("?q");
-			case '"': ESC_CSI("DECSCA"); // made-up name
-			} break;
-		case 'r':
-			switch (parser.lastc) {
-			case '[': ESC_CSI("DECSTBM");
-			case '?': ESC_CSI("DECRSTR"); // made-up name
-			case '$': ESC_CSI("DECCARA");
-			} break;
-		case 's':
-			switch (parser.lastc) {
-			case '[': ESC_CSI("[s");
-			case '?': ESC_CSI("DECSAV"); // made-up name
-			} break;
-		case 't':
-			switch (parser.lastc) {
-			case '[': ESC_CSI("[t");
-			case '$': ESC_CSI("DECRARA");
-			} break;
-		case 'v':
-			switch (parser.lastc) {
-			case '$': ESC_CSI("DECRCRA");
-			} break;
-		case 'w':
-			switch (parser.lastc) {
-			case '\'': ESC_CSI("DECEFR");
-			} break;
-		case 'x':
-			switch (parser.lastc) {
-			case '[': ESC_CSI("[x");
-			case '$': ESC_CSI("DECFRA");
-			} break;
-		case 'z':
-			switch (parser.lastc) {
-			case '$':  ESC_CSI("DECERA");
-			case '\'': ESC_CSI("DECELR");
-			} break;
-		case '{':
-			switch (parser.lastc) {
-			case '\'': ESC_CSI("DECSLE");
-			} break;
-		case '|':
-			switch (parser.lastc) {
-			case '\'': ESC_CSI("DECRQLP");
-			} break;
-		}
-	} else {
-		return 0;
+		case 'E': { return VT_NEL; }
+		case 'H': { return VT_HTS; }
+		case 'M': { return VT_RI;  }
 	}
-#undef ESC_CSI
 
-quit:
-	PRINTSEQ("QUIT");
-	state_reset();
 	return 0;
 }
 
-void
-state_set(uint mask, bool opt, uint32 ucs4)
+uint
+vte_parse_mode_csi(VTState *state, uint32 ucs4)
 {
-	SET(parser.state, mask, opt);
-	parser.lastc = ucs4; // cache the transition character
-}
-
-void
-state_reset(void)
-{
-	parser.state &= ~(STATE_MASK);
-	parser.lastc = 0;
-	buf_reset();
-}
-
-void
-state_set_esc(bool opt)
-{
-	SET(parser.state, STATE_ESC, opt);
-	SET(parser.state, STATE_CSI|STATE_DEC, false);
-	if (!(parser.state & STATE_STR)) {
-		buf_reset();
+	if (vte_get_arg_numeric(&state->args, ucs4)) {
+		return VT_CONTINUE;
 	}
-	parser.lastc = 0;
+
+	ASSERT(state->depth);
+
+	switch (state->tokens[state->depth-1]) {
+	case '[':
+		switch (ucs4) {
+		case '@': return VT_ICH;
+		case 'A': return VT_CUU;
+		case 'B': return VT_CUD;
+		case 'C': return VT_CUF;
+		case 'D': return VT_CUB;
+		case 'E': return VT_CNL;
+		case 'F': return VT_CPL;
+		case 'G': return VT_CHA;
+		case 'H': return VT_CUP;
+		case 'I': return VT_CHT;
+		case 'J': return VT_ED;
+		case 'K': return VT_EL;
+		case 'L': return VT_IL;
+		case 'M': return VT_DL;
+		case 'P': return VT_DCH;
+		case 'S': return VT_SU;
+		case 'T': return VT_SD;
+		case 'X': return VT_ECH;
+		case 'Z': return VT_CBT;
+		case '`': return VT_HPA;
+		case 'b': return VT_REP;
+		case 'd': return VT_VPA;
+		case 'f': return VT_HVP;
+		case 'g': return VT_TBC;
+		case 'h': return VT_SM;
+		case 'i': return VT_MC;
+		case 'l': return VT_RM;
+		case 'm': return VT_SGR;
+		case 'r': return VT_DECSTBM;
+		case 'c':
+		case 's':
+		case 't':
+		case 'x': return VT_UNKNOWN;
+
+		case '?' :
+		case '!' :
+		case '"' :
+		case '\'':
+		case '$' :
+		case '>' :
+			vte_set_state_mask(state, STATE_DEC, 1);
+			state->tokens[state->depth++] = ucs4;
+			return VT_CONTINUE;
+		}
+		break;
+	case '?':
+		switch (ucs4) {
+		case 'J': return VT_DECSED;
+		case 'K': return VT_DECSEL;
+		case 'h': return VT_DECSET;
+		case 'i': return VT_DECMC;
+		case 'l': return VT_DECRST;
+		case 'n': return VT_DECDSR;
+		case 'q':
+		case 'r':
+		case 's': return VT_UNKNOWN;
+		}
+		break;
+	case '!':
+		switch (ucs4) {
+		case 'p': return VT_DECSTR;
+		}
+		break;
+	case '"':
+		switch (ucs4) {
+		case 'p': return VT_DECSCL;
+		case 'q': return VT_UNKNOWN;
+		}
+		break;
+	case '\'':
+		switch (ucs4) {
+		case 'w': return VT_DECEFR;
+		case 'z': return VT_DECELR;
+		case '{': return VT_DECSLE;
+		case '|': return VT_DECRQLP;
+		}
+		break;
+	case '$':
+		switch (ucs4) {
+		case 't': return VT_DECCARA;
+		case 'v': return VT_DECCRA;
+		case 'x': return VT_DECFRA;
+		case 'z': return VT_DECERA;
+		}
+		break;
+	case '>':
+		switch (ucs4) {
+		case 'c': return VT_UNKNOWN;
+		}
+		break;
+	}
+
+	return 0;
 }
 
-#undef SET
+uint
+vte_parse_token(VTState *state, uint32 ucs4)
+{
+	ASSERT(state);
+	ASSERT(state->depth + 1u < LEN(state->tokens));
+
+	uint depth = state->depth;
+	uint res = 0;
+	state->spec.ucs4  = 0;
+	state->spec.width = 0;
+	(void)depth;
+
+	arr_push(state->chars, ucs4);
+
+	if (ucs4 == CTRL_ESC) {
+		if (!(state->flags & (STATE_DCS|STATE_OSC))) {
+			vte_reset_buffers(state);
+			state->tokens[state->depth++] = ucs4;
+		}
+		vte_set_state_mask(state, ~(STATE_DCS|STATE_OSC), 0);
+		vte_set_state_mask(state,  STATE_ESC, 1);
+		res = VT_CONTINUE;
+	} else if (state->flags & (STATE_DCS|STATE_OSC)) {
+		res = vte_parse_mode_str(state, ucs4);
+	} else if (state->flags & STATE_ESC) {
+		res = vte_parse_mode_esc(state, ucs4);
+	} else if (state->flags & STATE_CSI) {
+		res = vte_parse_mode_csi(state, ucs4);
+	}
+
+	if (res) {
+		vte_dispatch(&tty, state, res);
+	} else {
+		vte_set_state(state, STATE_DEFAULT);
+		vte_reset_buffers(state);
+		state->spec.ucs4  = ucs4;
+		state->spec.width = 1;
+	}
+
+	return res;
+}
+
+#define VTARG(s,n) (((n) < (s)->args.count) ? (s)->args.data[(s)->args.buf[(n)].index] : 0)
+
+void
+vte_op_decset(TTY *this, VTState *state, uint id)
+{
+	uint32 a = VTARG(state, 0);
+
+	switch (a) {
+		case 25: {
+			this->cursor.hide = (id == VT_DECRST);
+			break;
+		}
+	}
+}
+
+void
+vte_op_el(TTY *this, VTState *state, uint id)
+{
+	uint32 a = VTARG(state, 0);
+	ASSERT(!state->spec.ucs4 && !state->spec.width);
+
+	switch (a) {
+		case 0: {
+			cmd_set_cells(this, &state->spec,
+			              this->cursor.x, this->cursor.y,
+			              this->cols - this->cursor.x);
+			break;
+		}
+		case 1: {
+			state->spec.ucs4 = ' ';
+			state->spec.width = 1;
+
+			cmd_set_cells(&tty, &state->spec,
+			              0, this->cursor.y, this->cursor.x);
+			break;
+		}
+		case 2: {
+			cmd_set_cells(this, &state->spec,
+				      0, this->cursor.y, this->cols);
+			cmd_set_cursor_x(this, 0);
+			break;
+		}
+	}
+}
+
+void
+vte_op_ed(TTY *this, VTState *state, uint id)
+{
+	uint32 a = VTARG(state, 0);
+	ASSERT(!state->spec.ucs4 && !state->spec.width);
+
+	switch (a) {
+		case 0: {
+			cmd_clear_rows(this, this->cursor.y + 1, this->rows);
+			cmd_set_cells(this, &state->spec,
+				      this->cursor.x, this->cursor.y,
+				      this->cols);
+			break;
+		}
+		case 1: {
+			state->spec.ucs4  = ' ';
+			state->spec.width = 1;
+
+			cmd_clear_rows(this, this->top, this->cursor.y - this->top);
+			cmd_set_cells(this, &state->spec,
+				      0, this->cursor.y,
+				      this->cursor.x);
+			break;
+		}
+		case 2: {
+			cmd_clear_rows(this, this->top, this->rows);
+			cmd_set_cursor_y(this, 0);
+			break;
+		}
+	}
+}
+
+void
+vte_op_sgr(TTY *this, VTState *state, uint id)
+{
+	Cell *cell = &state->spec;
+	uint i = 0;
+
+	do {
+		uint32 a = VTARG(state, i);
+
+		switch (a) {
+			case 0: {
+				cell->attr &= ~ATTR_MASK;
+				cell->color.bg = 0;
+				cell->color.fg = 7;
+				break;
+			}
+
+			case 1:  cell->attr |= ATTR_BOLD;       break;
+			case 4:  cell->attr |= ATTR_UNDERLINE;  break;
+			case 5:  cell->attr |= ATTR_BLINK;      break;
+			case 7:  cell->attr |= ATTR_INVERT;     break;
+			case 8:  cell->attr |= ATTR_INVISIBLE;  break;
+			case 22: cell->attr &= ~ATTR_BOLD;      break;
+			case 24: cell->attr &= ~ATTR_UNDERLINE; break;
+			case 25: cell->attr &= ~ATTR_BLINK;     break;
+			case 27: cell->attr &= ~ATTR_INVERT;    break;
+			case 28: cell->attr &= ~ATTR_INVISIBLE; break;
+
+			case 30: case 40:
+			case 31: case 41:
+			case 32: case 42:
+			case 33: case 43:
+			case 34: case 44:
+			case 35: case 45:
+			case 36: case 46:
+			case 37: case 47: {
+				if (a < 40) {
+					cell->color.fg = a - 30;
+				} else {
+					cell->color.bg = a - 40;
+				}
+				break;
+			}
+
+			case 38:
+			case 48: {
+				if (VTARG(state, i + 1) == 5) {
+					uint32 a2;
+					if (!(a2 = VTARG(state, i + 2))) {
+						break;
+					} else if (a < 40) {
+						cell->color.fg = a2;
+					} else {
+						cell->color.bg = a2;
+					}
+					i += 2;
+				}
+				break;
+			}
+
+			case 39: cell->color.fg = 7; break;
+			case 49: cell->color.fg = 0; break;
+
+			case 90: case 100:
+			case 91: case 101:
+			case 92: case 102:
+			case 93: case 103:
+			case 94: case 104:
+			case 95: case 105:
+			case 96: case 106:
+			case 97: case 107: {
+				if (a < 100) {
+					cell->color.fg = a + 8 - 90;
+				} else {
+					cell->color.bg = a + 8 - 100;
+				}
+				break;
+			}
+		}
+	} while (++i < state->args.count);
+}
+
+void
+vte_op_dch(TTY *this, VTState *state, uint id)
+{
+	uint32 a = VTARG(state, 0);
+	int dx = DEFAULT(a, 1);
+	ASSERT(dx >= 0);
+
+	cmd_shift_cells(this, this->cursor.x + dx, this->cursor.y, -dx);
+}
+
+void
+vte_op_cht(TTY *this, VTState *state, uint id)
+{
+	uint32 a = VTARG(state, 0);
+
+	for (uint i = 0; i < DEFAULT(a, 1); i++) {
+		if (!stream_write('\t', state->spec.color, state->spec.attr)) {
+			break;
+		}
+	}
+}
+
+void
+vte_op_cu(TTY *this, VTState *state, uint id)
+{
+	uint32 a[2] = { VTARG(state, 0), VTARG(state, 1) };
+
+	switch (id) {
+	case VT_CUU:
+		cmd_move_cursor_y(this, -DEFAULT(a[0], 1));
+		break;
+	case VT_CUD:
+		cmd_move_cursor_y(this, +DEFAULT(a[0], 1));
+		break;
+	case VT_CUF:
+		cmd_move_cursor_x(this, +DEFAULT(a[0], 1));
+		break;
+	case VT_CUB:
+		cmd_move_cursor_x(this, -DEFAULT(a[0], 1));
+		break;
+	case VT_CUP:
+		cmd_set_cursor_x(this, a[1]);
+		cmd_set_cursor_y(this, a[0]);
+		break;
+	}
+}
+
+void
+vte_op_ich(TTY *this, VTState *state, uint id)
+{
+	uint32 a = VTARG(state, 0);
+
+	state->spec.ucs4 = ' ';
+	state->spec.width = 1;
+
+	cmd_insert_cells(this, &state->spec, DEFAULT(a, 1));
+}
+
+void
+vte_op_ri(TTY *this, VTState *state, uint id)
+{
+	cmd_move_cursor_y(this, -1);
+}
+
+void
+vte_op_continue(TTY *this, VTState *state, uint id)
+{
+	return;
+}
+
+void
+vte_op_terminate(TTY *this, VTState *state, uint id)
+{
+	return;
+}
