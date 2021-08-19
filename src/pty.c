@@ -39,34 +39,33 @@ pty_test(void)
 }
 
 int
-pty_init(char *shell)
+pty_init(PTY *pty, char *shell)
 {
 	char *cmd = (shell) ? shell : "/bin/dash";
 	char *args[] = { NULL };
 
-	if (openpty(&pty.mfd, &pty.sfd, NULL, NULL, NULL) < 0) {
+	if (openpty(&pty->mfd, &pty->sfd, NULL, NULL, NULL) < 0) {
 		error_fatal("openpty()", 1);
 	}
 
-	switch ((pty.pid = fork())) {
+	switch ((pty->pid = fork())) {
 	case -1: // fork failed
 		error_fatal("fork()", 1);
 		break;
 	case 0: // child process
 		setsid();
 
-		dup2(pty.sfd, 0);
-		dup2(pty.sfd, 1);
-		dup2(pty.sfd, 2);
+		dup2(pty->sfd, 0);
+		dup2(pty->sfd, 1);
+		dup2(pty->sfd, 2);
 
-		if (ioctl(pty.sfd, TIOCSCTTY, NULL) < 0) {
+		if (ioctl(pty->sfd, TIOCSCTTY, NULL) < 0) {
 			error_fatal("ioctl()", 1);
 		}
-		close(pty.sfd);
-		close(pty.mfd);
+		close(pty->sfd);
+		close(pty->mfd);
 		{
 			// execute shell
-			/* setenv("TERM", "dumb", 1); */
 			setenv("SHELL", "/bin/dash", 1);
 
 			signal(SIGCHLD, SIG_DFL);
@@ -82,32 +81,21 @@ pty_init(char *shell)
 		}
 		break;
 	default: // parent process
-		close(pty.sfd);
+		close(pty->sfd);
 		signal(SIGCHLD, SIG_DFL);
 		break;
 	}
 
-	return pty.mfd;
+	return pty->mfd;
 }
 
 size_t
-pty__test_write(const char *str, size_t len)
+pty_read(TTY *tty)
 {
-	size_t i;
-
-	for (i = 0; i < len; i++) {
-		fputc(str[i], stderr);
-	}
-
-	return i;
-}
-
-size_t
-pty_read(void)
-{
+	const PTY *pty = &tty->pty;
 	int nr, nw;
 
-	nr = read(pty.mfd, &iobuf.data[iobuf.len], ARRLEN(iobuf.data) - iobuf.len);
+	nr = read(pty->mfd, &iobuf.data[iobuf.len], ARRLEN(iobuf.data) - iobuf.len);
 
 	switch (nr) {
 	case  0:
@@ -117,11 +105,7 @@ pty_read(void)
 		error_fatal("pty_read()", 1);
 		break;
 	default:
-		/* for (int i = 0; i < nr; ++i) { */
-		/* 	printf("\n--- [%d] = %s\n", iobuf.data[i], asciistr(iobuf.data[i])); */
-		/* } */
-		/* nw = pty__test_write(iobuf.data, iobuf.len + nr); */
-		nw = tty_write(iobuf.data, iobuf.len + nr);
+		nw = tty_write(tty, iobuf.data, iobuf.len + nr);
 		iobuf.len += nr - nw;
 		if (iobuf.len) {
 			memmove(&iobuf.data[0], &iobuf.data[nw], iobuf.len);
@@ -133,8 +117,9 @@ pty_read(void)
 }
 
 size_t
-pty_write(const char *str, size_t len)
+pty_write(TTY *tty, const char *str, size_t len)
 {
+	const PTY *pty = &tty->pty;
 	fd_set fds_r, fds_w;
 	size_t i = 0, rem = WRITE_LIMIT;
 	ssize_t n; // write() return value
@@ -142,26 +127,26 @@ pty_write(const char *str, size_t len)
 	while (i < len) {
 		FD_ZERO(&fds_r);
 		FD_ZERO(&fds_w);
-		FD_SET(pty.mfd, &fds_r);
-		FD_SET(pty.mfd, &fds_w);
+		FD_SET(pty->mfd, &fds_r);
+		FD_SET(pty->mfd, &fds_w);
 
-		if (pselect(pty.mfd + 1, &fds_r, &fds_w, NULL, NULL, NULL) < 0) {
+		if (pselect(pty->mfd + 1, &fds_r, &fds_w, NULL, NULL, NULL) < 0) {
 			error_fatal("pselect()", 1);
 		}
-		if (FD_ISSET(pty.mfd, &fds_w)) {
-			n = write(pty.mfd, &str[i], MIN(len-i, rem));
+		if (FD_ISSET(pty->mfd, &fds_w)) {
+			n = write(pty->mfd, &str[i], MIN(len-i, rem));
 			if (n < 0) {
 				error_fatal("write()", 1);
 			}
 			if (i + n < len) {
 				if (len - i < rem) {
-					rem = pty_read();
+					rem = pty_read(tty);
 				}
 			}
 			i += n;
 		}
-		if (i < len && FD_ISSET(pty.mfd, &fds_r)) {
-			rem = pty_read();
+		if (i < len && FD_ISSET(pty->mfd, &fds_r)) {
+			rem = pty_read(tty);
 		}
 	}
 
@@ -169,7 +154,7 @@ pty_write(const char *str, size_t len)
 }
 
 void
-pty_resize(int w, int h, int cols, int rows)
+pty_resize(const PTY *pty, int w, int h, int cols, int rows)
 {
 	struct winsize ptywin = {
 		.ws_xpixel = w,
@@ -178,7 +163,7 @@ pty_resize(int w, int h, int cols, int rows)
 		.ws_row = cols,
 	};
 
-	if (ioctl(pty.mfd, TIOCSWINSZ, &ptywin) < 0) {
+	if (ioctl(pty->mfd, TIOCSWINSZ, &ptywin) < 0) {
 		fprintf(stderr, "ERROR: pty_resize() - ioctl() failure\n");
 	}
 }

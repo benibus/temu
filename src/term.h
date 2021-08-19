@@ -23,6 +23,8 @@ enum {
 	ATTR_MAX        = (1 << 6)
 };
 
+#define ATTR_MASK (ATTR_MAX - 1)
+
 enum {
 	CELLTYPE_BLANK,
 	CELLTYPE_NORMAL,
@@ -31,8 +33,6 @@ enum {
 	CELLTYPE_DUMMY_WIDE,
 	CELLTYPE_COUNT
 };
-
-#define ATTR_MASK (ATTR_MAX - 1)
 
 typedef struct { int x, y; } Pos;
 
@@ -57,40 +57,50 @@ typedef struct {
 	uint16 flags;
 } Row;
 
-typedef struct {
-	pid_t pid; // process id
-	int mfd;   // master file descriptor
-	int sfd;   // slave file descriptor
-} PTY;
+typedef struct PTY_ PTY;
+typedef struct Seq_ Seq;
 
-typedef struct {
+typedef struct TTY_ {
 	Cell *cells;
-	int size, max;
 	Ring hist;
-	uint8 *tabs;
+	uint8 *tabstops;
+
+	int size, max;
 	int top, bot;
 	int cols, rows;
 	int scroll;
+
 	struct {
 		int x, y;
 		bool wrap_next;
 		bool hide;
 	} cursor;
+
+	struct PTY_ {
+		pid_t pid;
+		int mfd, sfd;
+	} pty;
+
+	struct Seq_ {
+		Cell templ;
+		uchar *buf, *args;
+		uint32 *opts;
+		char tokens[8];
+		uint8 depth;
+		uint8 state;
+	} seq;
 } TTY;
 
-bool tty_init(int, int);
-size_t tty_write(const char *, size_t);
-void tty_resize(uint, uint);
-
-int pty_init(char *);
-size_t pty_read(void);
-void pty_resize(int, int, int, int);
-size_t pty_write(const char *, size_t);
-
+TTY *tty_create(int, int, int, int);
+size_t tty_write(TTY *, const char *, size_t);
+void tty_resize(TTY *, uint, uint);
+int pty_init(PTY *, char *);
+size_t pty_read(TTY *);
+size_t pty_write(TTY *, const char *, size_t);
+void pty_resize(const PTY *, int, int, int, int);
 TTY *stream_init(TTY *, uint, uint, uint);
-int stream_write(uint32, ColorSet, uint16);
-Cell *stream_get_row(const TTY *, uint, uint *);
-
+int stream_write(TTY *, uint32, ColorSet, uint16);
+Cell *stream_get_row(TTY *, uint, uint *);
 void cmd_set_cells(TTY *, const Cell *, uint, uint, uint);
 void cmd_shift_cells(TTY *, uint, uint, int);
 void cmd_insert_cells(TTY *, const Cell *, uint);
@@ -104,14 +114,6 @@ size_t key_get_sequence(uint, uint, char *, size_t);
 
 void dummy__(void);
 void dbg_dump_history(TTY *);
-
-extern TTY tty;
-extern PTY pty;
-
-extern int tabstop;
-extern int histsize;
-extern double min_latency;
-extern double max_latency;
 
 #define COLOR_DARK_BLACK    0x00
 #define COLOR_DARK_RED      0x01

@@ -11,31 +11,22 @@
 #include "term.h"
 #include "utf8.h"
 
-typedef struct VTE_ VTE;
+/* struct VTE_ { */
+/* 	Cell templ; */
+/* 	uchar *buf; */
+/* 	uchar *args; */
+/* 	uint32 *opts; */
+/* 	char tokens[8]; */
+/* 	uint8 depth; */
+/* 	uint8 state; */
+/* }; */
 
-struct VTE_ {
-	Cell templ;
-	uchar *buf;
-	uchar *args;
-	uint32 *opts;
-	char tokens[8];
-	uint8 depth;
-	uint8 state;
-};
+/* typedef struct VTFunc_ { */
+/* 	const char *name; */
+/* 	void (*handler)(TTY *, Seq *, uint); */
+/* } VTFunc; */
 
-typedef struct VTFunc_ {
-	const char *name;
-	void (*handler)(TTY *, VTE *, uint);
-} VTFunc;
-
-typedef struct VTRes_ {
-	uint8 state;
-	uint8 func;
-} VTRes;
-
-#define RES(state_,func_) ((VTRes){ .state = (state_), .func = (func_) })
-
-#define VT_FUNC_TABLE \
+#define VTE_FUNC_TABLE \
     X_(NONE)    \
     X_(NEL)     \
     X_(HTS)     \
@@ -135,19 +126,29 @@ typedef struct VTRes_ {
     X_(OTHER)
 
 enum {
-#define X_(id) VT_##id,
-	VT_FUNC_TABLE
-#undef X_
-	VT_COUNT
+	#define X_(id) VTE_##id,
+	VTE_FUNC_TABLE
+	#undef X_
+	VTE_COUNT
 };
 
-static VTFunc vtfuncs[VT_COUNT] = {
-#define X_(id) [VT_##id] = { .name = #id },
-	VT_FUNC_TABLE
-#undef X_
+static struct {
+	const char *name;
+	void (*handler)(TTY *, Seq *, uint);
+} vtfuncs[VTE_COUNT] = {
+	#define X_(id) [VTE_##id] = { .name = #id },
+	VTE_FUNC_TABLE
+	#undef X_
 };
 
-#undef VT_FUNC_TABLE
+#undef VTE_FUNC_TABLE
+
+typedef struct SeqRes_ {
+	uint8 state;
+	uint8 func;
+} SeqRes;
+
+#define RES(state_,func_) ((SeqRes){ .state = (state_), .func = (func_) })
 
 enum {
 	CTRL_NUL,
@@ -192,76 +193,75 @@ static const char *statenames[STATE_MAX] = {
 	[STATE_OSC|STATE_ESC] = "OSC|ESC"
 };
 
-static bool parse_token(VTE *, uint32);
-static VTRes vte_parse_esc(VTE *, uint32, uint32 *);
-static VTRes vte_parse_csi(VTE *, uint32);
-static VTRes vte_parse_osc(VTE *, uint32);
-static VTRes vte_parse_dcs(VTE *, uint32);
-static bool vte_dispatch(TTY *, VTE *, uint);
-static void vte_print_func(VTE *, uint);
-static void vte_reset_buffers(VTE *);
-static void vte_reset_template(VTE *);
-static bool vte_get_opt(VTE *, uint32);
-static void func_ri(TTY *, VTE *, uint);
-static void func_ich(TTY *, VTE *, uint);
-static void func_cu(TTY *, VTE *, uint);
-static void func_cht(TTY *, VTE *, uint);
-static void func_dch(TTY *, VTE *, uint);
-static void func_ed(TTY *, VTE *, uint);
-static void func_el(TTY *, VTE *, uint);
-static void func_sgr(TTY *, VTE *, uint);
-static void func_decset(TTY *, VTE *, uint);
-static void func_osc(TTY *, VTE *, uint);
+static bool parse_token(TTY *, Seq *, uint32);
+static SeqRes seq_parse_esc(Seq *, uint32, uint32 *);
+static SeqRes seq_parse_csi(Seq *, uint32);
+static SeqRes seq_parse_osc(Seq *, uint32);
+static SeqRes seq_parse_dcs(Seq *, uint32);
+static bool seq_dispatch(TTY *, Seq *, uint);
+static void seq_reset_buffers(Seq *);
+static void seq_reset_template(Seq *);
+static bool seq_get_opt(Seq *, uint32);
+static void seq_print_func(Seq *, uint);
+static void vte_ri(TTY *, Seq *, uint);
+static void vte_ich(TTY *, Seq *, uint);
+static void vte_cu(TTY *, Seq *, uint);
+static void vte_cht(TTY *, Seq *, uint);
+static void vte_dch(TTY *, Seq *, uint);
+static void vte_ed(TTY *, Seq *, uint);
+static void vte_el(TTY *, Seq *, uint);
+static void vte_sgr(TTY *, Seq *, uint);
+static void vte_decset(TTY *, Seq *, uint);
+static void vte_osc(TTY *, Seq *, uint);
 
 static char mbuf[BUFSIZ];
 static size_t msize = 0;
-static VTE vte_ = { 0 };
 
-bool
-tty_init(int cols, int rows)
+TTY *
+tty_create(int cols, int rows, int histsize, int tabwidth)
 {
-	memclear(&tty, 1, sizeof(tty));
-	stream_init(&tty, cols, rows, histsize);
+	TTY *tty = xcalloc(1, sizeof(*tty));
+	stream_init(tty, cols, rows, histsize);
 
-	for (int i = 0; i < tty.hist.max; i++) {
-		Row *row = ring_data(&tty.hist, i);
-		row->offset = i * tty.cols;
+	for (int i = 0; i < tty->hist.max; i++) {
+		Row *row = ring_data(&tty->hist, i);
+		row->offset = i * tty->cols;
 	}
 
-	ASSERT(tabstop > 0);
-	for (int i = 0; ++i < tty.cols; ) {
-		tty.tabs[i] |= (i % tabstop == 0) ? 1 : 0;
+	ASSERT(tabwidth > 0);
+	for (int i = 0; ++i < tty->cols; ) {
+		tty->tabstops[i] |= (i % tabwidth == 0) ? 1 : 0;
 	}
 
-	vte_.buf  = NULL;
-	vte_.opts = NULL;
-	vte_.args = NULL;
-	vte_.state = 0;
-	vte_reset_buffers(&vte_);
-	vte_reset_template(&vte_);
+	tty->seq.buf  = NULL;
+	tty->seq.opts = NULL;
+	tty->seq.args = NULL;
+	tty->seq.state = 0;
+	seq_reset_buffers(&tty->seq);
+	seq_reset_template(&tty->seq);
 
 #define SET_FUNC(id,fn) vtfuncs[(id)].handler = (fn)
-	SET_FUNC(VT_RI,  func_ri);
-	SET_FUNC(VT_SGR, func_sgr);
-	SET_FUNC(VT_ICH, func_ich);
-	SET_FUNC(VT_CUU, func_cu);
-	SET_FUNC(VT_CUD, func_cu);
-	SET_FUNC(VT_CUF, func_cu);
-	SET_FUNC(VT_CUB, func_cu);
-	SET_FUNC(VT_CUP, func_cu);
-	SET_FUNC(VT_ED,  func_ed);
-	SET_FUNC(VT_EL,  func_el);
-	SET_FUNC(VT_DCH, func_dch);
-	SET_FUNC(VT_OSC, func_osc);
-	SET_FUNC(VT_DECSET, func_decset);
-	SET_FUNC(VT_DECRST, func_decset);
+	SET_FUNC(VTE_RI,  vte_ri);
+	SET_FUNC(VTE_SGR, vte_sgr);
+	SET_FUNC(VTE_ICH, vte_ich);
+	SET_FUNC(VTE_CUU, vte_cu);
+	SET_FUNC(VTE_CUD, vte_cu);
+	SET_FUNC(VTE_CUF, vte_cu);
+	SET_FUNC(VTE_CUB, vte_cu);
+	SET_FUNC(VTE_CUP, vte_cu);
+	SET_FUNC(VTE_ED,  vte_ed);
+	SET_FUNC(VTE_EL,  vte_el);
+	SET_FUNC(VTE_DCH, vte_dch);
+	SET_FUNC(VTE_OSC, vte_osc);
+	SET_FUNC(VTE_DECSET, vte_decset);
+	SET_FUNC(VTE_DECRST, vte_decset);
 #undef SET_FUNC
 
-	return !!tty.cells;
+	return tty;
 }
 
 size_t
-tty_write(const char *str, size_t len)
+tty_write(TTY *tty, const char *str, size_t len)
 {
 #if 1
 	{
@@ -288,8 +288,9 @@ tty_write(const char *str, size_t len)
 		width = utf8_decode(str + i, &ucs4, &err);
 		ASSERT(!err);
 
-		if (!parse_token(&vte_, ucs4)) {
-			stream_write(ucs4, vte_.templ.color, vte_.templ.attr);
+		if (!parse_token(tty, &tty->seq, ucs4)) {
+			stream_write(tty, ucs4, tty->seq.templ.color,
+			                        tty->seq.templ.attr);
 		} else {
 			dummy__();
 		}
@@ -297,49 +298,49 @@ tty_write(const char *str, size_t len)
 		i += width;
 	}
 
-	tty.cells[tty.size].ucs4 = 0;
+	tty->cells[tty->size].ucs4 = 0;
 
 	return i;
 }
 
 void
-tty_resize(uint cols, uint rows)
+tty_resize(TTY *tty, uint cols, uint rows)
 {
-	tty.cols = cols;
-	tty.rows = rows;
+	tty->cols = cols;
+	tty->rows = rows;
 }
 
 void
-vte_reset_buffers(VTE *vte)
+seq_reset_buffers(Seq *seq)
 {
-	ASSERT(vte);
+	ASSERT(seq);
 
-	vte->tokens[0] = 0;
-	vte->depth = 0;
-	arr_set(vte->buf,  0, 0), arr_clear(vte->buf);
-	arr_set(vte->opts, 0, 0), arr_clear(vte->opts);
-	arr_set(vte->args, 0, 0), arr_clear(vte->args);
+	seq->tokens[0] = 0;
+	seq->depth = 0;
+	arr_set(seq->buf,  0, 0), arr_clear(seq->buf);
+	arr_set(seq->opts, 0, 0), arr_clear(seq->opts);
+	arr_set(seq->args, 0, 0), arr_clear(seq->args);
 }
 
 void
-vte_reset_template(VTE *vte)
+seq_reset_template(Seq *seq)
 {
-	ASSERT(vte);
+	ASSERT(seq);
 
-	memclear(&vte->templ, 1, sizeof(vte->templ));
-	vte->templ.color.fg = COLOR_FG;
-	vte->templ.color.bg = COLOR_BG;
-	vte->templ.width = 1;
+	memclear(&seq->templ, 1, sizeof(seq->templ));
+	seq->templ.color.fg = COLOR_FG;
+	seq->templ.color.bg = COLOR_BG;
+	seq->templ.width = 1;
 }
 
 bool
-vte_dispatch(TTY *this, VTE *vte, uint id)
+seq_dispatch(TTY *tty, Seq *seq, uint id)
 {
-	ASSERT(id < VT_COUNT);
-	vte_print_func(vte, id);
+	ASSERT(id < VTE_COUNT);
+	seq_print_func(seq, id);
 
 	if (vtfuncs[id].handler) {
-		vtfuncs[id].handler(this, vte, id);
+		vtfuncs[id].handler(tty, seq, id);
 		return true;
 	}
 
@@ -347,71 +348,71 @@ vte_dispatch(TTY *this, VTE *vte, uint id)
 }
 
 bool
-parse_token(VTE *vte, uint32 ucs4)
+parse_token(TTY *tty, Seq *seq, uint32 ucs4)
 {
-	ASSERT(vte);
-	ASSERT(vte->depth + 2u < LEN(vte->tokens));
+	ASSERT(seq);
+	ASSERT(seq->depth + 2u < LEN(seq->tokens));
 
-	VTRes res = { 0 };
-	vte->templ.ucs4  = 0;
-	vte->templ.width = 0;
+	SeqRes res = { 0 };
+	seq->templ.ucs4  = 0;
+	seq->templ.width = 0;
 
 	if (ucs4 == CTRL_ESC) {
-		vte->state |= STATE_ESC;
+		seq->state |= STATE_ESC;
 		return true;
 	}
 
-	if (vte->state & STATE_ESC) {
+	if (seq->state & STATE_ESC) {
 		uint32 ucs4_ = 0;
-		res = vte_parse_esc(vte, ucs4, &ucs4_);
+		res = seq_parse_esc(seq, ucs4, &ucs4_);
 		if (ucs4_) {
-			vte->state = res.state;
+			seq->state = res.state;
 			ucs4 = ucs4_;
 		} else {
 			goto dispatch;
 		}
 	}
-	if (vte->state & STATE_OSC) {
-		res = vte_parse_osc(vte, ucs4);
-	} else if (vte->state & STATE_DCS) {
-		res = vte_parse_dcs(vte, ucs4);
-	} else if (vte->state & STATE_CSI) {
-		res = vte_parse_csi(vte, ucs4);
+	if (seq->state & STATE_OSC) {
+		res = seq_parse_osc(seq, ucs4);
+	} else if (seq->state & STATE_DCS) {
+		res = seq_parse_dcs(seq, ucs4);
+	} else if (seq->state & STATE_CSI) {
+		res = seq_parse_csi(seq, ucs4);
 	}
 
 dispatch:
-	arr_push(vte->buf, ucs4);
+	arr_push(seq->buf, ucs4);
 
 	if (res.func) {
-		vte_dispatch(&tty, vte, res.func);
+		seq_dispatch(tty, seq, res.func);
 	}
 	if (!res.state) {
-		vte_reset_buffers(vte);
-		vte->state = 0;
-		vte->templ.ucs4  = ucs4;
-		vte->templ.width = 1;
-	} else if (res.state != vte->state) {
-		vte->state = res.state;
-		vte->tokens[0] = 0;
-		vte->depth = 0;
+		seq_reset_buffers(seq);
+		seq->state = 0;
+		seq->templ.ucs4  = ucs4;
+		seq->templ.width = 1;
+	} else if (res.state != seq->state) {
+		seq->state = res.state;
+		seq->tokens[0] = 0;
+		seq->depth = 0;
 	}
 
 	return (res.state || res.func);
 }
 
 bool
-vte_get_opt(VTE *vte, uint32 ucs4)
+seq_get_opt(Seq *seq, uint32 ucs4)
 {
-	ASSERT(vte);
+	ASSERT(seq);
 
 	uint32 *opt = NULL;
 
 	switch (ucs4) {
 		case ';': {
-			if (!arr_count(vte->opts)) {
-				arr_push(vte->opts, 0);
+			if (!arr_count(seq->opts)) {
+				arr_push(seq->opts, 0);
 			}
-			arr_push(vte->opts, 0);
+			arr_push(seq->opts, 0);
 			break;
 		}
 		case '0': case '1':
@@ -419,10 +420,10 @@ vte_get_opt(VTE *vte, uint32 ucs4)
 		case '4': case '5':
 		case '6': case '7':
 		case '8': case '9': {
-			if (!arr_count(vte->opts)) {
-				arr_push(vte->opts, 0);
+			if (!arr_count(seq->opts)) {
+				arr_push(seq->opts, 0);
 			}
-			opt = arr_tail(vte->opts) - 1;
+			opt = arr_tail(seq->opts) - 1;
 
 			size_t tmp = *opt;
 			ASSERT(tmp + 9 < UINT32_MAX / 10);
@@ -438,14 +439,14 @@ vte_get_opt(VTE *vte, uint32 ucs4)
 	return true;
 }
 
-VTRes
-vte_parse_dcs(VTE *vte, uint32 ucs4)
+SeqRes
+seq_parse_dcs(Seq *seq, uint32 ucs4)
 {
-	char last = (vte->depth) ? vte->tokens[vte->depth-1] : 0;
+	char last = (seq->depth) ? seq->tokens[seq->depth-1] : 0;
 
-	if (!last && arr_count(vte->opts) < 3) {
-		if (vte_get_opt(vte, ucs4)) {
-			return RES(vte->state, 0);
+	if (!last && arr_count(seq->opts) < 3) {
+		if (seq_get_opt(seq, ucs4)) {
+			return RES(seq->state, 0);
 		}
 	}
 
@@ -469,45 +470,45 @@ vte_parse_dcs(VTE *vte, uint32 ucs4)
 	}
 
 	if (ucs4 == CTRL_ST || ucs4 == CTRL_BEL) {
-		switch (vte->tokens[0]) {
-		case '|': return RES(0, VT_DECUDK);
-		case '$': return RES(0, VT_DECRQSS);
-		case '+': return RES(0, VT_OTHER);
+		switch (seq->tokens[0]) {
+		case '|': return RES(0, VTE_DECUDK);
+		case '$': return RES(0, VTE_DECRQSS);
+		case '+': return RES(0, VTE_OTHER);
 		}
 		return RES(0, 0);
 	}
 
 	if (last != '|' && last != 'q') {
-		vte->tokens[vte->depth++] = ucs4;
-		vte->tokens[vte->depth] = 0;
+		seq->tokens[seq->depth++] = ucs4;
+		seq->tokens[seq->depth] = 0;
 	}
-	arr_push(vte->args, ucs4);
+	arr_push(seq->args, ucs4);
 
-	return RES(vte->state, 0);
+	return RES(seq->state, 0);
 }
 
-VTRes
-vte_parse_osc(VTE *vte, uint32 ucs4)
+SeqRes
+seq_parse_osc(Seq *seq, uint32 ucs4)
 {
-	if (arr_count(vte->opts) < 2) {
-		if (vte_get_opt(vte, ucs4)) {
-			return RES(vte->state, 0);
+	if (arr_count(seq->opts) < 2) {
+		if (seq_get_opt(seq, ucs4)) {
+			return RES(seq->state, 0);
 		}
-		if (!arr_count(vte->opts)) {
+		if (!arr_count(seq->opts)) {
 			return RES(0, 0);
 		}
 	}
 
 	if (ucs4 == CTRL_ST || ucs4 == CTRL_BEL) {
-		return RES(0, VT_OSC);
+		return RES(0, VTE_OSC);
 	}
-	arr_push(vte->args, ucs4);
+	arr_push(seq->args, ucs4);
 
-	return RES(vte->state, 0);
+	return RES(seq->state, 0);
 }
 
-VTRes
-vte_parse_esc(VTE *vte, uint32 ucs4, uint32 *ret)
+SeqRes
+seq_parse_esc(Seq *seq, uint32 ucs4, uint32 *ret)
 {
 	uint32 conv = 0;
 
@@ -517,9 +518,9 @@ vte_parse_esc(VTE *vte, uint32 ucs4, uint32 *ret)
 			break;
 		case '[': return RES(STATE_CSI, 0);
 		case ']': return RES(STATE_OSC, 0);
-		case 'E': return RES(0, VT_NEL);
-		case 'H': return RES(0, VT_HTS);
-		case 'M': return RES(0, VT_RI);
+		case 'E': return RES(0, VTE_NEL);
+		case 'H': return RES(0, VTE_HTS);
+		case 'M': return RES(0, VTE_RI);
 		case 'P': return RES(STATE_DCS, 0);
 
 		case 'X':  conv = CTRL_SOS; break;
@@ -528,21 +529,21 @@ vte_parse_esc(VTE *vte, uint32 ucs4, uint32 *ret)
 
 	if (conv) {
 		if (ret) *ret = conv;
-		return RES(vte->state & ~STATE_ESC, 0);
+		return RES(seq->state & ~STATE_ESC, 0);
 	}
 	return RES(0, 0);
 }
 
-VTRes
-vte_parse_csi(VTE *vte, uint32 ucs4)
+SeqRes
+seq_parse_csi(Seq *seq, uint32 ucs4)
 {
-	if (vte_get_opt(vte, ucs4)) {
-		return RES(vte->state, 0);
+	if (seq_get_opt(seq, ucs4)) {
+		return RES(seq->state, 0);
 	}
 
-	char last = (vte->depth) ? vte->tokens[vte->depth-1] : 0;
-	vte->tokens[vte->depth++] = ucs4;
-	vte->tokens[vte->depth] = 0;
+	char last = (seq->depth) ? seq->tokens[seq->depth-1] : 0;
+	seq->tokens[seq->depth++] = ucs4;
+	seq->tokens[seq->depth] = 0;
 
 	switch (last) {
 	case 0:
@@ -552,86 +553,86 @@ vte_parse_csi(VTE *vte, uint32 ucs4)
 		case '"':
 		case '\'':
 		case '$':
-		case '>': return RES(vte->state, 0);
+		case '>': return RES(seq->state, 0);
 
-		case '@': return RES(0, VT_ICH);
-		case 'A': return RES(0, VT_CUU);
-		case 'B': return RES(0, VT_CUD);
-		case 'C': return RES(0, VT_CUF);
-		case 'D': return RES(0, VT_CUB);
-		case 'E': return RES(0, VT_CNL);
-		case 'F': return RES(0, VT_CPL);
-		case 'G': return RES(0, VT_CHA);
-		case 'H': return RES(0, VT_CUP);
-		case 'I': return RES(0, VT_CHT);
-		case 'J': return RES(0, VT_ED);
-		case 'K': return RES(0, VT_EL);
-		case 'L': return RES(0, VT_IL);
-		case 'M': return RES(0, VT_DL);
-		case 'P': return RES(0, VT_DCH);
-		case 'S': return RES(0, VT_SU);
-		case 'T': return RES(0, VT_SD);
-		case 'X': return RES(0, VT_ECH);
-		case 'Z': return RES(0, VT_CBT);
-		case '`': return RES(0, VT_HPA);
-		case 'b': return RES(0, VT_REP);
-		case 'd': return RES(0, VT_VPA);
-		case 'f': return RES(0, VT_HVP);
-		case 'g': return RES(0, VT_TBC);
-		case 'h': return RES(0, VT_SM);
-		case 'i': return RES(0, VT_MC);
-		case 'l': return RES(0, VT_RM);
-		case 'm': return RES(0, VT_SGR);
-		case 'r': return RES(0, VT_DECSTBM);
+		case '@': return RES(0, VTE_ICH);
+		case 'A': return RES(0, VTE_CUU);
+		case 'B': return RES(0, VTE_CUD);
+		case 'C': return RES(0, VTE_CUF);
+		case 'D': return RES(0, VTE_CUB);
+		case 'E': return RES(0, VTE_CNL);
+		case 'F': return RES(0, VTE_CPL);
+		case 'G': return RES(0, VTE_CHA);
+		case 'H': return RES(0, VTE_CUP);
+		case 'I': return RES(0, VTE_CHT);
+		case 'J': return RES(0, VTE_ED);
+		case 'K': return RES(0, VTE_EL);
+		case 'L': return RES(0, VTE_IL);
+		case 'M': return RES(0, VTE_DL);
+		case 'P': return RES(0, VTE_DCH);
+		case 'S': return RES(0, VTE_SU);
+		case 'T': return RES(0, VTE_SD);
+		case 'X': return RES(0, VTE_ECH);
+		case 'Z': return RES(0, VTE_CBT);
+		case '`': return RES(0, VTE_HPA);
+		case 'b': return RES(0, VTE_REP);
+		case 'd': return RES(0, VTE_VPA);
+		case 'f': return RES(0, VTE_HVP);
+		case 'g': return RES(0, VTE_TBC);
+		case 'h': return RES(0, VTE_SM);
+		case 'i': return RES(0, VTE_MC);
+		case 'l': return RES(0, VTE_RM);
+		case 'm': return RES(0, VTE_SGR);
+		case 'r': return RES(0, VTE_DECSTBM);
 		case 'c':
 		case 's':
 		case 't':
-		case 'x': return RES(0, VT_OTHER);
+		case 'x': return RES(0, VTE_OTHER);
 		}
 		break;
 	case '?':
 		switch (ucs4) {
-		case 'J': return RES(0, VT_DECSED);
-		case 'K': return RES(0, VT_DECSEL);
-		case 'h': return RES(0, VT_DECSET);
-		case 'i': return RES(0, VT_DECMC);
-		case 'l': return RES(0, VT_DECRST);
-		case 'n': return RES(0, VT_DECDSR);
+		case 'J': return RES(0, VTE_DECSED);
+		case 'K': return RES(0, VTE_DECSEL);
+		case 'h': return RES(0, VTE_DECSET);
+		case 'i': return RES(0, VTE_DECMC);
+		case 'l': return RES(0, VTE_DECRST);
+		case 'n': return RES(0, VTE_DECDSR);
 		case 'q':
 		case 'r':
-		case 's': return RES(0, VT_OTHER);
+		case 's': return RES(0, VTE_OTHER);
 		}
 		break;
 	case '!':
 		switch (ucs4) {
-		case 'p': return RES(0, VT_DECSTR);
+		case 'p': return RES(0, VTE_DECSTR);
 		}
 		break;
 	case '"':
 		switch (ucs4) {
-		case 'p': return RES(0, VT_DECSCL);
-		case 'q': return RES(0, VT_OTHER);
+		case 'p': return RES(0, VTE_DECSCL);
+		case 'q': return RES(0, VTE_OTHER);
 		}
 		break;
 	case '\'':
 		switch (ucs4) {
-		case 'w': return RES(0, VT_DECEFR);
-		case 'z': return RES(0, VT_DECELR);
-		case '{': return RES(0, VT_DECSLE);
-		case '|': return RES(0, VT_DECRQLP);
+		case 'w': return RES(0, VTE_DECEFR);
+		case 'z': return RES(0, VTE_DECELR);
+		case '{': return RES(0, VTE_DECSLE);
+		case '|': return RES(0, VTE_DECRQLP);
 		}
 		break;
 	case '$':
 		switch (ucs4) {
-		case 't': return RES(0, VT_DECCARA);
-		case 'v': return RES(0, VT_DECCRA);
-		case 'x': return RES(0, VT_DECFRA);
-		case 'z': return RES(0, VT_DECERA);
+		case 't': return RES(0, VTE_DECCARA);
+		case 'v': return RES(0, VTE_DECCRA);
+		case 'x': return RES(0, VTE_DECFRA);
+		case 'z': return RES(0, VTE_DECERA);
 		}
 		break;
 	case '>':
 		switch (ucs4) {
-		case 'c': return RES(0, VT_OTHER);
+		case 'c': return RES(0, VTE_OTHER);
 		}
 		break;
 	}
@@ -639,12 +640,12 @@ vte_parse_csi(VTE *vte, uint32 ucs4)
 	return RES(0, 0);
 }
 
-#define VTOPT(s,n) (((n) < arr_count((s)->opts)) ? (s)->opts[(n)] : 0)
+#define SEQOPT(s,n) (((n) < arr_count((s)->opts)) ? (s)->opts[(n)] : 0)
 
 void
-func_osc(TTY *this, VTE *vte, uint id)
+vte_osc(TTY *tty, Seq *seq, uint id)
 {
-	uint32 o = VTOPT(vte, 0);
+	uint32 o = SEQOPT(seq, 0);
 	char *msg = NULL;
 
 	switch (o) {
@@ -657,94 +658,94 @@ func_osc(TTY *this, VTE *vte, uint id)
 	}
 
 	fprintf(stderr, "\tOSC >>> Changing %s to: \"%.*s\"\n",
-	                msg, (int)arr_count(vte->args), vte->args);
+	                msg, (int)arr_count(seq->args), seq->args);
 }
 
 void
-func_decset(TTY *this, VTE *vte, uint id)
+vte_decset(TTY *tty, Seq *seq, uint id)
 {
-	uint32 o = VTOPT(vte, 0);
+	uint32 o = SEQOPT(seq, 0);
 
 	switch (o) {
 		case 25: {
-			this->cursor.hide = (id == VT_DECRST);
+			tty->cursor.hide = (id == VTE_DECRST);
 			break;
 		}
 	}
 }
 
 void
-func_el(TTY *this, VTE *vte, uint id)
+vte_el(TTY *tty, Seq *seq, uint id)
 {
-	uint32 o = VTOPT(vte, 0);
-	ASSERT(!vte->templ.ucs4 && !vte->templ.width);
+	uint32 o = SEQOPT(seq, 0);
+	ASSERT(!seq->templ.ucs4 && !seq->templ.width);
 
 	switch (o) {
 		case 0: {
-			cmd_set_cells(this, &vte->templ,
-			              this->cursor.x, this->cursor.y,
-			              this->cols - this->cursor.x);
+			cmd_set_cells(tty, &seq->templ,
+			              tty->cursor.x, tty->cursor.y,
+			              tty->cols - tty->cursor.x);
 			break;
 		}
 		case 1: {
-			vte->templ.ucs4 = ' ';
-			vte->templ.width = 1;
+			seq->templ.ucs4 = ' ';
+			seq->templ.width = 1;
 
-			cmd_set_cells(&tty, &vte->templ,
-			              0, this->cursor.y, this->cursor.x);
+			cmd_set_cells(tty, &seq->templ,
+			              0, tty->cursor.y, tty->cursor.x);
 			break;
 		}
 		case 2: {
-			cmd_set_cells(this, &vte->templ,
-				      0, this->cursor.y, this->cols);
-			cmd_set_cursor_x(this, 0);
+			cmd_set_cells(tty, &seq->templ,
+				      0, tty->cursor.y, tty->cols);
+			cmd_set_cursor_x(tty, 0);
 			break;
 		}
 	}
 }
 
 void
-func_ed(TTY *this, VTE *vte, uint id)
+vte_ed(TTY *tty, Seq *seq, uint id)
 {
-	uint32 o = VTOPT(vte, 0);
-	ASSERT(!vte->templ.ucs4 && !vte->templ.width);
+	uint32 o = SEQOPT(seq, 0);
+	ASSERT(!seq->templ.ucs4 && !seq->templ.width);
 
 	switch (o) {
 		case 0: {
-			cmd_clear_rows(this, this->cursor.y + 1, this->rows);
-			cmd_set_cells(this, &vte->templ,
-				      this->cursor.x, this->cursor.y,
-				      this->cols);
+			cmd_clear_rows(tty, tty->cursor.y + 1, tty->rows);
+			cmd_set_cells(tty, &seq->templ,
+				      tty->cursor.x, tty->cursor.y,
+				      tty->cols);
 			break;
 		}
 		case 1: {
-			vte->templ.ucs4  = ' ';
-			vte->templ.width = 1;
+			seq->templ.ucs4  = ' ';
+			seq->templ.width = 1;
 
-			cmd_clear_rows(this, this->top, this->cursor.y - this->top);
-			cmd_set_cells(this, &vte->templ,
-				      0, this->cursor.y,
-				      this->cursor.x);
+			cmd_clear_rows(tty, tty->top, tty->cursor.y - tty->top);
+			cmd_set_cells(tty, &seq->templ,
+				      0, tty->cursor.y,
+				      tty->cursor.x);
 			break;
 		}
 		case 2: {
-			cmd_clear_rows(this, this->top, this->rows);
-			cmd_set_cursor_y(this, 0);
+			cmd_clear_rows(tty, tty->top, tty->rows);
+			cmd_set_cursor_y(tty, 0);
 			break;
 		}
 	}
 }
 
 void
-func_sgr(TTY *this, VTE *vte, uint id)
+vte_sgr(TTY *tty, Seq *seq, uint id)
 {
-	Cell *cell = &vte->templ;
+	Cell *cell = &seq->templ;
 	uint i = 0;
-	uint count = arr_count(vte->opts);
+	uint count = arr_count(seq->opts);
 	uint32 o[3] = { 0 };
 
 	do {
-		o[0] = VTOPT(vte, i);
+		o[0] = SEQOPT(seq, i);
 
 		switch (o[0]) {
 			case 0: {
@@ -783,9 +784,9 @@ func_sgr(TTY *this, VTE *vte, uint id)
 
 			case 38:
 			case 48: {
-				o[1] = VTOPT(vte, i + 1);
+				o[1] = SEQOPT(seq, i + 1);
 				if (o[1] == 5) {
-					if (!(o[2] = VTOPT(vte, i + 2))) {
+					if (!(o[2] = SEQOPT(seq, i + 2))) {
 						break;
 					} else if (o[0] < 40) {
 						cell->color.fg = o[2];
@@ -820,86 +821,86 @@ func_sgr(TTY *this, VTE *vte, uint id)
 }
 
 void
-func_dch(TTY *this, VTE *vte, uint id)
+vte_dch(TTY *tty, Seq *seq, uint id)
 {
-	uint32 o = VTOPT(vte, 0);
+	uint32 o = SEQOPT(seq, 0);
 	int dx = DEFAULT(o, 1);
 	ASSERT(dx >= 0);
 
-	cmd_shift_cells(this, this->cursor.x + dx, this->cursor.y, -dx);
+	cmd_shift_cells(tty, tty->cursor.x + dx, tty->cursor.y, -dx);
 }
 
 void
-func_cht(TTY *this, VTE *vte, uint id)
+vte_cht(TTY *tty, Seq *seq, uint id)
 {
-	uint32 o = VTOPT(vte, 0);
+	uint32 o = SEQOPT(seq, 0);
 
 	for (uint i = 0; i < DEFAULT(o, 1); i++) {
-		if (!stream_write('\t', vte->templ.color, vte->templ.attr)) {
+		if (!stream_write(tty, '\t', seq->templ.color, seq->templ.attr)) {
 			break;
 		}
 	}
 }
 
 void
-func_cu(TTY *this, VTE *vte, uint id)
+vte_cu(TTY *tty, Seq *seq, uint id)
 {
-	uint32 o[2] = { VTOPT(vte, 0), VTOPT(vte, 1) };
+	uint32 o[2] = { SEQOPT(seq, 0), SEQOPT(seq, 1) };
 
 	switch (id) {
-	case VT_CUU:
-		cmd_move_cursor_y(this, -DEFAULT(o[0], 1));
+	case VTE_CUU:
+		cmd_move_cursor_y(tty, -DEFAULT(o[0], 1));
 		break;
-	case VT_CUD:
-		cmd_move_cursor_y(this, +DEFAULT(o[0], 1));
+	case VTE_CUD:
+		cmd_move_cursor_y(tty, +DEFAULT(o[0], 1));
 		break;
-	case VT_CUF:
-		cmd_move_cursor_x(this, +DEFAULT(o[0], 1));
+	case VTE_CUF:
+		cmd_move_cursor_x(tty, +DEFAULT(o[0], 1));
 		break;
-	case VT_CUB:
-		cmd_move_cursor_x(this, -DEFAULT(o[0], 1));
+	case VTE_CUB:
+		cmd_move_cursor_x(tty, -DEFAULT(o[0], 1));
 		break;
-	case VT_CUP:
-		cmd_set_cursor_x(this, o[1]);
-		cmd_set_cursor_y(this, o[0]);
+	case VTE_CUP:
+		cmd_set_cursor_x(tty, o[1]);
+		cmd_set_cursor_y(tty, o[0]);
 		break;
 	}
 }
 
 void
-func_ich(TTY *this, VTE *vte, uint id)
+vte_ich(TTY *tty, Seq *seq, uint id)
 {
-	uint32 o = VTOPT(vte, 0);
+	uint32 o = SEQOPT(seq, 0);
 
-	vte->templ.ucs4 = ' ';
-	vte->templ.width = 1;
+	seq->templ.ucs4 = ' ';
+	seq->templ.width = 1;
 
-	cmd_insert_cells(this, &vte->templ, DEFAULT(o, 1));
+	cmd_insert_cells(tty, &seq->templ, DEFAULT(o, 1));
 }
 
 void
-func_ri(TTY *this, VTE *vte, uint id)
+vte_ri(TTY *tty, Seq *seq, uint id)
 {
-	cmd_move_cursor_y(this, -1);
+	cmd_move_cursor_y(tty, -1);
 }
 
 void
-vte_print_func(VTE *vte, uint id)
+seq_print_func(Seq *seq, uint id)
 {
 	fprintf(stderr, "\033[01;33m"
 	                "VtCode("
 	                "\033[0m%02u"
 	                "\033[01;33m)\033[0m "
 	                "%-8s %-8s ",
-	                id, statenames[vte->state], vtfuncs[id].name);
+	                id, statenames[seq->state], vtfuncs[id].name);
 	fprintf(stderr, "%#2.2x (%02lu) [%02u/%02lu] ",
-	                vte->state,
-	                arr_count(vte->opts),
-	                vte->depth,
-	                arr_count(vte->buf));
+	                seq->state,
+	                arr_count(seq->opts),
+	                seq->depth,
+	                arr_count(seq->buf));
 
-	for (uint i = 0; i < arr_count(vte->buf); i++) {
-		fprintf(stderr, "%s%s", asciistr(vte->buf[i]), " ");
+	for (uint i = 0; i < arr_count(seq->buf); i++) {
+		fprintf(stderr, "%s%s", asciistr(seq->buf[i]), " ");
 	}
 	fputc('\n', stderr);
 }

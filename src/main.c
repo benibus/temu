@@ -21,9 +21,9 @@ typedef struct Config {
 	char *font;
 	char *colors[MAX_COLORS];
 	char *shell;
-	uint tabstop;
+	uint tabwidth;
 	uint border_px;
-	uint history_size;
+	uint histsize;
 	uint columns, rows;
 	struct { int x, y; } position;
 	struct { uint min, max; } latency;
@@ -31,25 +31,26 @@ typedef struct Config {
 // NOTE: must include *after* definitions
 #include "config.h"
 
-int histsize;
-int tabstop;
-double min_latency;
-double max_latency;
-u32 log_flags = 0;
+typedef struct Client_ {
+	Win *win;
+	RC rc;
+	TTY *tty;
+	struct {
+		double min;
+		double max;
+	} latency;
+} Client;
 
-TTY tty = { 0 };
-PTY pty = { 0 };
+static Client client_;
 
 static FontFace *fonts[4];
 static FontMetrics metrics;
 static Color colors[MAX_COLORS];
-static Win *win;
-static RC rc;
 static bool toggle_render = true;
 
+static void run(Client *);
+static void render_frame(Client *);
 static void event_key_press(int, int, char *, int);
-static void run(void);
-static void render_frame(void);
 
 int
 main(int argc, char **argv)
@@ -98,7 +99,7 @@ main(int argc, char **argv)
 		case 'm':
 			arg.n = strtol(optarg, &errp, 10);
 			if (arg.n > 0 && !*errp)
-				config.history_size = arg.n;
+				config.histsize = arg.n;
 			break;
 		case '?':
 		case ':':
@@ -111,11 +112,14 @@ error_invalid:
 		exit(1);
 	}
 
-	histsize = (config.rows > config.history_size) ? config.rows : config.history_size;
-	tabstop = config.tabstop;
-	min_latency = config.latency.min;
-	max_latency = config.latency.max;
+	config.histsize = (config.rows > config.histsize)
+	                ? config.rows
+	                : config.histsize;
+	config.tabwidth = (config.tabwidth > 0) ? config.tabwidth : 8;
 
+	Win *win;
+	RC rc = { 0 };
+	TTY *tty;
 	int cols, rows;
 
 	if (!(win = win_create_client()))
@@ -179,34 +183,46 @@ error_invalid:
 	rc.color.fg = &colors[COLOR_FG];
 	rc.color.bg = &colors[COLOR_BG];
 
-	if (!tty_init(cols, rows))
+	if (!(tty = tty_create(cols, rows, config.histsize, config.tabwidth))) {
 		return 6;
+	}
 
 	win->events.key_press = event_key_press;
 	win_show_client(win);
 
-	run();
+	client_.win = win;
+	client_.rc  = rc;
+	client_.tty = tty;
+	client_.latency.min = config.latency.min;
+	client_.latency.max = config.latency.max;
+
+	run(&client_);
 
 	return 0;
 }
 
 void
-run(void)
+run(Client *client)
 {
+	Win *win = client->win;
+	TTY *tty = client->tty;
+
 	double timeout = -1.0;
+	double minlat = client->latency.min;
+	double maxlat = client->latency.max;
 	bool busy = false;
 	TimeVal t0 = { 0 };
 	TimeVal t1 = { 0 };
 
-	pty_init(config.shell);
-	pty_resize(win->w, win->h, tty.cols, tty.rows);
+	pty_init(&tty->pty, config.shell);
+	pty_resize(&tty->pty, win->w, win->h, tty->cols, tty->rows);
 
 	fd_set rset;
-	int maxfd = MAX(win->fd, pty.mfd);
+	int maxfd = MAX(win->fd, tty->pty.mfd);
 
 	while (win->state) {
 		FD_ZERO(&rset);
-		FD_SET(pty.mfd, &rset);
+		FD_SET(tty->pty.mfd, &rset);
 		FD_SET(win->fd, &rset);
 
 		if (win_events_pending(win)) {
@@ -223,21 +239,21 @@ run(void)
 		}
 		time_get_mono(&t1);
 
-		if (FD_ISSET(pty.mfd, &rset)) {
-			pty_read();
+		if (FD_ISSET(tty->pty.mfd, &rset)) {
+			pty_read(tty);
 		}
 
 		int num_events = win_process_events(win, 0.0);
 
-		if (FD_ISSET(pty.mfd, &rset) || num_events) {
+		if (FD_ISSET(tty->pty.mfd, &rset) || num_events) {
 			if (!busy) {
 				busy = true;
 				t0 = t1;
 			}
 
 			double elapsed = time_diff_msec(&t1, &t0);
-			timeout = (max_latency - elapsed) / max_latency;
-			timeout *= min_latency;
+			timeout = (maxlat - elapsed) / maxlat;
+			timeout *= minlat;
 
 			if (timeout > 0.0) continue;
 		}
@@ -245,27 +261,31 @@ run(void)
 		busy = false;
 
 		if (toggle_render) {
-			render_frame();
+			render_frame(client);
 		}
 	}
 }
 
 void
-render_frame(void)
+render_frame(Client *client)
 {
-	rc.color.fg = &colors[COLOR_FG];
-	rc.color.bg = &colors[COLOR_BG];
-	draw_rect_solid(&rc, rc.color.bg, 0, 0, win->w, win->h);
+	Win *win = client->win;
+	RC *rc   = &client->rc;
+	TTY *tty = client->tty;
 
-	for (uint y = 0; (int)y <= tty.bot - tty.top; y++) {
+	rc->color.fg = &colors[COLOR_FG];
+	rc->color.bg = &colors[COLOR_BG];
+	draw_rect_solid(rc, rc->color.bg, 0, 0, win->w, win->h);
+
+	for (uint y = 0; (int)y <= tty->bot - tty->top; y++) {
 		GlyphRender glyphs[256] = { 0 };
 
-		FontFace *font = rc.font;
+		FontFace *font = rc->font;
 		Cell *cells = NULL;
 		uint x, len = 0;
 
-		cells = stream_get_row(&tty, tty.top + y, &len);
-		ASSERT((int)len <= tty.cols);
+		cells = stream_get_row(tty, tty->top + y, &len);
+		ASSERT((int)len <= tty->cols);
 
 		for (x = 0; cells && x < len && x < LEN(glyphs); x++) {
 			Cell cell = cells[x];
@@ -298,8 +318,8 @@ render_frame(void)
 		}
 
 		// draw cursor
-		if (!tty.cursor.hide && tty.top + (int)y == tty.cursor.y) {
-			uint cx = tty.cursor.x;
+		if (!tty->cursor.hide && tty->top + (int)y == tty->cursor.y) {
+			uint cx = tty->cursor.x;
 			glyphs[cx].ucs4 = DEFAULT(glyphs[cx].ucs4, L' ');
 			glyphs[cx].font = DEFAULT(glyphs[cx].font, font);
 			glyphs[cx].foreground = &colors[COLOR_BG];
@@ -307,7 +327,7 @@ render_frame(void)
 			x += (cx == len);
 		}
 
-		draw_text_utf8(&rc, glyphs,
+		draw_text_utf8(rc, glyphs,
 		               x, 0, y * (metrics.ascent + metrics.descent));
 	}
 
@@ -317,11 +337,14 @@ render_frame(void)
 void
 event_key_press(int key, int mod, char *buf, int len)
 {
+	Client *client = &client_;
+	TTY *tty = client->tty;
+
 	char seq[64];
 	int seqlen = 0;
 
 	if (mod == MOD_ALT && key == KEY_F9) {
-		dbg_dump_history(&tty);
+		dbg_dump_history(tty);
 		return;
 	}
 	if (mod == MOD_ALT && key == KEY_F10) {
@@ -330,9 +353,9 @@ event_key_press(int key, int mod, char *buf, int len)
 	}
 
 	if ((seqlen = key_get_sequence(key, mod, seq, LEN(seq)))) {
-		pty_write(seq, seqlen);
+		pty_write(tty, seq, seqlen);
 	} else if (len == 1) {
-		pty_write(buf, len);
+		pty_write(tty, buf, len);
 	}
 }
 
