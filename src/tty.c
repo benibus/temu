@@ -316,6 +316,12 @@ tty_write(TTY *tty, const char *str, size_t len)
 }
 
 void
+tty_scroll(TTY *tty, int dy)
+{
+	tty->scroll = CLAMP(tty->scroll + dy, -tty->top, 0);
+}
+
+void
 tty_resize(TTY *tty, uint cols, uint rows)
 {
 	tty->cols = cols;

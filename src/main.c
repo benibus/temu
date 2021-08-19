@@ -25,6 +25,7 @@ typedef struct Config {
 	uint border_px;
 	uint histsize;
 	uint columns, rows;
+	uint scrollinc;
 	struct { int x, y; } position;
 	struct { uint min, max; } latency;
 } Config;
@@ -39,6 +40,7 @@ typedef struct Client_ {
 		double min;
 		double max;
 	} latency;
+	int scrollinc;
 } Client;
 
 static Client client_;
@@ -55,7 +57,7 @@ static void event_key_press(int, int, char *, int);
 int
 main(int argc, char **argv)
 {
-	for (int opt; (opt = getopt(argc, argv, "T:N:C:f:c:r:x:y:b:m:")) != -1; ) {
+	for (int opt; (opt = getopt(argc, argv, "T:N:C:f:c:r:x:y:b:m:s:")) != -1; ) {
 		union {
 			char *s;
 			long n;
@@ -100,6 +102,11 @@ main(int argc, char **argv)
 			arg.n = strtol(optarg, &errp, 10);
 			if (arg.n > 0 && !*errp)
 				config.histsize = arg.n;
+			break;
+		case 's':
+			arg.n = strtol(optarg, &errp, 10);
+			if (arg.n > 0 && !*errp)
+				config.scrollinc = arg.n;
 			break;
 		case '?':
 		case ':':
@@ -193,6 +200,7 @@ error_invalid:
 	client_.rc  = rc;
 	client_.latency.min = config.latency.min;
 	client_.latency.max = config.latency.max;
+	client_.scrollinc = DEFAULT(config.scrollinc, 1);
 
 	run(&client_);
 
@@ -275,14 +283,14 @@ render_frame(Client *client)
 	rc->color.bg = &colors[COLOR_BG];
 	draw_rect_solid(rc, rc->color.bg, 0, 0, win->w, win->h);
 
-	for (uint y = 0; (int)y <= tty->bot - tty->top; y++) {
+	for (int i = 0, y = tty->top + tty->scroll; y <= tty->bot && i < tty->cols; i++, y++) {
 		GlyphRender glyphs[256] = { 0 };
 
 		FontFace *font = rc->font;
 		Cell *cells = NULL;
 		uint x, len = 0;
 
-		cells = stream_get_row(tty, tty->top + y, &len);
+		cells = stream_get_row(tty, y, &len);
 		ASSERT((int)len <= tty->cols);
 
 		for (x = 0; cells && x < len && x < LEN(glyphs); x++) {
@@ -316,7 +324,7 @@ render_frame(Client *client)
 		}
 
 		// draw cursor
-		if (!tty->cursor.hide && tty->top + (int)y == tty->cursor.y) {
+		if (!tty->cursor.hide && y == tty->cursor.y) {
 			uint cx = tty->cursor.x;
 			glyphs[cx].ucs4 = DEFAULT(glyphs[cx].ucs4, L' ');
 			glyphs[cx].font = DEFAULT(glyphs[cx].font, font);
@@ -326,7 +334,7 @@ render_frame(Client *client)
 		}
 
 		draw_text_utf8(rc, glyphs,
-		               x, 0, y * (metrics.ascent + metrics.descent));
+		               x, 0, i * (metrics.ascent + metrics.descent));
 	}
 
 	win_render_frame(win);
@@ -341,18 +349,29 @@ event_key_press(int key, int mod, char *buf, int len)
 	char seq[64];
 	int seqlen = 0;
 
-	if (mod == MOD_ALT && key == KEY_F9) {
-		dbg_dump_history(tty);
-		return;
+#if 1
+	if (mod == MOD_ALT) {
+		switch (key) {
+		case KEY_F9:
+			dbg_dump_history(tty);
+			return;
+		case KEY_F10:
+			toggle_render = !toggle_render;
+			return;
+		case 'u':
+			tty_scroll(tty, -client->scrollinc);
+			return;
+		case 'd':
+			tty_scroll(tty, +client->scrollinc);
+			return;
+		}
 	}
-	if (mod == MOD_ALT && key == KEY_F10) {
-		toggle_render = !toggle_render;
-		return;
-	}
+#endif
 
 	if ((seqlen = key_get_sequence(key, mod, seq, LEN(seq)))) {
 		pty_write(tty, seq, seqlen);
 	} else if (len == 1) {
+		tty_scroll(tty, -tty->scroll);
 		pty_write(tty, buf, len);
 	}
 }

@@ -94,6 +94,7 @@ typedef struct TTY_ {
 TTY *tty_create(int, int, int, int);
 bool tty_init(TTY *, int, int, int, int);
 size_t tty_write(TTY *, const char *, size_t);
+void tty_scroll(TTY *, int);
 void tty_resize(TTY *, uint, uint);
 int pty_init(PTY *, char *);
 size_t pty_read(TTY *);
