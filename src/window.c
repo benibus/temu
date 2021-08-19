@@ -395,18 +395,20 @@ win_resize_client(Win *pub, uint w, uint h)
 Win *
 win_validate_config(Win *pub)
 {
-	pub->w    = DEFAULT(pub->w, 800);
-	pub->h    = DEFAULT(pub->h, 600);
-	pub->iw   = DEFAULT(pub->iw, 1);
-	pub->ih   = DEFAULT(pub->ih, 1);
-	pub->bw   = DEFAULT(pub->bw, 0);
-	pub->minw = DEFAULT(pub->minw, pub->iw + 2 * pub->bw);
-	pub->minh = DEFAULT(pub->minh, pub->ih + 2 * pub->bw);
-	pub->maxw = DEFAULT(pub->maxw, 0);
-	pub->maxh = DEFAULT(pub->maxh, 0);
+	if (pub) {
+		pub->w    = DEFAULT(pub->w, 800);
+		pub->h    = DEFAULT(pub->h, 600);
+		pub->iw   = DEFAULT(pub->iw, 1);
+		pub->ih   = DEFAULT(pub->ih, 1);
+		pub->bw   = DEFAULT(pub->bw, 0);
+		pub->minw = DEFAULT(pub->minw, pub->iw + 2 * pub->bw);
+		pub->minh = DEFAULT(pub->minh, pub->ih + 2 * pub->bw);
+		pub->maxw = DEFAULT(pub->maxw, 0);
+		pub->maxh = DEFAULT(pub->maxh, 0);
 
-	if (pub->flags == WINATTR_DEFAULT) {
-		pub->flags = WINFLAGS_DEFAULT;
+		if (pub->flags == WINATTR_DEFAULT) {
+			pub->flags = WINFLAGS_DEFAULT;
+		}
 	}
 
 	return pub;
@@ -658,7 +660,8 @@ win_poll_events(WinData *win)
 			case ConfigureNotify: {
 				XConfigureEvent *e = (void *)&event;
 				if (win->pub.events.resize) {
-					win->pub.events.resize(e->width, e->height);
+					win->pub.events.resize(win->pub.ref,
+					                       e->width, e->height);
 				}
 				win->pub.w = e->width;
 				win->pub.h = e->height;
@@ -696,7 +699,8 @@ win_poll_events(WinData *win)
 				x11_translate_key(ksym, e->state, &k.id, &k.mod);
 
 				if (win->pub.events.key_press && k.id != KEY_NONE) {
-					win->pub.events.key_press(k.id, k.mod, buf, k.len);
+					win->pub.events.key_press(win->pub.ref,
+					                          k.id, k.mod, buf, k.len);
 				}
 
 				if (buf != k.buf) free(buf);

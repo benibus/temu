@@ -15,6 +15,7 @@ enum {
 };
 
 typedef struct {
+	void *ref;
 	bool state;
 	char *title, *instance, *class;
 	int fd;
@@ -26,9 +27,9 @@ typedef struct {
 	uint maxw, maxh;
 	uint32 flags;
 	struct {
-		void (*resize)(int, int);
-		void (*key_press)(int, int, char *, int);
-		void (*visible)(void);
+		void (*resize)(void *, int, int);
+		void (*key_press)(void *, int, int, char *, int);
+		void (*visible)(void *);
 	} events;
 } Win;
 

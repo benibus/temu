@@ -52,7 +52,8 @@ static bool toggle_render = true;
 
 static void run(Client *);
 static void render_frame(Client *);
-static void event_key_press(int, int, char *, int);
+static void event_key_press(void *, int, int, char *, int);
+static void event_resize(void *, int, int);
 
 int
 main(int argc, char **argv)
@@ -193,7 +194,9 @@ error_invalid:
 		return 6;
 	}
 
+	win->ref = &client_;
 	win->events.key_press = event_key_press;
+	win->events.resize = event_resize;
 	win_show_client(win);
 
 	client_.win = win;
@@ -341,9 +344,9 @@ render_frame(Client *client)
 }
 
 void
-event_key_press(int key, int mod, char *buf, int len)
+event_key_press(void *ref, int key, int mod, char *buf, int len)
 {
-	Client *client = &client_;
+	Client *client = ref;
 	TTY *tty = &client->tty;
 
 	char seq[64];
@@ -374,5 +377,11 @@ event_key_press(int key, int mod, char *buf, int len)
 		tty_scroll(tty, -tty->scroll);
 		pty_write(tty, buf, len);
 	}
+}
+
+void
+event_resize(void *ref, int width, int height)
+{
+	return;
 }
 
