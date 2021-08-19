@@ -34,7 +34,7 @@ typedef struct Config {
 typedef struct Client_ {
 	Win *win;
 	RC rc;
-	TTY *tty;
+	TTY tty;
 	struct {
 		double min;
 		double max;
@@ -119,7 +119,6 @@ error_invalid:
 
 	Win *win;
 	RC rc = { 0 };
-	TTY *tty;
 	int cols, rows;
 
 	if (!(win = win_create_client()))
@@ -183,7 +182,7 @@ error_invalid:
 	rc.color.fg = &colors[COLOR_FG];
 	rc.color.bg = &colors[COLOR_BG];
 
-	if (!(tty = tty_create(cols, rows, config.histsize, config.tabwidth))) {
+	if (!tty_init(&client_.tty, cols, rows, config.histsize, config.tabwidth)) {
 		return 6;
 	}
 
@@ -192,7 +191,6 @@ error_invalid:
 
 	client_.win = win;
 	client_.rc  = rc;
-	client_.tty = tty;
 	client_.latency.min = config.latency.min;
 	client_.latency.max = config.latency.max;
 
@@ -205,7 +203,7 @@ void
 run(Client *client)
 {
 	Win *win = client->win;
-	TTY *tty = client->tty;
+	TTY *tty = &client->tty;
 
 	double timeout = -1.0;
 	double minlat = client->latency.min;
@@ -271,7 +269,7 @@ render_frame(Client *client)
 {
 	Win *win = client->win;
 	RC *rc   = &client->rc;
-	TTY *tty = client->tty;
+	TTY *tty = &client->tty;
 
 	rc->color.fg = &colors[COLOR_FG];
 	rc->color.bg = &colors[COLOR_BG];
@@ -338,7 +336,7 @@ void
 event_key_press(int key, int mod, char *buf, int len)
 {
 	Client *client = &client_;
-	TTY *tty = client->tty;
+	TTY *tty = &client->tty;
 
 	char seq[64];
 	int seqlen = 0;

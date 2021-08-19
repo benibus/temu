@@ -220,7 +220,23 @@ static size_t msize = 0;
 TTY *
 tty_create(int cols, int rows, int histsize, int tabwidth)
 {
-	TTY *tty = xcalloc(1, sizeof(*tty));
+	TTY *tty = xmalloc(1, sizeof(*tty));
+
+	if (!tty_init(tty, cols, rows, histsize, tabwidth)) {
+		free(tty);
+		tty = NULL;
+	}
+
+	return tty;
+}
+
+bool
+tty_init(TTY *tty, int cols, int rows, int histsize, int tabwidth)
+{
+	if (!tty) return false;
+
+	memclear(tty, 1, sizeof(*tty));
+
 	stream_init(tty, cols, rows, histsize);
 
 	for (int i = 0; i < tty->hist.max; i++) {
@@ -233,10 +249,6 @@ tty_create(int cols, int rows, int histsize, int tabwidth)
 		tty->tabstops[i] |= (i % tabwidth == 0) ? 1 : 0;
 	}
 
-	tty->seq.buf  = NULL;
-	tty->seq.opts = NULL;
-	tty->seq.args = NULL;
-	tty->seq.state = 0;
 	seq_reset_buffers(&tty->seq);
 	seq_reset_template(&tty->seq);
 
@@ -257,7 +269,7 @@ tty_create(int cols, int rows, int histsize, int tabwidth)
 	SET_FUNC(VTE_DECRST, vte_decset);
 #undef SET_FUNC
 
-	return tty;
+	return true;
 }
 
 size_t
