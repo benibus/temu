@@ -27,7 +27,7 @@ static Config config = {
 		[15] = "#A4A4A4",
 	},
 	.shell = "/bin/dash",
-	.tabwidth = 8,
+	.tablen = 8,
 	.border_px = 0,
 	.histsize = 120,
 	.columns = 140,

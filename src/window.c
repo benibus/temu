@@ -375,11 +375,11 @@ win_resize_client(Win *pub, uint w, uint h)
 {
 	WinData *win = (WinData *)pub;
 
-	if (win && win->pub.w != w && win->pub.h != h) {
+	if (win && (win->pub.w != w || win->pub.h != h)) {
 		XRenderFreePicture(win->x11->dpy, win->pic);
 		XFreePixmap(win->x11->dpy, win->buf);
 		win->buf = XCreatePixmap(win->x11->dpy,
-		                         win->buf, w, h,
+		                         win->xid, w, h,
 		                         win->x11->vis->depth);
 		ASSERT(win->buf);
 		XRenderPictureAttributes attr = { 0 };
@@ -643,12 +643,12 @@ win_poll_events(WinData *win)
 	int count = 0;
 	assert(win);
 
-#if 1
+#if 0
 	for (; XPending(win->x11->dpy); count++) {
 #else
 	XPending(win->x11->dpy);
 
-	while (XQLength(win->x11->dpy)) {
+	for (; XQLength(win->x11->dpy); count++) {
 #endif
 		XEvent event = { 0 };
 		XNextEvent(win->x11->dpy, &event);

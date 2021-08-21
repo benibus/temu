@@ -11,21 +11,6 @@
 #include "term.h"
 #include "utf8.h"
 
-/* struct VTE_ { */
-/* 	Cell templ; */
-/* 	uchar *buf; */
-/* 	uchar *args; */
-/* 	uint32 *opts; */
-/* 	char tokens[8]; */
-/* 	uint8 depth; */
-/* 	uint8 state; */
-/* }; */
-
-/* typedef struct VTFunc_ { */
-/* 	const char *name; */
-/* 	void (*handler)(TTY *, Seq *, uint); */
-/* } VTFunc; */
-
 #define VTE_FUNC_TABLE \
     X_(NONE)    \
     X_(NEL)     \
@@ -218,35 +203,37 @@ static char mbuf[BUFSIZ];
 static size_t msize = 0;
 
 TTY *
-tty_create(int cols, int rows, int histsize, int tabwidth)
+tty_create(int cols, int rows, int histsize, int tablen)
 {
 	TTY *tty = xmalloc(1, sizeof(*tty));
 
-	if (!tty_init(tty, cols, rows, histsize, tabwidth)) {
-		free(tty);
-		tty = NULL;
+	if (!tty_init(tty, cols, rows, histsize, tablen)) {
+		FREE(tty);
 	}
 
 	return tty;
 }
 
 bool
-tty_init(TTY *tty, int cols, int rows, int histsize, int tabwidth)
+tty_init(TTY *tty, int cols, int rows, int histsize, int tablen)
 {
 	if (!tty) return false;
 
 	memclear(tty, 1, sizeof(*tty));
 
 	stream_init(tty, cols, rows, histsize);
+	ASSERT(tty->cols == tty->pitch);
 
 	for (int i = 0; i < tty->hist.max; i++) {
 		Row *row = ring_data(&tty->hist, i);
-		row->offset = i * tty->cols;
+		row->index = i;
 	}
 
-	ASSERT(tabwidth > 0);
-	for (int i = 0; ++i < tty->cols; ) {
-		tty->tabstops[i] |= (i % tabwidth == 0) ? 1 : 0;
+	ASSERT(tablen > 0);
+	tty->tablen = tablen;
+
+	for (int i = 0; ++i < tty->pitch; ) {
+		tty->tabstops[i] |= (i % tty->tablen == 0) ? 1 : 0;
 	}
 
 	seq_reset_buffers(&tty->seq);
@@ -298,19 +285,17 @@ tty_write(TTY *tty, const char *str, size_t len)
 		uint32 ucs4 = 0;
 
 		width = utf8_decode(str + i, &ucs4, &err);
-		ASSERT(!err);
 
-		if (!parse_token(tty, &tty->seq, ucs4)) {
-			stream_write(tty, ucs4, tty->seq.templ.color,
-			                        tty->seq.templ.attr);
-		} else {
-			dummy__();
+		if (!err) {
+			if (!parse_token(tty, &tty->seq, ucs4)) {
+				stream_write(tty, &tty->seq.templ);
+			} else {
+				dummy__(tty);
+			}
 		}
 
 		i += width;
 	}
-
-	tty->cells[tty->size].ucs4 = 0;
 
 	return i;
 }
@@ -322,10 +307,15 @@ tty_scroll(TTY *tty, int dy)
 }
 
 void
-tty_resize(TTY *tty, uint cols, uint rows)
+tty_resize(TTY *tty, uint cols_, uint rows_)
 {
-	tty->cols = cols;
-	tty->rows = rows;
+	ASSERT(tty->hist.max > 0);
+	int cols = CLAMP((int64)cols_, 1, INT_MAX & ~0x0f);
+	int rows = CLAMP((int64)rows_, 1, tty->hist.max - 1);
+
+	if (cols != tty->cols || rows != tty->rows) {
+		stream_resize(tty, cols, rows);
+	}
 }
 
 void
@@ -374,6 +364,7 @@ parse_token(TTY *tty, Seq *seq, uint32 ucs4)
 	SeqRes res = { 0 };
 	seq->templ.ucs4  = 0;
 	seq->templ.width = 0;
+	seq->templ.type  = 0;
 
 	if (ucs4 == CTRL_ESC) {
 		seq->state |= STATE_ESC;
@@ -409,6 +400,7 @@ dispatch:
 		seq->state = 0;
 		seq->templ.ucs4  = ucs4;
 		seq->templ.width = 1;
+		seq->templ.type  = CELLTYPE_NORMAL;
 	} else if (res.state != seq->state) {
 		seq->state = res.state;
 		seq->tokens[0] = 0;
@@ -702,7 +694,7 @@ vte_el(TTY *tty, Seq *seq, uint id)
 		case 0: {
 			cmd_set_cells(tty, &seq->templ,
 			              tty->cursor.x, tty->cursor.y,
-			              tty->cols - tty->cursor.x);
+			              tty->pitch - tty->cursor.x);
 			break;
 		}
 		case 1: {
@@ -715,7 +707,7 @@ vte_el(TTY *tty, Seq *seq, uint id)
 		}
 		case 2: {
 			cmd_set_cells(tty, &seq->templ,
-				      0, tty->cursor.y, tty->cols);
+				      0, tty->cursor.y, tty->pitch);
 			cmd_set_cursor_x(tty, 0);
 			break;
 		}
@@ -733,7 +725,7 @@ vte_ed(TTY *tty, Seq *seq, uint id)
 			cmd_clear_rows(tty, tty->cursor.y + 1, tty->rows);
 			cmd_set_cells(tty, &seq->templ,
 				      tty->cursor.x, tty->cursor.y,
-				      tty->cols);
+				      tty->pitch);
 			break;
 		}
 		case 1: {
@@ -852,9 +844,11 @@ void
 vte_cht(TTY *tty, Seq *seq, uint id)
 {
 	uint32 o = SEQOPT(seq, 0);
+	seq->templ.ucs4  = '\t';
+	seq->templ.width = 1;
 
 	for (uint i = 0; i < DEFAULT(o, 1); i++) {
-		if (!stream_write(tty, '\t', seq->templ.color, seq->templ.attr)) {
+		if (!stream_write(tty, &seq->templ)) {
 			break;
 		}
 	}

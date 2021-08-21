@@ -51,8 +51,7 @@ typedef struct {
 } Cell;
 
 typedef struct {
-	Cell *data;
-	uint offset;
+	uint index;
 	int len;
 	uint16 flags;
 } Row;
@@ -63,12 +62,18 @@ typedef struct Seq_ Seq;
 typedef struct TTY_ {
 	Cell *cells;
 	Ring hist;
-	uint8 *tabstops;
 
-	int size, max;
+	int max;
 	int top, bot;
 	int cols, rows;
+	int pitch;
 	int scroll;
+
+	uint8 *tabstops;
+	int tablen;
+
+	int cw, ch;
+	struct { int x, y; } pos;
 
 	struct {
 		int x, y;
@@ -101,8 +106,9 @@ size_t pty_read(TTY *);
 size_t pty_write(TTY *, const char *, size_t);
 void pty_resize(const PTY *, int, int, int, int);
 TTY *stream_init(TTY *, uint, uint, uint);
-int stream_write(TTY *, uint32, ColorSet, uint16);
-Cell *stream_get_row(TTY *, uint, uint *);
+int stream_write(TTY *, const Cell *);
+void stream_resize(TTY *, int, int);
+Cell *stream_get_row(TTY *, int, uint *);
 void cmd_set_cells(TTY *, const Cell *, uint, uint, uint);
 void cmd_shift_cells(TTY *, uint, uint, int);
 void cmd_insert_cells(TTY *, const Cell *, uint);
@@ -114,7 +120,7 @@ void cmd_set_cursor_y(TTY *, uint);
 
 size_t key_get_sequence(uint, uint, char *, size_t);
 
-void dummy__(void);
+void dummy__(TTY *);
 void dbg_dump_history(TTY *);
 
 #define COLOR_DARK_BLACK    0x00

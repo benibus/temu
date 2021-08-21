@@ -18,8 +18,7 @@ int ring_count(Ring *);
 int ring_index(Ring *, int);
 void *ring_data(Ring *, int);
 
-/* #define RING_FULL(r)  ((r)->write < (r)->read || !(r)->read) */
 #define RING_FULL(r)  ((r)->count + 1 >= (r)->max)
-#define RING_EMPTY(r) ((r)->write == (r)->read)
+#define RING_EMPTY(r) ((r)->count == 0)
 
 #endif

@@ -21,7 +21,7 @@ typedef struct Config {
 	char *font;
 	char *colors[MAX_COLORS];
 	char *shell;
-	uint tabwidth;
+	uint tablen;
 	uint border_px;
 	uint histsize;
 	uint columns, rows;
@@ -123,7 +123,7 @@ error_invalid:
 	config.histsize = (config.rows > config.histsize)
 	                ? config.rows
 	                : config.histsize;
-	config.tabwidth = (config.tabwidth > 0) ? config.tabwidth : 8;
+	config.tablen = (config.tablen > 0) ? config.tablen : 8;
 
 	Win *win;
 	RC rc = { 0 };
@@ -190,7 +190,7 @@ error_invalid:
 	rc.color.fg = &colors[COLOR_FG];
 	rc.color.bg = &colors[COLOR_BG];
 
-	if (!tty_init(&client_.tty, cols, rows, config.histsize, config.tabwidth)) {
+	if (!tty_init(&client_.tty, cols, rows, config.histsize, config.tablen)) {
 		return 6;
 	}
 
@@ -382,6 +382,22 @@ event_key_press(void *ref, int key, int mod, char *buf, int len)
 void
 event_resize(void *ref, int width, int height)
 {
+#if 1
+	Client *client = ref;
+	Win *win = client->win;
+	TTY *tty = &client->tty;
+	PTY *pty = &tty->pty;
+
+	int cols = (width / metrics.width) - (2 * win->bw);
+	int rows = (height / (metrics.ascent + metrics.descent)) - (2 * win->bw);
+
+	win_resize_client(win, width, height);
+	pty_resize(pty, width, height, cols, rows);
+	if (cols != tty->cols || rows != tty->rows) {
+		tty_resize(tty, cols, rows);
+	}
+#else
 	return;
+#endif
 }
 

@@ -89,6 +89,8 @@ pty_init(PTY *pty, char *shell)
 	return pty->mfd;
 }
 
+// TODO(ben): Investigate segfaults on large unicode-heavy reads
+//            i.e. "tree ./hugedir"
 size_t
 pty_read(TTY *tty)
 {
