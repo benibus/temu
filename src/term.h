@@ -1,6 +1,7 @@
 #ifndef TERM_H__
 #define TERM_H__
 
+#include "types.h"
 #include "ring.h"
 
 #define INPUT_CHAR 1

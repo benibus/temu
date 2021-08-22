@@ -3,6 +3,7 @@
 
 #include <X11/extensions/Xrender.h>
 
+#include "types.h"
 #include "keymap.h"
 
 enum {
