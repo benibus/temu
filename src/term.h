@@ -3,6 +3,9 @@
 
 #include "ring.h"
 
+#define INPUT_CHAR 1
+#define INPUT_KEY  2
+
 enum {
 	DESC_NONE,
 	DESC_DUMMY_TAB  = (1 << 0),
@@ -59,31 +62,42 @@ typedef struct {
 typedef struct PTY_ PTY;
 typedef struct Seq_ Seq;
 
+struct TTYConfig {
+	void *ref;
+	char *shell;
+	uint16 cols, rows;
+	uint16 colpx, rowpx;
+	uint16 histsize;
+	uint16 tablen;
+};
+
 typedef struct TTY_ {
+	void *ref;
+
 	Cell *cells;
 	Ring hist;
+	uint8 *tabstops;
 
 	int max;
 	int top, bot;
 	int cols, rows;
 	int pitch;
 	int scroll;
-
-	uint8 *tabstops;
+	int colpx, rowpx;
 	int tablen;
 
-	int cw, ch;
 	struct { int x, y; } pos;
 
 	struct {
-		int x, y;
-		bool wrap_next;
+		bool wrap;
 		bool hide;
 	} cursor;
 
 	struct PTY_ {
 		pid_t pid;
 		int mfd, sfd;
+		uchar buf[4096];
+		uint size;
 	} pty;
 
 	struct Seq_ {
@@ -96,19 +110,20 @@ typedef struct TTY_ {
 	} seq;
 } TTY;
 
-TTY *tty_create(int, int, int, int);
-bool tty_init(TTY *, int, int, int, int);
-size_t tty_write(TTY *, const char *, size_t);
+TTY *tty_create(struct TTYConfig);
+bool tty_init(TTY *, struct TTYConfig);
+int tty_exec(TTY *, const char *);
+size_t tty_read(TTY *);
+size_t tty_write(TTY *, const char *, size_t, uint);
+size_t tty_write_raw(TTY *, const uchar *, size_t, uint8);
 void tty_scroll(TTY *, int);
 void tty_resize(TTY *, uint, uint);
-int pty_init(PTY *, char *);
-size_t pty_read(TTY *);
-size_t pty_write(TTY *, const char *, size_t);
-void pty_resize(const PTY *, int, int, int, int);
+
 TTY *stream_init(TTY *, uint, uint, uint);
 int stream_write(TTY *, const Cell *);
 void stream_resize(TTY *, int, int);
 Cell *stream_get_row(TTY *, int, uint *);
+
 void cmd_set_cells(TTY *, const Cell *, uint, uint, uint);
 void cmd_shift_cells(TTY *, uint, uint, int);
 void cmd_insert_cells(TTY *, const Cell *, uint);

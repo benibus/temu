@@ -151,7 +151,7 @@ stream_get_row(TTY *tty, int y, uint *len)
 int
 stream_write(TTY *tty, const Cell *templ)
 {
-	int offset = tty->cursor.y * tty->cols + tty->cursor.x;
+	int offset = tty->pos.y * tty->cols + tty->pos.x;
 
 	if (RING_EMPTY(&tty->hist)) {
 		row_alloc(tty, 0, INIT_IFOLD|INIT_IFNEW);
@@ -185,26 +185,26 @@ stream_write(TTY *tty, const Cell *templ)
 		}
 	}
 
-	return (tty->cursor.y * tty->cols + tty->cursor.x) - offset;
+	return (tty->pos.y * tty->cols + tty->pos.x) - offset;
 }
 
 void
 put_glyph(TTY *tty, const Cell *templ)
 {
-	Pos pos = (Pos){ tty->cursor.x, tty->cursor.y };
+	Pos pos = (Pos){ tty->pos.x, tty->pos.y };
 
 	if (pos.x + 1 < tty->cols) {
-		tty->cursor.wrap_next = false;
-	} else if (!tty->cursor.wrap_next) {
-		tty->cursor.wrap_next = true;
+		tty->cursor.wrap = false;
+	} else if (!tty->cursor.wrap) {
+		tty->cursor.wrap = true;
 	} else {
-		tty->cursor.wrap_next = false;
+		tty->cursor.wrap = false;
 		pos.x = 0;
 		pos.y++;
 	}
 
 	Row *row = row_alloc(tty, pos.y, INIT_NEVER);
-	if (pos.y > tty->cursor.y) {
+	if (pos.y > tty->pos.y) {
 		row_init(tty, row, LINE_WRAPPED);
 	}
 
@@ -215,11 +215,11 @@ put_glyph(TTY *tty, const Cell *templ)
 	}
 	memcpy(tty->cells + offset, templ, sizeof(*templ));
 
-	if (pos.y != tty->cursor.y) {
+	if (pos.y != tty->pos.y) {
 		cmd_set_cursor_x(tty, 0);
 		cmd_move_cursor_y(tty, 1);
 	}
-	if (!tty->cursor.wrap_next) {
+	if (!tty->cursor.wrap) {
 		cmd_move_cursor_x(tty, 1);
 	}
 }
@@ -274,7 +274,7 @@ row_compute_length(TTY *tty, Row *row)
 void
 put_linefeed(TTY *tty)
 {
-	if (row_alloc(tty, tty->cursor.y + 1, INIT_IFNEW)) {
+	if (row_alloc(tty, tty->pos.y + 1, INIT_IFNEW)) {
 		cmd_set_cursor_x(tty, 0);
 		cmd_move_cursor_y(tty, 1);
 	}
@@ -291,8 +291,8 @@ put_tab(TTY *tty, ColorSet color, uint16 attr)
 		.type  = CELLTYPE_NORMAL
 	};
 
-	for (int n = 0; tty->cursor.x + 1 < tty->cols; n++) {
-		if (tty->tabstops[tty->cursor.x] && n > 0)
+	for (int n = 0; tty->pos.x + 1 < tty->cols; n++) {
+		if (tty->tabstops[tty->pos.x] && n > 0)
 			break;
 		put_glyph(tty, &templ);
 		templ.type = CELLTYPE_DUMMY_TAB;
@@ -343,8 +343,8 @@ cmd_shift_cells(TTY *tty, uint x, uint y, int dx_)
 void
 cmd_insert_cells(TTY *tty, const Cell *spec, uint n)
 {
-	uint cx = tty->cursor.x;
-	uint cy = tty->cursor.y;
+	uint cx = tty->pos.x;
+	uint cy = tty->pos.y;
 
 	cmd_shift_cells(tty, cx, cy, n);
 	cmd_set_cells(tty, spec, cx, cy, n);
@@ -372,7 +372,7 @@ void
 cmd_move_cursor_x(TTY *tty, int dx)
 {
 	Cell templ = { .ucs4 = ' ', .width = 1 };
-	CellDesc desc = celldesc(tty, tty->cursor.x, tty->cursor.y);
+	CellDesc desc = celldesc(tty, tty->pos.x, tty->pos.y);
 
 	int x0 = desc.pos.x;
 	int x1 = CLAMP(x0 + dx, 0, tty->cols - 1);
@@ -384,25 +384,25 @@ cmd_move_cursor_x(TTY *tty, int dx)
 		}
 	}
 
-	tty->cursor.x = x1;
+	tty->pos.x = x1;
 }
 
 void
 cmd_move_cursor_y(TTY *tty, int dy)
 {
-	tty->cursor.y = CLAMP(tty->cursor.y + dy, tty->top, tty->bot);
+	tty->pos.y = CLAMP(tty->pos.y + dy, tty->top, tty->bot);
 }
 
 void
 cmd_set_cursor_x(TTY *tty, uint x)
 {
-	tty->cursor.x = MIN((int)x, tty->cols - 1);
+	tty->pos.x = MIN((int)x, tty->cols - 1);
 }
 
 void
 cmd_set_cursor_y(TTY *tty, uint y)
 {
-	tty->cursor.y = CLAMP((int)y, tty->top, tty->bot);
+	tty->pos.y = CLAMP((int)y, tty->top, tty->bot);
 }
 
 void

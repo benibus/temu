@@ -46,7 +46,6 @@ typedef struct Client_ {
 static Client client_;
 
 static FontFace *fonts[4];
-static FontMetrics metrics;
 static Color colors[MAX_COLORS];
 static bool toggle_render = true;
 
@@ -120,14 +119,9 @@ error_invalid:
 		exit(1);
 	}
 
-	config.histsize = (config.rows > config.histsize)
-	                ? config.rows
-	                : config.histsize;
-	config.tablen = (config.tablen > 0) ? config.tablen : 8;
-
+	struct TTYConfig tc = { 0 };
 	Win *win;
 	RC rc = { 0 };
-	int cols, rows;
 
 	if (!(win = win_create_client()))
 		return 2;
@@ -163,16 +157,20 @@ error_invalid:
 	ASSERT(font_init_face(fonts[1]));
 	ASSERT(font_init_face(fonts[2]));
 	ASSERT(font_init_face(fonts[3]));
-	font_get_face_metrics(fonts[0], &metrics);
+
+	{
+		FontMetrics metrics = { 0 };
+		font_get_face_metrics(fonts[0], &metrics);
+		tc.colpx = metrics.width;
+		tc.rowpx = metrics.ascent + metrics.descent;
+	}
 
 	{
 		win->title = config.wm_title;
 		win->instance = config.wm_instance;
 		win->class = config.wm_class;
-		win->iw = metrics.width;
-		win->ih = metrics.ascent + metrics.descent;
-		win->w = win->iw * config.columns;
-		win->h = win->ih * config.rows;
+		win->w = tc.colpx * config.columns;
+		win->h = tc.rowpx * config.rows;
 		win->bw = config.border_px;
 		win->flags = WINATTR_RESIZABLE;
 	}
@@ -181,16 +179,18 @@ error_invalid:
 		return 4;
 	}
 
-	cols = (win->w / metrics.width) - (2 * win->bw);
-	rows = (win->h / (metrics.ascent + metrics.descent)) - (2 * win->bw);
-	ASSERT(cols == (int)config.columns);
-	ASSERT(rows == (int)config.rows);
+	tc.cols = (win->w / tc.colpx) - (2 * win->bw);
+	tc.rows = (win->h / tc.rowpx) - (2 * win->bw);
 
-	rc.font = fonts[0];
-	rc.color.fg = &colors[COLOR_FG];
-	rc.color.bg = &colors[COLOR_BG];
+	ASSERT(tc.cols == (int)config.columns);
+	ASSERT(tc.rows == (int)config.rows);
 
-	if (!tty_init(&client_.tty, cols, rows, config.histsize, config.tablen)) {
+	tc.ref = &client_;
+	tc.shell = config.shell;
+	tc.histsize = MAX(config.histsize, tc.rows);
+	tc.tablen = DEFAULT(config.tablen, 8);
+
+	if (!tty_init(&client_.tty, tc)) {
 		return 6;
 	}
 
@@ -198,6 +198,10 @@ error_invalid:
 	win->events.key_press = event_key_press;
 	win->events.resize = event_resize;
 	win_show_client(win);
+
+	rc.font = fonts[0];
+	rc.color.fg = &colors[COLOR_FG];
+	rc.color.bg = &colors[COLOR_BG];
 
 	client_.win = win;
 	client_.rc  = rc;
@@ -223,8 +227,7 @@ run(Client *client)
 	TimeVal t0 = { 0 };
 	TimeVal t1 = { 0 };
 
-	pty_init(&tty->pty, config.shell);
-	pty_resize(&tty->pty, win->w, win->h, tty->cols, tty->rows);
+	tty_exec(tty, config.shell);
 
 	fd_set rset;
 	int maxfd = MAX(win->fd, tty->pty.mfd);
@@ -249,7 +252,7 @@ run(Client *client)
 		time_get_mono(&t1);
 
 		if (FD_ISSET(tty->pty.mfd, &rset)) {
-			pty_read(tty);
+			tty_read(tty);
 		}
 
 		int num_events = win_process_events(win, 0.0);
@@ -327,8 +330,8 @@ render_frame(Client *client)
 		}
 
 		// draw cursor
-		if (!tty->cursor.hide && y == tty->cursor.y) {
-			uint cx = tty->cursor.x;
+		if (!tty->cursor.hide && y == tty->pos.y) {
+			uint cx = tty->pos.x;
 			glyphs[cx].ucs4 = DEFAULT(glyphs[cx].ucs4, L' ');
 			glyphs[cx].font = DEFAULT(glyphs[cx].font, font);
 			glyphs[cx].foreground = &colors[COLOR_BG];
@@ -336,8 +339,7 @@ render_frame(Client *client)
 			x += (cx == len);
 		}
 
-		draw_text_utf8(rc, glyphs,
-		               x, 0, i * (metrics.ascent + metrics.descent));
+		draw_text_utf8(rc, glyphs, x, 0, i * tty->rowpx);
 	}
 
 	win_render_frame(win);
@@ -372,32 +374,26 @@ event_key_press(void *ref, int key, int mod, char *buf, int len)
 #endif
 
 	if ((seqlen = key_get_sequence(key, mod, seq, LEN(seq)))) {
-		pty_write(tty, seq, seqlen);
+		tty_write(tty, seq, seqlen, INPUT_KEY);
 	} else if (len == 1) {
 		tty_scroll(tty, -tty->scroll);
-		pty_write(tty, buf, len);
+		tty_write(tty, buf, len, INPUT_CHAR);
 	}
 }
 
 void
 event_resize(void *ref, int width, int height)
 {
-#if 1
 	Client *client = ref;
 	Win *win = client->win;
 	TTY *tty = &client->tty;
-	PTY *pty = &tty->pty;
 
-	int cols = (width / metrics.width) - (2 * win->bw);
-	int rows = (height / (metrics.ascent + metrics.descent)) - (2 * win->bw);
+	int cols = (width / tty->colpx) - (2 * win->bw);
+	int rows = (height / tty->rowpx) - (2 * win->bw);
 
 	win_resize_client(win, width, height);
-	pty_resize(pty, width, height, cols, rows);
 	if (cols != tty->cols || rows != tty->rows) {
 		tty_resize(tty, cols, rows);
 	}
-#else
-	return;
-#endif
 }
 

@@ -9,6 +9,7 @@
 
 #include "utils.h"
 #include "term.h"
+#include "pty.h"
 #include "utf8.h"
 
 #define VTE_FUNC_TABLE \
@@ -199,14 +200,14 @@ static void vte_sgr(TTY *, Seq *, uint);
 static void vte_decset(TTY *, Seq *, uint);
 static void vte_osc(TTY *, Seq *, uint);
 
-static char *input_;
+static uchar *input_;
 
 TTY *
-tty_create(int cols, int rows, int histsize, int tablen)
+tty_create(struct TTYConfig config)
 {
 	TTY *tty = xmalloc(1, sizeof(*tty));
 
-	if (!tty_init(tty, cols, rows, histsize, tablen)) {
+	if (!tty_init(tty, config)) {
 		FREE(tty);
 	}
 
@@ -214,13 +215,13 @@ tty_create(int cols, int rows, int histsize, int tablen)
 }
 
 bool
-tty_init(TTY *tty, int cols, int rows, int histsize, int tablen)
+tty_init(TTY *tty, struct TTYConfig config)
 {
 	if (!tty) return false;
 
 	memclear(tty, 1, sizeof(*tty));
 
-	stream_init(tty, cols, rows, histsize);
+	stream_init(tty, config.cols, config.rows, config.histsize);
 	ASSERT(tty->cols == tty->pitch);
 
 	for (int i = 0; i < tty->hist.max; i++) {
@@ -228,8 +229,7 @@ tty_init(TTY *tty, int cols, int rows, int histsize, int tablen)
 		row->index = i;
 	}
 
-	ASSERT(tablen > 0);
-	tty->tablen = tablen;
+	tty->tablen = config.tablen;
 
 	for (int i = 0; ++i < tty->pitch; ) {
 		tty->tabstops[i] |= (i % tty->tablen == 0) ? 1 : 0;
@@ -255,11 +255,25 @@ tty_init(TTY *tty, int cols, int rows, int histsize, int tablen)
 	SET_FUNC(VTE_DECRST, vte_decset);
 #undef SET_FUNC
 
+	tty->ref = config.ref;
+	tty->colpx = config.colpx;
+	tty->rowpx = config.rowpx;
+
 	return true;
 }
 
+int
+tty_exec(TTY *tty, const char *shell)
+{
+	if (!tty->pty.mfd && pty_init(tty, shell) > 0) {
+		pty_resize(tty, tty->cols, tty->rows);
+	}
+
+	return tty->pty.mfd;
+}
+
 size_t
-tty_write(TTY *tty, const char *str, size_t len)
+tty_write_raw(TTY *tty, const uchar *str, size_t len, uint8 type)
 {
 	uint i = 0;
 
@@ -294,12 +308,25 @@ tty_write(TTY *tty, const char *str, size_t len)
 #ifdef DBGOPT_PRINT_INPUT
 	if (arr_count(input_)) {
 		arr_push(input_, 0);
-		msg_log("Input", "%s\n", input_);
+		msg_log("Input", "[%u] %s\n", type, input_);
 		arr_clear(input_);
 	}
 #endif
 
 	return i;
+}
+
+size_t
+tty_read(TTY *tty)
+{
+	return pty_read(tty, 0);
+}
+
+size_t
+tty_write(TTY *tty, const char *str, size_t len, uint type)
+{
+	ASSERT(type == INPUT_CHAR || type == INPUT_KEY);
+	return pty_write(tty, str, len, type);
 }
 
 void
@@ -315,6 +342,7 @@ tty_resize(TTY *tty, uint cols_, uint rows_)
 	int cols = CLAMP((int64)cols_, 1, INT_MAX & ~0x0f);
 	int rows = CLAMP((int64)rows_, 1, tty->hist.max - 1);
 
+	pty_resize(tty, cols, rows);
 	if (cols != tty->cols || rows != tty->rows) {
 		stream_resize(tty, cols, rows);
 	}
@@ -695,21 +723,19 @@ vte_el(TTY *tty, Seq *seq, uint id)
 	switch (o) {
 		case 0: {
 			cmd_set_cells(tty, &seq->templ,
-			              tty->cursor.x, tty->cursor.y,
-			              tty->pitch - tty->cursor.x);
+			              tty->pos.x, tty->pos.y,
+			              tty->pitch - tty->pos.x);
 			break;
 		}
 		case 1: {
 			seq->templ.ucs4 = ' ';
 			seq->templ.width = 1;
 
-			cmd_set_cells(tty, &seq->templ,
-			              0, tty->cursor.y, tty->cursor.x);
+			cmd_set_cells(tty, &seq->templ, 0, tty->pos.y, tty->pos.x);
 			break;
 		}
 		case 2: {
-			cmd_set_cells(tty, &seq->templ,
-				      0, tty->cursor.y, tty->pitch);
+			cmd_set_cells(tty, &seq->templ, 0, tty->pos.y, tty->pitch);
 			cmd_set_cursor_x(tty, 0);
 			break;
 		}
@@ -724,20 +750,16 @@ vte_ed(TTY *tty, Seq *seq, uint id)
 
 	switch (o) {
 		case 0: {
-			cmd_clear_rows(tty, tty->cursor.y + 1, tty->rows);
-			cmd_set_cells(tty, &seq->templ,
-				      tty->cursor.x, tty->cursor.y,
-				      tty->pitch);
+			cmd_clear_rows(tty, tty->pos.y + 1, tty->rows);
+			cmd_set_cells(tty, &seq->templ, tty->pos.x, tty->pos.y, tty->pitch);
 			break;
 		}
 		case 1: {
 			seq->templ.ucs4  = ' ';
 			seq->templ.width = 1;
 
-			cmd_clear_rows(tty, tty->top, tty->cursor.y - tty->top);
-			cmd_set_cells(tty, &seq->templ,
-				      0, tty->cursor.y,
-				      tty->cursor.x);
+			cmd_clear_rows(tty, tty->top, tty->pos.y - tty->top);
+			cmd_set_cells(tty, &seq->templ, 0, tty->pos.y, tty->pos.x);
 			break;
 		}
 		case 2: {
@@ -839,7 +861,7 @@ vte_dch(TTY *tty, Seq *seq, uint id)
 	int dx = DEFAULT(o, 1);
 	ASSERT(dx >= 0);
 
-	cmd_shift_cells(tty, tty->cursor.x + dx, tty->cursor.y, -dx);
+	cmd_shift_cells(tty, tty->pos.x + dx, tty->pos.y, -dx);
 }
 
 void

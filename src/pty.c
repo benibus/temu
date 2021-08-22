@@ -21,21 +21,15 @@
 #endif
 
 #include "utils.h"
-#include "term.h"
+#include "pty.h"
 
 #define WRITE_LIMIT 1024
 
-struct IOBuf {
-	char data[4096];
-	int len;
-};
-
-static struct IOBuf iobuf = { 0 };
-
 int
-pty_init(PTY *pty, char *shell)
+pty_init(TTY *tty, const char *shell)
 {
-	char *cmd = (shell) ? shell : "/bin/dash";
+	PTY *pty = &tty->pty;
+	const char *cmd = (shell) ? shell : "/bin/dash";
 	char *args[] = { NULL };
 
 	if (openpty(&pty->mfd, &pty->sfd, NULL, NULL, NULL) < 0) {
@@ -60,7 +54,7 @@ pty_init(PTY *pty, char *shell)
 		close(pty->mfd);
 		{
 			// execute shell
-			setenv("SHELL", "/bin/dash", 1);
+			setenv("SHELL", shell, 1);
 
 			signal(SIGCHLD, SIG_DFL);
 			signal(SIGHUP,  SIG_DFL);
@@ -84,37 +78,36 @@ pty_init(PTY *pty, char *shell)
 }
 
 size_t
-pty_read(TTY *tty)
+pty_read(TTY *tty, uint8 type)
 {
-	const PTY *pty = &tty->pty;
+	PTY *pty = &tty->pty;
 	int nr, nw;
 
-	nr = read(pty->mfd, &iobuf.data[iobuf.len], LEN(iobuf.data) - iobuf.len);
+	nr = read(pty->mfd, pty->buf + pty->size, LEN(pty->buf) - pty->size);
 
 	switch (nr) {
-	case  0:
-		exit(0);
-		break;
-	case -1:
-		error_fatal("pty_read()", 1);
-		break;
-	default:
-		iobuf.len += nr;
-		nw = tty_write(tty, iobuf.data, iobuf.len);
-		iobuf.len -= nw;
-		if (iobuf.len) {
-			ASSERT(iobuf.len > 0);
-			ASSERT(iobuf.len + nw <= (ssize_t)LEN(iobuf.data));
-			memmove(iobuf.data, iobuf.data + nw, iobuf.len);
-		}
-		break;
+		case  0:
+			exit(0);
+			break;
+		case -1:
+			error_fatal("pty_read()", 1);
+			break;
+		default:
+			pty->size += nr;
+			nw = tty_write_raw(tty, pty->buf, pty->size, type);
+			pty->size -= nw;
+			if (pty->size) {
+				ASSERT(pty->size + nw <= LEN(pty->buf));
+				memmove(pty->buf, pty->buf + nw, pty->size);
+			}
+			break;
 	}
 
 	return nr;
 }
 
 size_t
-pty_write(TTY *tty, const char *str, size_t len)
+pty_write(TTY *tty, const char *str, size_t len, uint8 type)
 {
 	const PTY *pty = &tty->pty;
 	fd_set fds_r, fds_w;
@@ -137,13 +130,13 @@ pty_write(TTY *tty, const char *str, size_t len)
 			}
 			if (i + n < len) {
 				if (len - i < rem) {
-					rem = pty_read(tty);
+					rem = pty_read(tty, type);
 				}
 			}
 			i += n;
 		}
 		if (i < len && FD_ISSET(pty->mfd, &fds_r)) {
-			rem = pty_read(tty);
+			rem = pty_read(tty, type);
 		}
 	}
 
@@ -151,16 +144,16 @@ pty_write(TTY *tty, const char *str, size_t len)
 }
 
 void
-pty_resize(const PTY *pty, int w, int h, int cols, int rows)
+pty_resize(const TTY *tty, int cols, int rows)
 {
-	struct winsize ptywin = {
-		.ws_xpixel = w,
-		.ws_ypixel = h,
+	struct winsize region = {
 		.ws_col = cols,
 		.ws_row = cols,
+		.ws_xpixel = cols * tty->colpx,
+		.ws_ypixel = rows * tty->rowpx
 	};
 
-	if (ioctl(pty->mfd, TIOCSWINSZ, &ptywin) < 0) {
+	if (ioctl(tty->pty.mfd, TIOCSWINSZ, &region) < 0) {
 		fprintf(stderr, "ERROR: pty_resize() - ioctl() failure\n");
 	}
 }
