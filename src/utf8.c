@@ -4,23 +4,26 @@
 
 #include "utils.h"
 #include "utf8.h"
+#include "ascii.h"
+
+static const uint8 sizetable[1<<5] = {
+	1, 1, 1, 1, 1, 1, 1, 1,
+	1, 1, 1, 1, 1, 1, 1, 1,
+	0, 0, 0, 0, 0, 0, 0, 0,
+	2, 2, 2, 2, 3, 3, 4, 0
+};
 
 uint8
-utf8_decode(const void *data, uint32 *res, uint *err)
+utf8_decode(const void *data, size_t max, uint32 *res, uint *err)
 {
-	static const uint8 lengths[1<<5] = {
-		1, 1, 1, 1, 1, 1, 1, 1,
-		1, 1, 1, 1, 1, 1, 1, 1,
-		0, 0, 0, 0, 0, 0, 0, 0,
-		2, 2, 2, 2, 3, 3, 4, 0
-	};
-
 	const uchar *s = data;
-	uint8 bytes = lengths[s[0]>>3];
+	uint8 size = sizetable[s[0]>>3];
 	uint8 n = 0, mask = 0x00;
 	uint32 c = '\0';
 
-	switch (bytes) {
+	if (size > max) return 0;
+
+	switch (size) {
 		case 4: {
 			mask |= 0x07;
 			c |= (s[n++] & mask) << 18;
@@ -55,12 +58,30 @@ utf8_decode(const void *data, uint32 *res, uint *err)
 
 	// errors (0 is good)
 	*err = 0;
-	*err |= (bytes - n) << 0; // chars remaining after leading byte
-	*err |= (!bytes) << 2; // leading byte invalid
-	*err |= (c > 0x10ffff) << 3; // out of range
+	*err |= (size - n) << 0; // chars remaining after leading byte
+	*err |= (!size) << 2; // leading byte invalid
+	*err |= (c > UCS4_MAX) << 3; // out of range
 	*err |= ((c >> 11) == 0x1b) << 4; // utf-16 surrogate half
 
-	*res = c;
+	*res = (!*err) ? c : UCS4_INVALID;
+
 	return n + !n;
+}
+
+uint
+ucs4str(uint32 ucs4, char *buf, size_t max)
+{
+	if (max < 2) return 0;
+
+	char *str = (ucs4 <= 128) ? ascii_db[ucs4].str : NULL;
+	uint len = 0;
+
+	if (str) {
+		len = snprintf(buf, max - 1, "%s", str);
+	} else {
+		len = snprintf(buf, max - 1, "%#.2x", ucs4);
+	}
+
+	return len;
 }
 

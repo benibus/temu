@@ -29,7 +29,7 @@ static Row *row_alloc(TTY *, int, uint8);
 static uint row_compute_length(TTY *, Row *);
 static void screen_reset(TTY *);
 
-#if 1
+#if 0
 #define DBG_PRINT_STATE(t) do { \
 	CellDesc desc = celldesc((t), 0, (t)->cursor.y);            \
 	msg_log("StreamState",                                      \

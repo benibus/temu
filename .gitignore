@@ -6,5 +6,6 @@ lib/
 *.bin
 *.[oa]
 *.so
+*.pro*
 temu
 utils.[ch]

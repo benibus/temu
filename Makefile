@@ -18,7 +18,7 @@ CPPFLAGS_DEBUG   = $(CPPFLAGS_COMMON) -DBUILD_DEBUG -MMD -MP
 CPPFLAGS_RELEASE = $(CPPFLAGS_COMMON) -DBUILD_RELEASE
 WFLAGS = -Wall -Wextra -Wpedantic -Wno-unused-variable -Wno-unused-parameter -Wno-unused-function
 CFLAGS_COMMON  = -std=c99 $(WFLAGS)
-CFLAGS_DEBUG   = -O0 -ggdb3 -no-pie $(CFLAGS_COMMON)
+CFLAGS_DEBUG   = -Og -ggdb3 -no-pie $(CFLAGS_COMMON)
 CFLAGS_RELEASE = -O2 $(CFLAGS_COMMON)
 
 BUILD := Debug

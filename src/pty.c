@@ -26,17 +26,11 @@
 #define WRITE_LIMIT 1024
 
 struct IOBuf {
-	char data[BUFSIZ];
+	char data[4096];
 	int len;
 };
 
 static struct IOBuf iobuf = { 0 };
-
-void
-pty_test(void)
-{
-	fprintf(stderr, "BUFSZ = %d\n", BUFSIZ);
-}
 
 int
 pty_init(PTY *pty, char *shell)
@@ -89,15 +83,13 @@ pty_init(PTY *pty, char *shell)
 	return pty->mfd;
 }
 
-// TODO(ben): Investigate segfaults on large unicode-heavy reads
-//            i.e. "tree ./hugedir"
 size_t
 pty_read(TTY *tty)
 {
 	const PTY *pty = &tty->pty;
 	int nr, nw;
 
-	nr = read(pty->mfd, &iobuf.data[iobuf.len], ARRLEN(iobuf.data) - iobuf.len);
+	nr = read(pty->mfd, &iobuf.data[iobuf.len], LEN(iobuf.data) - iobuf.len);
 
 	switch (nr) {
 	case  0:
@@ -107,10 +99,13 @@ pty_read(TTY *tty)
 		error_fatal("pty_read()", 1);
 		break;
 	default:
-		nw = tty_write(tty, iobuf.data, iobuf.len + nr);
-		iobuf.len += nr - nw;
+		iobuf.len += nr;
+		nw = tty_write(tty, iobuf.data, iobuf.len);
+		iobuf.len -= nw;
 		if (iobuf.len) {
-			memmove(&iobuf.data[0], &iobuf.data[nw], iobuf.len);
+			ASSERT(iobuf.len > 0);
+			ASSERT(iobuf.len + nw <= (ssize_t)LEN(iobuf.data));
+			memmove(iobuf.data, iobuf.data + nw, iobuf.len);
 		}
 		break;
 	}

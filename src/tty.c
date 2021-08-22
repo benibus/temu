@@ -199,8 +199,7 @@ static void vte_sgr(TTY *, Seq *, uint);
 static void vte_decset(TTY *, Seq *, uint);
 static void vte_osc(TTY *, Seq *, uint);
 
-static char mbuf[BUFSIZ];
-static size_t msize = 0;
+static char *input_;
 
 TTY *
 tty_create(int cols, int rows, int histsize, int tablen)
@@ -262,40 +261,43 @@ tty_init(TTY *tty, int cols, int rows, int histsize, int tablen)
 size_t
 tty_write(TTY *tty, const char *str, size_t len)
 {
-#if 1
-	{
-		for (size_t j = 0; j < len; j++) {
-			long tmp;
-			if (msize >= LEN(mbuf)-1-1)
-				break;
-			tmp = snprintf(&mbuf[msize], LEN(mbuf)-msize-1-1, "%s ", asciistr(str[j]));
-			if (tmp <= 0) break;
-			msize += tmp;
-		}
-		msg_log("Input", "%s\n", mbuf);
-		msize = 0;
-		mbuf[msize] = 0;
-	}
-#endif
 	uint i = 0;
 
 	while (str[i] && i < len) {
-		uint width = 1;
 		uint err = 0;
 		uint32 ucs4 = 0;
+		uint width;
 
-		width = utf8_decode(str + i, &ucs4, &err);
+		width = utf8_decode(str + i, len - i, &ucs4, &err);
 
-		if (!err) {
-			if (!parse_token(tty, &tty->seq, ucs4)) {
-				stream_write(tty, &tty->seq.templ);
-			} else {
-				dummy__(tty);
-			}
+		if (!width) break;
+
+		if (!parse_token(tty, &tty->seq, ucs4)) {
+			stream_write(tty, &tty->seq.templ);
+		} else {
+			dummy__(tty);
 		}
 
+#if 1
+#define DBGOPT_PRINT_INPUT 1
+		{
+			char tmp[128] = { 0 };
+			uint n = ucs4str(ucs4, tmp, LEN(tmp));
+			for (uint j = 0; j + !j <= n; j++) {
+				arr_push(input_, (n > j) ? tmp[j] : ' ');
+			}
+		}
+#endif
 		i += width;
 	}
+
+#ifdef DBGOPT_PRINT_INPUT
+	if (arr_count(input_)) {
+		arr_push(input_, 0);
+		msg_log("Input", "%s\n", input_);
+		arr_clear(input_);
+	}
+#endif
 
 	return i;
 }
@@ -899,6 +901,7 @@ vte_ri(TTY *tty, Seq *seq, uint id)
 void
 seq_print_func(Seq *seq, uint id)
 {
+#if 0
 	fprintf(stderr, "\033[01;33m"
 	                "VtCode("
 	                "\033[0m%02u"
@@ -915,5 +918,8 @@ seq_print_func(Seq *seq, uint id)
 		fprintf(stderr, "%s%s", asciistr(seq->buf[i]), " ");
 	}
 	fputc('\n', stderr);
+#else
+	return;
+#endif
 }
 

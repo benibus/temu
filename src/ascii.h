@@ -4,7 +4,7 @@
 #define NUM_ASCII_STD 128
 #define NUM_ASCII_EXT 128
 
-struct {
+static struct {
 	char *str;
 	char *bin;
 } ascii_db[NUM_ASCII_STD] = {
