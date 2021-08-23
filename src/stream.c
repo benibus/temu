@@ -16,7 +16,7 @@ enum { INIT_NEVER, INIT_IFOLD, INIT_IFNEW };
 typedef struct {
 	Cell *data;
 	Row *row;
-	Pos pos;
+	Vec2I pos;
 	uint offset;
 } CellDesc;
 
@@ -90,12 +90,18 @@ stream_init(TTY *tty, uint ncols, uint nrows, uint nhist)
 void
 stream_resize(TTY *tty, int cols, int rows)
 {
-	int dx = MAX(0, cols) - tty->cols;
-	int dy = MAX(0, rows) - tty->rows;
+	Vec4I dim = {
+		.x1 = tty->cols,
+		.y1 = tty->rows,
+		.x2 = MAX(0, cols),
+		.y2 = MAX(0, rows)
+	};
 
-	if (!dx && !dy) return;
+	if (dim.x2 == dim.x1 && dim.y2 == dim.y1) {
+		return;
+	}
 
-	int pitch = MAX(cols, tty->pitch);
+	int pitch = MAX(dim.x2, tty->pitch);
 	int max = tty->max;
 
 	if (pitch > tty->pitch) {
@@ -122,8 +128,8 @@ stream_resize(TTY *tty, int cols, int rows)
 		tty->tabstops[i] = (i && i % tty->tablen) ? 1 : 0;
 	}
 
-	tty->cols = cols;
-	tty->rows = rows;
+	tty->cols = dim.x2;
+	tty->rows = dim.y2;
 	tty->pitch = pitch;
 	tty->max = max;
 
@@ -191,7 +197,7 @@ stream_write(TTY *tty, const Cell *templ)
 void
 put_glyph(TTY *tty, const Cell *templ)
 {
-	Pos pos = (Pos){ tty->pos.x, tty->pos.y };
+	Vec2I pos = tty->pos;
 
 	if (pos.x + 1 < tty->cols) {
 		tty->cursor.wrap = false;

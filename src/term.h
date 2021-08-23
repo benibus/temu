@@ -87,7 +87,7 @@ typedef struct TTY_ {
 	int colpx, rowpx;
 	int tablen;
 
-	struct { int x, y; } pos;
+	Vec2I pos;
 
 	struct {
 		bool wrap;
