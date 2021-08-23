@@ -54,7 +54,7 @@ pty_init(TTY *tty, const char *shell)
 		close(pty->mfd);
 		{
 			// execute shell
-			setenv("SHELL", shell, 1);
+			setenv("SHELL", cmd, 1);
 
 			signal(SIGCHLD, SIG_DFL);
 			signal(SIGHUP,  SIG_DFL);

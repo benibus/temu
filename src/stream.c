@@ -47,7 +47,7 @@ static void screen_reset(TTY *);
 #define DBG_PRINT_STATE(...)
 #endif
 
-void dummy__(TTY *tty) { DBG_PRINT_STATE(tty); }
+void dummy__(TTY *tty) { (void)tty; DBG_PRINT_STATE(tty); }
 
 inline CellDesc
 celldesc(TTY *tty, int x, int y)
@@ -72,7 +72,7 @@ stream_init(TTY *tty, uint ncols, uint nrows, uint nhist)
 	ASSERT(ncols && nrows && nhist);
 
 	ring_init(&tty->hist, nhist, sizeof(Row));
-	ASSERT(tty->hist.data && tty->hist.max > 0);
+	ASSERT(tty && tty->hist.data && tty->hist.max > 0);
 
 	int ncells = tty->hist.max * ncols;
 

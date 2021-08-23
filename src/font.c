@@ -105,11 +105,6 @@ static struct {
 	FontSource *font_sources;
 } shared;
 
-static const char ascii_[] =
-    " !\"#$%&'()*+,-./0123456789:;<=>?"
-    "@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_"
-    "`abcdefghijklmnopqrstuvwxyz{|}~";
-
 static uint32 hash32(uint32);
 static uint32 font_load_glyph(FontFace *, uint32);
 static void font_load_glyphs(FontFace *);
@@ -148,7 +143,7 @@ glyph_write_image(GlyphMetrics metrics, FT_Bitmap src, uchar **buf, uint max)
 	uchar *img = *buf;
 
 	if (!img || size > max) {
-		img = malloc(size);
+		img = xmalloc(1, size);
 	}
 	memset(img, 0, size);
 
@@ -184,7 +179,7 @@ glyph_table_init(FontFace *font)
 	assert(font->num_codepoints < 0x10ffff);
 	memset(table, 0, sizeof(*table));
 	table->max = MIN(font->num_codepoints / 2 * 3, 0x10ffff);
-	table->items = calloc(table->max, sizeof(*table->items));
+	table->items = xcalloc(table->max, sizeof(*table->items));
 
 	return table;
 }
@@ -380,7 +375,7 @@ font_insert_source(FcPattern *pattern)
 	}
 
 	assert(!*p);
-	*p = calloc(1, sizeof(*obj));
+	*p = xcalloc(1, sizeof(*obj));
 	obj = (FontSource *)*p;
 	obj->file = strdup((char *)file);
 	obj->index = index;
@@ -404,7 +399,7 @@ font_insert_face(FcPattern *pattern)
 	}
 
 	assert(!*p);
-	*p = calloc(1, sizeof(*obj));
+	*p = xcalloc(1, sizeof(*obj));
 	obj = (FontFace *)*p;
 	obj->src = font_insert_source(pattern);
 	obj->pattern = pattern;
@@ -476,7 +471,6 @@ FontFace *
 font_create_derived_face(FontFace *font, uint style)
 {
 	struct { FcPattern *conf, *match; } pattern;
-	FcValue dummy;
 	FcResult res;
 
 	pattern.conf = FcPatternDuplicate(font->pattern);
@@ -512,7 +506,7 @@ color_create_name(RC *rc, Color *output, const char *name)
 
 	if (XAllocNamedColor(win->x11->dpy, win->colormap, name, &screen, &channels)) {
 		if (!color) {
-			color = calloc(1, sizeof(*color));
+			color = xcalloc(1, sizeof(*color));
 		}
 		color->pixel = screen.pixel;
 		color->values.red   = channels.red;

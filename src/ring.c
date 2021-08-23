@@ -35,8 +35,7 @@ ring_init(Ring *ring_, uint max, uint stride)
 void
 ring_free(Ring *ring)
 {
-	ASSERT(ring);
-	ASSERT(ring->data && ring->max);
+	ASSERT(ring && ring->data && ring->max);
 
 	FREE(ring->data);
 }
@@ -80,4 +79,3 @@ ring_count(Ring *ring)
 
 	return (count < 0) ? ring->max - 1 : count;
 }
-

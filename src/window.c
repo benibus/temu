@@ -190,7 +190,7 @@ x11_set_visual_format(X11 *x11)
 Win *
 win_create_client(void)
 {
-	WinData *win = calloc(1, sizeof(*win));
+	WinData *win = xcalloc(1, sizeof(*win));
 	assert(win);
 
 	if (g_x11.dpy) {
@@ -494,7 +494,6 @@ x11_wait_sys(Display *dpy, double *timeout)
 	fd_set fdsr;
 	const int xwfd = ConnectionNumber(dpy);
 	int fd = xwfd + 1;
-	int count = 0;
 
 	for (;;) {
 		FD_ZERO(&fdsr);
@@ -691,7 +690,7 @@ win_poll_events(WinData *win)
 							break;
 						}
 						assert(!n);
-						buf = calloc(k.len + 1, 1);
+						buf = xcalloc(k.len + 1, 1);
 					}
 				}
 

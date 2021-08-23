@@ -1,6 +1,7 @@
 #ifndef UTILS_TYPES_H__
 #define UTILS_TYPES_H__
 
+#include <stdio.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
