@@ -289,18 +289,21 @@ render_frame(Client *client)
 	rc->color.bg = &colors[COLOR_BG];
 	draw_rect_solid(rc, rc->color.bg, 0, 0, win->w, win->h);
 
-	for (int i = 0, y = tty->top + tty->scroll; y <= tty->bot && i < tty->cols; i++, y++) {
+	int i = 0;
+	int x = 0;
+	int y = tty->top + tty->scroll;
+
+	for (; i < tty->rows && y <= tty->bot; i++, y++) {
 		GlyphRender glyphs[256] = { 0 };
 
 		FontFace *font = rc->font;
-		Cell *cells = NULL;
-		uint x, len = 0;
+		Cell *cells = stream_get_line(tty, y, NULL);
 
-		cells = stream_get_row(tty, y, &len);
-		ASSERT((int)len <= tty->cols);
-
-		for (x = 0; cells && x < len && x < LEN(glyphs); x++) {
+		for (x = 0; cells && x < tty->cols && x < (int)LEN(glyphs); x++) {
 			Cell cell = cells[x];
+
+			if (!cell.ucs4) break;
+
 			ColorSet color = { 0 };
 
 			if (cell.attr & ATTR_ITALIC) {
@@ -331,12 +334,12 @@ render_frame(Client *client)
 
 		// draw cursor
 		if (!tty->cursor.hide && y == tty->pos.y) {
-			uint cx = tty->pos.x;
+			int cx = tty->pos.x;
 			glyphs[cx].ucs4 = DEFAULT(glyphs[cx].ucs4, L' ');
 			glyphs[cx].font = DEFAULT(glyphs[cx].font, font);
 			glyphs[cx].foreground = &colors[COLOR_BG];
 			glyphs[cx].background = &colors[COLOR_FG];
-			x += (cx == len);
+			x += (cx == x);
 		}
 
 		draw_text_utf8(rc, glyphs, x, 0, i * tty->rowpx);

@@ -222,16 +222,10 @@ tty_init(TTY *tty, struct TTYConfig config)
 	memclear(tty, 1, sizeof(*tty));
 
 	stream_init(tty, config.cols, config.rows, config.histsize);
-	ASSERT(tty->cols == tty->pitch);
-
-	for (int i = 0; i < tty->hist.max; i++) {
-		Row *row = ring_data(&tty->hist, i);
-		row->index = i;
-	}
 
 	tty->tablen = config.tablen;
 
-	for (int i = 0; ++i < tty->pitch; ) {
+	for (int i = 0; ++i < tty->cols; ) {
 		tty->tabstops[i] |= (i % tty->tablen == 0) ? 1 : 0;
 	}
 
@@ -336,14 +330,13 @@ tty_scroll(TTY *tty, int dy)
 }
 
 void
-tty_resize(TTY *tty, uint cols_, uint rows_)
+tty_resize(TTY *tty, int cols, int rows)
 {
-	ASSERT(tty->hist.max > 0);
-	int cols = CLAMP((int64)cols_, 1, INT_MAX & ~0x0f);
-	int rows = CLAMP((int64)rows_, 1, tty->hist.max - 1);
+	cols = MAX(cols, 1);
+	rows = MAX(rows, 1);
 
-	pty_resize(tty, cols, rows);
 	if (cols != tty->cols || rows != tty->rows) {
+		pty_resize(tty, cols, rows);
 		stream_resize(tty, cols, rows);
 	}
 }
@@ -724,7 +717,7 @@ vte_el(TTY *tty, Seq *seq, uint id)
 		case 0: {
 			cmd_set_cells(tty, &seq->templ,
 			              tty->pos.x, tty->pos.y,
-			              tty->pitch - tty->pos.x);
+			              tty->cols - tty->pos.x);
 			break;
 		}
 		case 1: {
@@ -735,7 +728,7 @@ vte_el(TTY *tty, Seq *seq, uint id)
 			break;
 		}
 		case 2: {
-			cmd_set_cells(tty, &seq->templ, 0, tty->pos.y, tty->pitch);
+			cmd_set_cells(tty, &seq->templ, 0, tty->pos.y, tty->cols);
 			cmd_set_cursor_x(tty, 0);
 			break;
 		}
@@ -751,7 +744,7 @@ vte_ed(TTY *tty, Seq *seq, uint id)
 	switch (o) {
 		case 0: {
 			cmd_clear_rows(tty, tty->pos.y + 1, tty->rows);
-			cmd_set_cells(tty, &seq->templ, tty->pos.x, tty->pos.y, tty->pitch);
+			cmd_set_cells(tty, &seq->templ, tty->pos.x, tty->pos.y, tty->cols);
 			break;
 		}
 		case 1: {

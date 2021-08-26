@@ -24,7 +24,6 @@ typedef uint8_t   uint8;
 typedef uint16_t  uint16;
 typedef uint32_t  uint32;
 typedef uint64_t  uint64;
-typedef uintptr_t uintptr;
 typedef int8_t    i8;
 typedef int16_t   i16;
 typedef int32_t   i32;
@@ -34,7 +33,6 @@ typedef uint8_t   u8;
 typedef uint16_t  u16;
 typedef uint32_t  u32;
 typedef uint64_t  u64;
-typedef uintptr_t uptr;
 
 typedef uint32_t UTF8;
 typedef uint32_t UCS4;
@@ -45,9 +43,11 @@ typedef struct {
 } String;
 
 #if (__STDC_VERSION__ >= 201112L)
+#include <assert.h>
+
 #define VEC2T(T_)                  \
 union {                            \
-  T_ arr[2];                       \
+  T_ e[2];                         \
   struct { T_ x, y; };             \
   struct { T_ w, h; };             \
   struct { T_ s, t; };             \
@@ -66,7 +66,7 @@ union {                            \
 
 #define VEC3T(T_)                  \
 union {                            \
-  T_ arr[3];                       \
+  T_ e[3];                         \
   struct { T_ x, y, z; };          \
   struct { T_ x_, y_, w; };        \
   struct { T_ r, g, b; };          \
@@ -81,7 +81,7 @@ union {                            \
 
 #define VEC4T(T_)                  \
 union {                            \
-  T_ arr[4];                       \
+  T_ e[4];                         \
   struct { T_ x, y, z, w; };       \
   struct { T_ r, g, b, a; };       \
   struct { T_ i, j, k, l; };       \
@@ -134,24 +134,55 @@ typedef VEC4T(uint32) Vec4U32;
 typedef VEC4T(int64)  Vec4I64;
 typedef VEC4T(uint64) Vec4U64;
 
-#define vec_(...) { .arr = { __VA_ARGS__ } }
+#define vec_(...) { .e = { __VA_ARGS__ } }
 #define vec2(x_,y_)       vec_((x_), (y_))
 #define vec3(x_,y_,z_)    vec_((x_), (y_), (z_))
 #define vec4(x_,y_,z_,w_) vec_((x_), (y_), (z_), (w_))
 
-#define VECLEN(v) (sizeof((v).arr)/sizeof((v).arr[0]))
+#define VECLEN(v) (sizeof((v).e)/sizeof((v).e[0]))
 
-#define vec2v(v) vec2((VECLEN(v) > 0) ? (v).arr[0] : 0, \
-                      (VECLEN(v) > 1) ? (v).arr[1] : 0)
+#define vec2v(v) vec2((VECLEN(v) > 0) ? (v).e[0] : 0, \
+                      (VECLEN(v) > 1) ? (v).e[1] : 0)
 
-#define vec3v(v) vec3((VECLEN(v) > 0) ? (v).arr[0] : 0, \
-                      (VECLEN(v) > 1) ? (v).arr[1] : 0, \
-                      (VECLEN(v) > 2) ? (v).arr[2] : 0)
+#define vec3v(v) vec3((VECLEN(v) > 0) ? (v).e[0] : 0, \
+                      (VECLEN(v) > 1) ? (v).e[1] : 0, \
+                      (VECLEN(v) > 2) ? (v).e[2] : 0)
 
-#define vec4v(v) vec4((VECLEN(v) > 0) ? (v).arr[0] : 0, \
-                      (VECLEN(v) > 1) ? (v).arr[1] : 0, \
-                      (VECLEN(v) > 2) ? (v).arr[2] : 0, \
-                      (VECLEN(v) > 3) ? (v).arr[3] : 0)
+#define vec4v(v) vec4((VECLEN(v) > 0) ? (v).e[0] : 0, \
+                      (VECLEN(v) > 1) ? (v).e[1] : 0, \
+                      (VECLEN(v) > 2) ? (v).e[2] : 0, \
+                      (VECLEN(v) > 3) ? (v).e[3] : 0)
+
+#define V2(T_,x,y)     \
+  union {              \
+    uchar raw[2*sizeof(T_)]; \
+    T_ arr[2];         \
+    struct {           \
+      T_ x;            \
+      T_ y;            \
+    };                 \
+  }
+#define V3(T_,x,y,z)   \
+  union {              \
+    uchar raw[3*sizeof(T_)]; \
+    T_ arr[3];         \
+    struct {           \
+      T_ x;            \
+      T_ y;            \
+      T_ z;            \
+    };                 \
+  }
+#define V4(T_,x,y,z,w) \
+  union {              \
+    uchar raw[4*sizeof(T_)]; \
+    T_ arr[4];         \
+    struct {           \
+      T_ x;            \
+      T_ y;            \
+      T_ z;            \
+      T_ w;            \
+    };                 \
+  }
 
 #endif
 

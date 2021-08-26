@@ -13,35 +13,51 @@
 enum { LINE_DEFAULT, LINE_WRAPPED };
 enum { INIT_NEVER, INIT_IFOLD, INIT_IFNEW };
 
-typedef struct {
-	Cell *data;
-	Row *row;
-	Vec2I pos;
-	uint offset;
-} CellDesc;
+typedef struct Line_ {
+	struct Line_ *next;
+	uint16 flags;
+	Cell cells[];
+} Line;
 
-static CellDesc celldesc(TTY *, int, int);
+#define HDROFF offsetof(Line, cells)
+
+#define LINEOFF(x) (HDROFF + ((x) * sizeof(Cell)))
+#define LINEHDR(p) ((Line *)((uchar *)(p) - HDROFF))
+
 static void put_glyph(TTY *, const Cell *);
 static void put_linefeed(TTY *);
 static void put_tab(TTY *, ColorSet, uint16);
-static bool row_init(TTY *, Row *, uint16);
-static Row *row_alloc(TTY *, int, uint8);
-static uint row_compute_length(TTY *, Row *);
+static bool line_init(Ring *, Line *, uint16);
+static Line *line_push(Ring *);
+static Line *line_alloc(TTY *, int, uint8);
+static uint linelen(Cell *, uint);
 static void screen_reset(TTY *);
+
+static inline Line *
+lineheader(const Ring *ring, int n)
+{
+	return (Line *)(ring->data + ringoffset(ring, n));
+}
+
+static inline Cell *
+linedata(const Ring *ring, int n)
+{
+	return lineheader(ring, n)->cells;
+}
 
 #if 0
 #define DBG_PRINT_STATE(t) do { \
 	CellDesc desc = celldesc((t), 0, (t)->cursor.y);            \
 	msg_log("StreamState",                                      \
 	        "txtstream: (%03d/%03d), %04d | "                   \
-	        "rowstream: (%04d/%04d) %04d->%04d | "              \
+	        "history: (%04d/%04d) %04d->%04d | "                \
 	        "cursor: { %04d, %04d } | "                         \
-	        "row: index = %04d, len = %03d, static ?= %-1d\n",  \
+	        "line: index = %04d, len = %03d, static ?= %-1d\n", \
 	        (t)->cols, (t)->pitch,                              \
 	        (t)->max,                                           \
 	        (t)->hist.count, (t)->hist.max, (t)->top, (t)->bot, \
 	        (t)->cursor.x, (t)->cursor.y,                       \
-	        desc.row->index, desc.row->len, desc.row->flags & DESC_NEWLINE); \
+	        desc.line->index, desc.line->len, desc.line->flags & DESC_NEWLINE); \
 } while (0)
 #else
 #define DBG_PRINT_STATE(...)
@@ -49,40 +65,18 @@ static void screen_reset(TTY *);
 
 void dummy__(TTY *tty) { (void)tty; DBG_PRINT_STATE(tty); }
 
-inline CellDesc
-celldesc(TTY *tty, int x, int y)
-{
-	CellDesc desc = { 0 };
-	ASSERT(y >= 0 && y < tty->hist.count);
-	ASSERT(x >= 0 && x < tty->cols);
-
-	desc.row = ring_data(&tty->hist, y);
-	desc.offset = desc.row->index * tty->pitch + x;
-	desc.data = tty->cells + desc.offset;
-	desc.pos.x = x;
-	desc.pos.y = y;
-
-	return desc;
-}
-
 TTY *
-stream_init(TTY *tty, uint ncols, uint nrows, uint nhist)
+stream_init(TTY *tty, uint cols, uint rows, uint histsize)
 {
 	ASSERT(tty);
-	ASSERT(ncols && nrows && nhist);
+	ASSERT(cols && rows && histsize);
 
-	ring_init(&tty->hist, nhist, sizeof(Row));
-	ASSERT(tty && tty->hist.data && tty->hist.max > 0);
+	tty->ring = ring_create(bitround(histsize, +1), LINEOFF(cols));
+	tty->tabstops = xcalloc(cols, sizeof(*tty->tabstops));
 
-	int ncells = tty->hist.max * ncols;
-
-	tty->cells = xcalloc(ncells, sizeof(*tty->cells));
-	tty->tabstops = xcalloc(ncols, sizeof(*tty->tabstops));
-
-	tty->cols = ncols;
-	tty->rows = nrows;
-	tty->pitch = tty->cols;
-	tty->max = ncells;
+	tty->cols = cols;
+	tty->rows = rows;
+	tty->histsize = histsize;
 
 	return tty;
 }
@@ -90,6 +84,7 @@ stream_init(TTY *tty, uint ncols, uint nrows, uint nhist)
 void
 stream_resize(TTY *tty, int cols, int rows)
 {
+#if 0
 	Vec4I dim = {
 		.x1 = tty->cols,
 		.y1 = tty->rows,
@@ -102,7 +97,7 @@ stream_resize(TTY *tty, int cols, int rows)
 	}
 
 	int pitch = MAX(dim.x2, tty->pitch);
-	int max = tty->max;
+	/* int max = tty->max; */
 
 	if (pitch > tty->pitch) {
 		max = tty->hist.max * pitch;
@@ -131,25 +126,108 @@ stream_resize(TTY *tty, int cols, int rows)
 	tty->cols = dim.x2;
 	tty->rows = dim.y2;
 	tty->pitch = pitch;
-	tty->max = max;
+	/* tty->max = max; */
 
 	screen_reset(tty);
+#else
+	return;
+#endif
+}
+
+void
+stream_rewrap(TTY *tty, int cols, int rows)
+{
+#if 0
+	V4(int, x, y, cols, rows) a = { 0 };
+	V4(int, x, y, cols, rows) b = { 0 };
+
+	a.cols = tty->cols;
+	a.rows = tty->rows;
+	b.cols = cols;
+	b.rows = rows;
+
+	Ring *rp1 = tty->ring;
+	Ring *rp2 = NULL;
+	Line *lp1, *lp2;
+#elif 0
+	V4(int, x1, y1, x2, y2) pos = { 0 };
+	V4(int, x1, y1, x2, y2) dim = {
+		.x1 = tty->cols,
+		.y1 = tty->rows,
+		.x2 = cols,
+		.y2 = rows
+	};
+	V2(int, a, b) pitch = {
+		.a = tty->pitch,
+		.b = MAX(dim.x2, pitch.a)
+	};
+	int size = tty->hist.max * pitch.b;
+
+	if (dim.x1 == dim.x2 &&
+		dim.y1 == dim.y2)
+	{
+		return;
+	}
+
+	Cell *src = tty->cells;
+	Cell *dst = xcalloc(size, sizeof(*dst));
+	Line *l1, *l2;
+
+	int absi = -1;
+	int bufi =  0;
+	int memi =  0;
+	int i = 0;
+	int len = 0;
+
+	pos.x1 = 0, pos.y1 = -1;
+	pos.x2 = 0, pos.y2 = -1;
+
+	for (;;) {
+		if (!pos.x1) {
+			if (++pos.y1 >= tty->hist.count) {
+				break;
+			}
+			i = pos.y1 * pitch.a;
+			len = linelen(src + i, dim.x1);
+
+			l1 = ring_data(&tty->hist, pos.y1);
+		}
+		if (!pos.x2) {
+			absi++;
+			memi = absi % tty->hist.max;
+			bufi = (memi + 1) % tty->hist.max;
+
+			l2 = (Line *)tty->hist.data + bufi;
+		}
+
+		if (len - pos.x1 < dim.x2 - pos.x2) {
+			memcpy(dst + memi * pitch.b + pos.x2,
+			       src + pos.y1 * pitch.a + pos.x1,
+			       (len - pos.x1) * sizeof(*dst));
+			l2->tmp = 0;
+		}
+	}
+#endif
+	return;
 }
 
 Cell *
-stream_get_row(TTY *tty, int y, uint *len)
+stream_get_line(TTY *tty, LineID id, uint *ret)
 {
-	if (BETWEEN(y + 1, 1, tty->hist.count)) {
-		CellDesc desc = celldesc(tty, 0, y);
-		if (desc.data[0].ucs4) {
-			if (len) {
-				*len = MIN(desc.row->len, tty->cols);
+	const int n = id;
+
+	if (BETWEEN(n + 1, 1, tty->ring->count)) {
+		Line *line = lineheader(tty->ring, n);
+		if (line->cells[0].ucs4) {
+			if (ret) {
+				int len = linelen(line->cells, tty->cols);
+				*ret = MIN(len, tty->cols);
 			}
-			return desc.data;
+			return line->cells;
 		}
 	}
 
-	if (len) *len = 0;
+	if (ret) *ret = 0;
 
 	return NULL;
 }
@@ -159,8 +237,8 @@ stream_write(TTY *tty, const Cell *templ)
 {
 	int offset = tty->pos.y * tty->cols + tty->pos.x;
 
-	if (RING_EMPTY(&tty->hist)) {
-		row_alloc(tty, 0, INIT_IFOLD|INIT_IFNEW);
+	if (RING_EMPTY(tty->ring)) {
+		line_alloc(tty, 0, INIT_IFOLD|INIT_IFNEW);
 	}
 
 	switch (templ->ucs4) {
@@ -197,31 +275,33 @@ stream_write(TTY *tty, const Cell *templ)
 void
 put_glyph(TTY *tty, const Cell *templ)
 {
-	Vec2I pos = tty->pos;
+	Vec4I pos = { 0 };
+	pos.x1 = tty->pos.x, pos.x2 = pos.x1;
+	pos.y1 = tty->pos.y, pos.y2 = pos.y1;
 
-	if (pos.x + 1 < tty->cols) {
+	Line *line = lineheader(tty->ring, pos.y1);
+
+	if (pos.x1 + 1 < tty->cols) {
 		tty->cursor.wrap = false;
 	} else if (!tty->cursor.wrap) {
 		tty->cursor.wrap = true;
 	} else {
 		tty->cursor.wrap = false;
-		pos.x = 0;
-		pos.y++;
+		pos.x2 = 0;
+		pos.y2++;
 	}
 
-	Row *row = row_alloc(tty, pos.y, INIT_NEVER);
-	if (pos.y > tty->pos.y) {
-		row_init(tty, row, LINE_WRAPPED);
+	if (pos.y2 > pos.y1) {
+		Line *tmp = line;
+		line->flags |= LINE_WRAPPED;
+		line = line_alloc(tty, pos.y2, INIT_IFOLD|INIT_IFNEW);
+		ASSERT(tmp->flags & LINE_WRAPPED);
+		tmp->next = line;
 	}
 
-	int offset = row->index * tty->pitch + pos.x;
+	line->cells[pos.x2] = *templ;
 
-	if (!tty->cells[offset].ucs4) {
-		row->len = pos.x + 1;
-	}
-	memcpy(tty->cells + offset, templ, sizeof(*templ));
-
-	if (pos.y != tty->pos.y) {
+	if (pos.y2 != pos.y1) {
 		cmd_set_cursor_x(tty, 0);
 		cmd_move_cursor_y(tty, 1);
 	}
@@ -231,56 +311,78 @@ put_glyph(TTY *tty, const Cell *templ)
 }
 
 bool
-row_init(TTY *tty, Row *row, uint16 flags)
+line_init(Ring *ring, Line *line, uint16 flags)
 {
-	memclear(tty->cells + row->index * tty->pitch,
-	         tty->pitch,
-	         sizeof(*tty->cells));
-	row->len = 0;
-	row->flags = flags;
+	memclear(line, ring->pitch, sizeof(*ring->data));
+	line->next  = NULL;
+	line->flags = flags;
 
 	return true;
 }
 
-Row *
-row_alloc(TTY *tty, int n, uint8 opt)
+Line *
+line_push(Ring *ring)
 {
-	Row *row = NULL;
+	Line *line = lineheader(ring, ring->count);
+	ring_advance(ring);
 
-	if (n >= 0 && n < tty->hist.count) {
-		row = ring_data(&tty->hist, n);
+	return line;
+}
+
+Line *
+line_alloc(TTY *tty, int n, uint8 opt)
+{
+	Ring *ring = tty->ring;
+	Line *line = NULL;
+
+	if (n >= 0 && n < ring->count) {
+		line = lineheader(ring, n);
 		if (opt & INIT_IFOLD) {
-			row_init(tty, row, 0);
+			line_init(ring, line, 0);
 		}
-	} else if (n == tty->hist.count) {
-		row = ring_push(&tty->hist, NULL);
+	} else if (n == ring->count) {
+		line = line_push(ring);
 		if (opt & INIT_IFNEW) {
-			row_init(tty, row, 0);
+			line_init(ring, line, 0);
 		}
 		screen_reset(tty);
 	}
 
-	return row;
+	return line;
 }
 
 uint
-row_compute_length(TTY *tty, Row *row)
+linelen(Cell *cells, uint lim)
 {
-	Cell *cells = tty->cells + row->index * tty->pitch;
+	V3(int, l, m, h) i = {
+		.l = 0,
+		.m = 0,
+		.h = MAX(lim - 1, 0)
+	};
 
-	for (int n = 0; n < tty->pitch; n++) {
-		if (!cells[n].ucs4) {
-			return n;
+	// Modified binary search
+	for (;;) {
+		i.m = (i.l + i.h) / 2;
+		if (cells[i.m].ucs4) {
+			if (cells[i.h].ucs4) {
+				return i.h + 1;
+			}
+			i.l = i.m + 1;
+		} else {
+			if (!cells[i.l].ucs4) {
+				return i.l;
+			}
+			i.h = i.m - 1;
 		}
 	}
 
-	return tty->pitch;
+	return 0;
 }
 
 void
 put_linefeed(TTY *tty)
 {
-	if (row_alloc(tty, tty->pos.y + 1, INIT_IFNEW)) {
+	if (line_alloc(tty, tty->pos.y + 1, INIT_IFNEW)) {
 		cmd_set_cursor_x(tty, 0);
 		cmd_move_cursor_y(tty, 1);
 	}
@@ -308,69 +410,65 @@ put_tab(TTY *tty, ColorSet color, uint16 attr)
 void
 screen_reset(TTY *tty)
 {
-	tty->bot = DEFAULT(tty->hist.count, 1) - 1;
+	tty->bot = DEFAULT(tty->ring->count, 1) - 1;
 	tty->top = MAX(tty->bot - tty->rows + 1, 0);
 }
 
 void
-cmd_set_cells(TTY *tty, const Cell *spec, uint x, uint y, uint n)
+cmd_set_cells(TTY *tty, const Cell *templ, uint x, uint y, uint n)
 {
-	CellDesc desc = celldesc(tty, x, y);
-	int x0 = desc.pos.x;
-	int x1 = MIN(x0 + (int)n, tty->pitch);
+	Line *line = lineheader(tty->ring, y);
+	int x1 = x;
+	int x2 = MIN(x1 + (int)n, tty->cols);
 
-	for (int i = 0; i < (x1 - x0); i++) {
-		memcpy(desc.data + i, spec, sizeof(*desc.data));
+	for (int x = x1; x < x2; x++) {
+		line->cells[x] = *templ;
 	}
-	desc.row->len = row_compute_length(tty, desc.row);
 }
 
 void
 cmd_shift_cells(TTY *tty, uint x, uint y, int dx_)
 {
 	Cell templ = { 0 };
-	CellDesc desc = celldesc(tty, x, y);
+	Line *line = lineheader(tty->ring, y);
 
-	int x0 = desc.pos.x;
-	int x1 = CLAMP(x0 + dx_, 0, tty->pitch);
+	int x0 = x;
+	int x1 = CLAMP(x0 + dx_, 0, tty->cols);
 	int dx = x1 - x0;
-	int nx = tty->pitch - MAX(x0, x1);
+	int nx = tty->cols - MAX(x0, x1);
 	int x2 = (dx < 0) ? x1 + nx : x0;
 
-	memmove(desc.data + dx, desc.data, nx * sizeof(*desc.data));
+	memmove(line->cells + x0 + dx,
+	        line->cells + x0,
+	        nx * sizeof(*line->cells));
 
 	if (dx > 0) {
 		templ.ucs4 = ' ';
 		templ.width = 1;
 	}
-	cmd_set_cells(tty, &templ, x2, desc.pos.y, ABS(dx));
+	cmd_set_cells(tty, &templ, x2, y, ABS(dx));
 }
 
 void
-cmd_insert_cells(TTY *tty, const Cell *spec, uint n)
+cmd_insert_cells(TTY *tty, const Cell *templ, uint n)
 {
 	uint cx = tty->pos.x;
 	uint cy = tty->pos.y;
 
 	cmd_shift_cells(tty, cx, cy, n);
-	cmd_set_cells(tty, spec, cx, cy, n);
+	cmd_set_cells(tty, templ, cx, cy, n);
 }
 
 void
 cmd_clear_rows(TTY *tty, uint y, uint n)
 {
 	Cell templ = { 0 };
-	CellDesc desc = { 0 };
 
-	for (uint i = 0; i < n && (int)(y + i) < tty->hist.count; i++) {
-		desc = celldesc(tty, 0, y + i);
-		cmd_set_cells(tty, &templ, 0, y + i, tty->pitch);
-		desc.row->flags = 0;
-	}
-
-	if (desc.row && desc.pos.y + 1 < tty->hist.count) {
-		Row *row = ring_data(&tty->hist, desc.pos.y + 1);
-		row->flags &= ~LINE_WRAPPED;
+	for (uint i = 0; i < n && (int)(y + i) < tty->ring->count; i++) {
+		Line *line = lineheader(tty->ring, y + i);
+		cmd_set_cells(tty, &templ, 0, y + i, tty->cols);
+		line->flags = 0;
+		line->next = NULL;
 	}
 }
 
@@ -378,15 +476,14 @@ void
 cmd_move_cursor_x(TTY *tty, int dx)
 {
 	Cell templ = { .ucs4 = ' ', .width = 1 };
-	CellDesc desc = celldesc(tty, tty->pos.x, tty->pos.y);
+	Line *line = lineheader(tty->ring, tty->pos.y);
 
-	int x0 = desc.pos.x;
+	int x0 = tty->pos.x;
 	int x1 = CLAMP(x0 + dx, 0, tty->cols - 1);
 
-	for (int i = 0; i < (x1 - x0); i++) {
-		if (!desc.data[i].ucs4) {
-			memcpy(desc.data + i, &templ, sizeof(*desc.data));
-			desc.row->len++;
+	for (int x = x0; x < x1; x++) {
+		if (!line->cells[x].ucs4) {
+			line->cells[x] = templ;
 		}
 	}
 
@@ -418,18 +515,21 @@ dbg_dump_history(TTY *tty)
 
 	putchar('\n');
 
-	for (int y = 0; y < tty->hist.count; n++, y++) {
-		CellDesc desc = celldesc(tty, 0, y);
-		int idx = ring_index(&tty->hist, y);
+	for (int y = 0; y < tty->ring->count; n++, y++) {
+		Line *line = lineheader(tty->ring, y);
 
-		printf("[%03d|%03d] (%03d) #%05u$%05u/%05u 0x%.2x %c |",
-		       idx, y, desc.row->len, desc.row->index, desc.offset, tty->max, desc.row->flags,
+		int idx = ringindex(tty->ring, y);
+		int off = ringoffset(tty->ring, y);
+		int len = linelen(line->cells, tty->cols);
+
+		printf("[%03d|%03d] (%03d) $%-6d 0x%.2x %c |",
+		       idx, y, len, off, line->flags,
 		       (y == tty->top) ? '>' :
 		       ((y == tty->bot) ? '<' : ' '));
 		for (int x = 0; x < tty->cols; x++) {
-			char *esc = (x == desc.row->len) ? "\033[97;41m" : "";
+			char *esc = (x == len) ? "\033[97;41m" : "";
 			printf("%s%lc\033[0m", esc,
-			       (desc.data[x].ucs4) ? desc.data[x].ucs4 : L' ');
+			       (line->cells[x].ucs4) ? line->cells[x].ucs4 : L' ');
 		}
 		printf("|\n");
 	}

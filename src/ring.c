@@ -1,4 +1,3 @@
-#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,75 +6,45 @@
 #include "utils.h"
 #include "ring.h"
 
-#define ring__offset(r,i) ((i) * (r)->stride)
+#define DATAOFF offsetof(struct Ring_, data)
 
-Ring *
-ring_init(Ring *ring_, uint max, uint stride)
+struct Ring_ *
+ring_create(uint count, uint pitch)
 {
-	Ring *ring = ring_;
+	uint limit = count + 1;
+	uint size  = pitch * limit;
 
-	if (!ring) {
-		ring = xmalloc(1, sizeof(*ring));
-	}
-	memclear(ring, 1, sizeof(*ring));
-
-	size_t tmp = bitround(max, +1) + 1;
-	ASSERT(tmp && tmp < INT32_MAX);
-	ASSERT(stride < INT32_MAX);
-
-	ring->max = tmp;
-	ring->stride = DEFAULT(stride, 1);
-	ring->data = xcalloc(ring->max, ring->stride);
-	ring->write = ring->read = 1;
+	struct Ring_ *ring = xcalloc(DATAOFF + size, 1);
+	ring->limit = limit;
+	ring->pitch = pitch;
 	ring->count = 0;
+	ring->read  = 1;
+	ring->write = 1;
 
 	return ring;
 }
 
 void
-ring_free(Ring *ring)
+ring_destroy(struct Ring_ *ring)
 {
-	ASSERT(ring && ring->data && ring->max);
-
-	FREE(ring->data);
+	memset(ring, 0, DATAOFF + ring->pitch * ring->limit);
+	free(ring);
 }
 
-void *
-ring_push(Ring *ring, void *value)
+int
+ring_advance(struct Ring_ *ring)
 {
-	void *data = ring->data + ring__offset(ring, ring->write);
+	int net = 0;
 
-	if (value) {
-		memcpy(data, value, ring->stride);
-	}
-	if (ring_count(ring) + 1 != ring->max) {
+	if (!RING_FULL(ring)) {
 		ring->count++;
+		net++;
 	} else {
-		ring->read = (ring->read + 1) % ring->max;
+		ring->read = (ring->read + 1) % ring->limit;
+		net--;
 	}
-	ring->write = (ring->write + 1) % ring->max;
+	ring->write = (ring->write + 1) % ring->limit;
 
-	return data;
+	return net;
 }
 
-void *
-ring_data(Ring *ring, int index)
-{
-	return ring->data + ring__offset(ring, ring_index(ring, index));
-}
-
-int
-ring_index(Ring *ring, int index)
-{
-	ASSERT(index >= 0 && index < ring->max);
-
-	return (ring->read + index) % ring->max;
-}
-
-int
-ring_count(Ring *ring)
-{
-	int count = ring->write - ring->read;
-
-	return (count < 0) ? ring->max - 1 : count;
-}

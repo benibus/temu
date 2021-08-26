@@ -2,7 +2,6 @@
 #define TERM_H__
 
 #include "types.h"
-#include "ring.h"
 
 #define INPUT_CHAR 1
 #define INPUT_KEY  2
@@ -38,8 +37,6 @@ enum {
 	CELLTYPE_COUNT
 };
 
-typedef struct { int x, y; } Pos;
-
 typedef struct {
 	uint16 fg; // foreground color index
 	uint16 bg; // background color index
@@ -54,14 +51,11 @@ typedef struct {
 	uint8 width;    // glyph width in columns
 } Cell;
 
-typedef struct {
-	uint index;
-	int len;
-	uint16 flags;
-} Row;
-
 typedef struct PTY_ PTY;
 typedef struct Seq_ Seq;
+typedef struct Ring_ Ring;
+
+typedef uint LineID;
 
 struct TTYConfig {
 	void *ref;
@@ -75,19 +69,17 @@ struct TTYConfig {
 typedef struct TTY_ {
 	void *ref;
 
-	Cell *cells;
-	Ring hist;
+	Ring *ring;
 	uint8 *tabstops;
 
-	int max;
 	int top, bot;
 	int cols, rows;
-	int pitch;
 	int scroll;
 	int colpx, rowpx;
 	int tablen;
+	int histsize;
 
-	Vec2I pos;
+	struct { int x, y; } pos;
 
 	struct {
 		bool wrap;
@@ -118,12 +110,12 @@ size_t tty_read(TTY *);
 size_t tty_write(TTY *, const char *, size_t, uint);
 size_t tty_write_raw(TTY *, const uchar *, size_t, uint8);
 void tty_scroll(TTY *, int);
-void tty_resize(TTY *, uint, uint);
+void tty_resize(TTY *, int, int);
 
 TTY *stream_init(TTY *, uint, uint, uint);
 int stream_write(TTY *, const Cell *);
 void stream_resize(TTY *, int, int);
-Cell *stream_get_row(TTY *, int, uint *);
+Cell *stream_get_line(TTY *, LineID, uint *);
 
 void cmd_set_cells(TTY *, const Cell *, uint, uint, uint);
 void cmd_shift_cells(TTY *, uint, uint, int);
