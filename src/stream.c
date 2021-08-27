@@ -29,9 +29,10 @@ static void put_linefeed(TTY *);
 static void put_tab(TTY *, ColorSet, uint16);
 static bool line_init(Ring *, Line *, uint16);
 static Line *line_push(Ring *);
-static Line *line_alloc(TTY *, int, uint8);
+static Line *line_alloc(Ring *, int, uint8);
 static uint linelen(Cell *, uint);
 static void screen_reset(TTY *);
+static Ring *stream_rewrap(TTY *, int, int);
 
 static inline Line *
 lineheader(const Ring *ring, int n)
@@ -71,12 +72,12 @@ stream_init(TTY *tty, uint cols, uint rows, uint histsize)
 	ASSERT(tty);
 	ASSERT(cols && rows && histsize);
 
-	tty->ring = ring_create(bitround(histsize, +1), LINEOFF(cols));
+	tty->histsize = bitround(histsize, 1);
+	tty->ring = ring_create(tty->histsize, LINEOFF(cols));
 	tty->tabstops = xcalloc(cols, sizeof(*tty->tabstops));
 
 	tty->cols = cols;
 	tty->rows = rows;
-	tty->histsize = histsize;
 
 	return tty;
 }
@@ -84,131 +85,125 @@ stream_init(TTY *tty, uint cols, uint rows, uint histsize)
 void
 stream_resize(TTY *tty, int cols, int rows)
 {
-#if 0
-	Vec4I dim = {
-		.x1 = tty->cols,
-		.y1 = tty->rows,
-		.x2 = MAX(0, cols),
-		.y2 = MAX(0, rows)
-	};
+	Ring *ring = tty->ring;
 
-	if (dim.x2 == dim.x1 && dim.y2 == dim.y1) {
-		return;
-	}
-
-	int pitch = MAX(dim.x2, tty->pitch);
-	/* int max = tty->max; */
-
-	if (pitch > tty->pitch) {
-		max = tty->hist.max * pitch;
-
-		Cell *tmp = xcalloc(max, sizeof(*tmp));
-		Cell *src = tty->cells;
-		Cell *dst = tmp;
-
-		for (int n = 0; n < tty->hist.count + 1; n++) {
-			memcpy(dst, src, tty->pitch * sizeof(*src));
-			src += tty->pitch;
-			dst += pitch;
-		}
-
+	if (cols != tty->cols) {
 		tty->tabstops = xrealloc(tty->tabstops,
-		                         pitch,
+		                         cols,
 		                         sizeof(*tty->tabstops));
-		free(tty->cells);
-		tty->cells = tmp;
+		for (int i = tty->cols; i < cols; i++) {
+			tty->tabstops[i] = (i && i % tty->tablen) ? 1 : 0;
+		}
+		ring = stream_rewrap(tty, cols, rows);
 	}
 
-	for (int i = tty->pitch; i < pitch; i++) {
-		tty->tabstops[i] = (i && i % tty->tablen) ? 1 : 0;
+	if (ring != tty->ring) {
+		ASSERT(ring);
+		free(tty->ring);
+		tty->ring = ring;
 	}
-
-	tty->cols = dim.x2;
-	tty->rows = dim.y2;
-	tty->pitch = pitch;
-	/* tty->max = max; */
+	tty->cols = cols;
+	tty->rows = rows;
 
 	screen_reset(tty);
-#else
-	return;
-#endif
 }
 
-void
+Ring *
 stream_rewrap(TTY *tty, int cols, int rows)
 {
-#if 0
-	V4(int, x, y, cols, rows) a = { 0 };
-	V4(int, x, y, cols, rows) b = { 0 };
+	struct {
+		Ring *ring;
+		Line *line;
+		int x1, x2, y;
+		int cols, rows;
+	} a = { 0 },
+	  b = { 0 };
 
-	a.cols = tty->cols;
-	a.rows = tty->rows;
-	b.cols = cols;
-	b.rows = rows;
+	a.cols = tty->cols, b.cols = cols;
+	a.rows = tty->rows, b.rows = rows;
+	a.y = -1;
+	b.y = -1;
 
-	Ring *rp1 = tty->ring;
-	Ring *rp2 = NULL;
-	Line *lp1, *lp2;
-#elif 0
-	V4(int, x1, y1, x2, y2) pos = { 0 };
-	V4(int, x1, y1, x2, y2) dim = {
-		.x1 = tty->cols,
-		.y1 = tty->rows,
-		.x2 = cols,
-		.y2 = rows
-	};
-	V2(int, a, b) pitch = {
-		.a = tty->pitch,
-		.b = MAX(dim.x2, pitch.a)
-	};
-	int size = tty->hist.max * pitch.b;
-
-	if (dim.x1 == dim.x2 &&
-		dim.y1 == dim.y2)
-	{
-		return;
-	}
-
-	Cell *src = tty->cells;
-	Cell *dst = xcalloc(size, sizeof(*dst));
-	Line *l1, *l2;
-
-	int absi = -1;
-	int bufi =  0;
-	int memi =  0;
-	int i = 0;
+	const int maxhist = tty->ring->count;
 	int len = 0;
 
-	pos.x1 = 0, pos.y1 = -1;
-	pos.x2 = 0, pos.y2 = -1;
+	if (maxhist <= 0 || a.cols == b.cols) {
+		return tty->ring;
+	}
+
+	a.ring = tty->ring;
+	b.ring = ring_create(tty->histsize, LINEOFF(b.cols));
 
 	for (;;) {
-		if (!pos.x1) {
-			if (++pos.y1 >= tty->hist.count) {
+		if (!a.x1) {
+			if (a.y + 1 >= maxhist) {
+				if (b.line) {
+					b.line->flags &= ~LINE_WRAPPED;
+				}
 				break;
 			}
-			i = pos.y1 * pitch.a;
-			len = linelen(src + i, dim.x1);
-
-			l1 = ring_data(&tty->hist, pos.y1);
+			a.y++;
+			a.line = lineheader(a.ring, a.y);
+			len = linelen(a.line->cells, a.cols);
 		}
-		if (!pos.x2) {
-			absi++;
-			memi = absi % tty->hist.max;
-			bufi = (memi + 1) % tty->hist.max;
-
-			l2 = (Line *)tty->hist.data + bufi;
+		if (!b.x1) {
+			b.y++;
+			b.line = line_alloc(b.ring,
+			                    MIN(b.y, tty->histsize),
+			                    ~0);
 		}
 
-		if (len - pos.x1 < dim.x2 - pos.x2) {
-			memcpy(dst + memi * pitch.b + pos.x2,
-			       src + pos.y1 * pitch.a + pos.x1,
-			       (len - pos.x1) * sizeof(*dst));
-			l2->tmp = 0;
-		}
-	}
+		const int lim_a = len;
+		const int lim_b = b.cols;
+		const int rem_a = lim_a - a.x1;
+		const int rem_b = lim_b - b.x1;
+		const int dx = MIN(rem_a, rem_b);
+
+#if 1
+#define PRINT_REWRAP 1
+		printf("Wrapping: <%c> { %03d, %03d }:%03d (%03d/%03d) to "
+		                 "<%c> { %03d, %03d } (---/%03d) ... ",
+		       !!a.line->flags ? '*' : ' ',
+		       a.x1, a.y, dx, lim_a, a.cols,
+		       !!b.line->flags ? '*' : ' ',
+		       b.x1, b.y, lim_b);
 #endif
-	return;
+
+		if (rem_a < rem_b) {
+			if (a.line->flags & LINE_WRAPPED) {
+				ASSERT(lim_a == a.cols);
+				b.line->flags |= LINE_WRAPPED;
+				b.x2 = (b.x2 + dx) % lim_b;
+				a.x2 = 0;
+			} else {
+				b.line->flags &= ~LINE_WRAPPED;
+				a.x2 = b.x2 = 0;
+			}
+		} else if (rem_a == rem_b) {
+			b.line->flags &= ~LINE_WRAPPED;
+			a.x2 = b.x2 = 0;
+		} else {
+			b.line->flags |= LINE_WRAPPED;
+			a.x2 += dx;
+			b.x2 = 0;
+		}
+
+		memcpy(b.line->cells + b.x1,
+		       a.line->cells + a.x1,
+		       dx * sizeof(*b.line->cells));
+
+#ifdef PRINT_REWRAP
+		printf("Done: <%c|%c> [ %03d, %03d ] -> [ %03d, %03d ]\n",
+		       !!a.line->flags ? '*' : ' ',
+		       !!b.line->flags ? '*' : ' ',
+		       a.x1, b.x1, a.x2, b.x2);
+#endif
+
+		a.x1 = a.x2;
+		b.x1 = b.x2;
+	}
+
+	return b.ring;
 }
 
 Cell *
@@ -238,7 +233,8 @@ stream_write(TTY *tty, const Cell *templ)
 	int offset = tty->pos.y * tty->cols + tty->pos.x;
 
 	if (RING_EMPTY(tty->ring)) {
-		line_alloc(tty, 0, INIT_IFOLD|INIT_IFNEW);
+		line_alloc(tty->ring, 0, INIT_IFOLD|INIT_IFNEW);
+		screen_reset(tty);
 	}
 
 	switch (templ->ucs4) {
@@ -294,7 +290,8 @@ put_glyph(TTY *tty, const Cell *templ)
 	if (pos.y2 > pos.y1) {
 		Line *tmp = line;
 		line->flags |= LINE_WRAPPED;
-		line = line_alloc(tty, pos.y2, INIT_IFOLD|INIT_IFNEW);
+		line = line_alloc(tty->ring, pos.y2, INIT_IFOLD|INIT_IFNEW);
+		screen_reset(tty);
 		ASSERT(tmp->flags & LINE_WRAPPED);
 		tmp->next = line;
 	}
@@ -330,9 +327,9 @@ line_push(Ring *ring)
 }
 
 Line *
-line_alloc(TTY *tty, int n, uint8 opt)
+line_alloc(Ring *ring, int n, uint8 opt)
 {
-	Ring *ring = tty->ring;
+	ASSERT(ring);
 	Line *line = NULL;
 
 	if (n >= 0 && n < ring->count) {
@@ -345,7 +342,6 @@ line_alloc(TTY *tty, int n, uint8 opt)
 		if (opt & INIT_IFNEW) {
 			line_init(ring, line, 0);
 		}
-		screen_reset(tty);
 	}
 
 	return line;
@@ -382,7 +378,8 @@ linelen(Cell *cells, uint lim)
 void
 put_linefeed(TTY *tty)
 {
-	if (line_alloc(tty, tty->pos.y + 1, INIT_IFNEW)) {
+	if (line_alloc(tty->ring, tty->pos.y + 1, INIT_IFNEW)) {
+		screen_reset(tty);
 		cmd_set_cursor_x(tty, 0);
 		cmd_move_cursor_y(tty, 1);
 	}
@@ -518,11 +515,11 @@ dbg_dump_history(TTY *tty)
 	for (int y = 0; y < tty->ring->count; n++, y++) {
 		Line *line = lineheader(tty->ring, y);
 
-		int idx = ringindex(tty->ring, y);
-		int off = ringoffset(tty->ring, y);
+		size_t off = (uchar *)line - tty->ring->data;
+		size_t idx = off / tty->ring->pitch;
 		int len = linelen(line->cells, tty->cols);
 
-		printf("[%03d|%03d] (%03d) $%-6d 0x%.2x %c |",
+		printf("[%03zu|%03d] (%03d) $%-6zu 0x%.2x %c |",
 		       idx, y, len, off, line->flags,
 		       (y == tty->top) ? '>' :
 		       ((y == tty->bot) ? '<' : ' '));

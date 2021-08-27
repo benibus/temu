@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <wchar.h>
 
 typedef long long llong;
 typedef long double ldouble;
@@ -24,6 +25,7 @@ typedef uint8_t   uint8;
 typedef uint16_t  uint16;
 typedef uint32_t  uint32;
 typedef uint64_t  uint64;
+typedef wchar_t   wchar;
 typedef int8_t    i8;
 typedef int16_t   i16;
 typedef int32_t   i32;
