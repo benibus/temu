@@ -307,6 +307,7 @@ tty_write_raw(TTY *tty, const uchar *str, size_t len, uint8 type)
 		arr_clear(input_);
 	}
 #endif
+	cmd_update_cursor(tty);
 
 	return i;
 }

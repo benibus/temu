@@ -332,17 +332,32 @@ render_frame(Client *client)
 			glyphs[x].background = &colors[color.bg];
 		}
 
-		// draw cursor
-		if (!tty->cursor.hide && y == tty->pos.y) {
-			int cx = tty->pos.x;
-			glyphs[cx].ucs4 = DEFAULT(glyphs[cx].ucs4, L' ');
-			glyphs[cx].font = DEFAULT(glyphs[cx].font, font);
-			glyphs[cx].foreground = &colors[COLOR_BG];
-			glyphs[cx].background = &colors[COLOR_FG];
-			x += (cx == x);
-		}
-
 		draw_text_utf8(rc, glyphs, x, 0, i * tty->rowpx);
+	}
+
+	// draw cursor last
+	if (!tty->cursor.hide) {
+		int sx = tty->pos.x;
+		int sy = tty->pos.y - (tty->top + tty->scroll);
+		if (sy < tty->rows) {
+			int width = (tty->cursor.style != CursorStyleBlock) ? 2 : tty->colpx;
+			draw_rect_solid(rc, &colors[tty->cursor.cell.color.bg],
+			                    sx * tty->colpx,
+			                    sy * tty->rowpx,
+			                    width,
+			                    tty->rowpx);
+			GlyphRender glyph = {
+				.ucs4 = tty->cursor.cell.ucs4,
+				.foreground = &colors[(tty->cursor.style != 2)
+				                  ? tty->cursor.cell.color.bg
+				                  : tty->cursor.cell.color.fg],
+				.background = NULL,
+				.font = (tty->cursor.cell.attr & ATTR_BOLD)
+				      ? fonts[3]
+				      : fonts[0]
+			};
+			draw_text_utf8(rc, &glyph, 1, sx * tty->colpx, sy * tty->rowpx);
+		}
 	}
 
 	win_render_frame(win);

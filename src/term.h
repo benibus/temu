@@ -24,9 +24,9 @@
 
 enum {
 	CursorStyleDefault,
-	CursorStyleBar,
-	CursorStyleBlock,
-	CursorStyleUnderscore,
+	CursorStyleBlock      = 2,
+	CursorStyleUnderscore = 4,
+	CursorStyleBar        = 6
 };
 
 enum {
@@ -88,7 +88,8 @@ typedef struct TTY_ {
 	struct { int x, y; } pos;
 
 	struct {
-		uint32 ucs4;
+		Cell cell;
+		/* uint32 ucs4; */
 		uint8 style;
 		bool wrap;
 		bool hide;
@@ -133,6 +134,7 @@ void cmd_move_cursor_x(TTY *, int);
 void cmd_move_cursor_y(TTY *, int);
 void cmd_set_cursor_x(TTY *, uint);
 void cmd_set_cursor_y(TTY *, uint);
+void cmd_update_cursor(TTY *);
 
 size_t key_get_sequence(uint, uint, char *, size_t);
 

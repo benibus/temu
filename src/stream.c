@@ -618,6 +618,18 @@ cmd_set_cursor_y(TTY *tty, uint y)
 }
 
 void
+cmd_update_cursor(TTY *tty)
+{
+	Line *line = lineheader(tty->ring, tty->pos.y);
+	Cell *cell = &tty->cursor.cell;
+
+	*cell = line->cells[tty->pos.x];
+	cell->ucs4 = DEFAULT(tty->cursor.cell.ucs4, ' ');
+	cell->color.fg = COLOR_BG;
+	cell->color.bg = COLOR_FG;
+}
+
+void
 dbg_print_tty(const TTY *tty, uint flags)
 {
 #define out_(lab,fmt,...) fprintf(stderr, "%*s%s: "fmt"\n", n * 4, "", lab, __VA_ARGS__)
@@ -636,9 +648,22 @@ dbg_print_tty(const TTY *tty, uint flags)
 			out_("scroll", "%d", tty->scroll);
 			out_("colpx/rowpx", "[ %d, %d ]", tty->colpx, tty->rowpx);
 			out_("histsize", "%d", tty->histsize);
-			out_("cursor_style", "%u", tty->cursor.style);
-			out_("cursor_wrap", "%d", tty->cursor.wrap);
-			out_("cursor_hide", "%d", tty->cursor.hide);
+			n--;
+		}
+	}
+	if (flags) {
+		out_("cursor", "%s", "");
+		{
+			n++;
+			out_("ucs4", "%u", tty->cursor.cell.ucs4);
+			out_("attr", "%u", tty->cursor.cell.attr);
+			out_("type", "%u", tty->cursor.cell.type);
+			out_("color", "[ %u, %u, %u ]", tty->cursor.cell.color.fg,
+			                                tty->cursor.cell.color.bg,
+			                                tty->cursor.cell.color.hl);
+			out_("style", "%u", tty->cursor.style);
+			out_("wrap", "%d", tty->cursor.wrap);
+			out_("hide", "%d", tty->cursor.hide);
 			n--;
 		}
 	}
