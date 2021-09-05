@@ -1,6 +1,33 @@
 #ifndef UTILS_TYPES_H__
 #define UTILS_TYPES_H__
 
+#if (__STDC_VERSION__ < 199901L)
+  #define STD_C89 1
+  #define STD_C99 0
+  #define STD_C11 0
+  #define STD_C18 0
+  #define STDC 1989L
+#elif (__STDC_VERSION__ < 201112L)
+  #define STD_C89 1
+  #define STD_C99 1
+  #define STD_C11 0
+  #define STD_C18 0
+  #define STDC 1999L
+#elif (__STDC_VERSION__ < 201710L)
+  #define STD_C89 1
+  #define STD_C99 1
+  #define STD_C11 1
+  #define STD_C18 0
+  #define STDC 2011L
+#else
+  #define STD_C89 1
+  #define STD_C99 1
+  #define STD_C11 1
+  #define STD_C18 1
+  #define STDC 2018L
+#endif
+
+#include <assert.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -41,17 +68,10 @@ typedef struct {
 	uint len;
 } String;
 
-#if (__STDC_VERSION__ >= 201112L)
-#include <assert.h>
+#if STD_C11
+  #define vecx(...) { .arr = { __VA_ARGS__ } }
 
-#define VLEN(v) (sizeof((v).arr)/sizeof((v).arr[0]))
-
-#define vecx(...) { .arr = { __VA_ARGS__ } }
-#define vec2(x_,y_)       vecx((x_), (y_))
-#define vec3(x_,y_,z_)    vecx((x_), (y_), (z_))
-#define vec4(x_,y_,z_,w_) vecx((x_), (y_), (z_), (w_))
-
-#define Vec2(T_,x,y)     \
+  #define V2(T_,x,y)     \
   union {                \
     T_ arr[2];           \
     struct {             \
@@ -59,8 +79,7 @@ typedef struct {
       T_ y;              \
     };                   \
   }
-
-#define Vec3(T_,x,y,z)   \
+  #define V3(T_,x,y,z)   \
   union {                \
     T_ arr[3];           \
     struct {             \
@@ -69,8 +88,7 @@ typedef struct {
       T_ z;              \
     };                   \
   }
-
-#define Vec4(T_,x,y,z,w) \
+  #define V4(T_,x,y,z,w) \
   union {                \
     T_ arr[4];           \
     struct {             \
@@ -80,11 +98,36 @@ typedef struct {
       T_ w;              \
     };                   \
   }
+#elif STD_C99
+  #define vecx(...) { __VA_ARGS__ }
 
-#define V2(...) Vec2(__VA_ARGS__)
-#define V3(...) Vec3(__VA_ARGS__)
-#define V4(...) Vec4(__VA_ARGS__)
+  #define V2(T_,x,y)     \
+  struct {               \
+    T_ x;                \
+    T_ y;                \
+  }
+  #define V3(T_,x,y,z)   \
+  struct {               \
+    T_ x;                \
+    T_ y;                \
+    T_ z;                \
+  }
+  #define V4(T_,x,y,z,w) \
+  struct {               \
+    T_ x;                \
+    T_ y;                \
+    T_ z;                \
+    T_ w;                \
+  }
+#else
+  #error "Build requires C99 or later"
 #endif
+
+#define VLEN(v) (sizeof(v))
+
+#define vec2(x_,y_)       vecx((x_), (y_))
+#define vec3(x_,y_,z_)    vecx((x_), (y_), (z_))
+#define vec4(x_,y_,z_,w_) vecx((x_), (y_), (z_), (w_))
 
 #endif
 
