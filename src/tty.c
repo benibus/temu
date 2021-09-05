@@ -13,7 +13,7 @@
 #include "utf8.h"
 
 #define VTE_FUNC_TABLE \
-    X_(NONE)    \
+    X_(None)    \
     X_(NEL)     \
     X_(HTS)     \
     X_(RI)      \
@@ -108,21 +108,22 @@
     X_(DECSLE)  \
     X_(DECSERA) \
     X_(DECRQLP) \
+    X_(DECSCUSR) \
     X_(OSC)     \
-    X_(OTHER)
+    X_(Other)
 
 enum {
-	#define X_(id) VTE_##id,
+	#define X_(id) Vte##id,
 	VTE_FUNC_TABLE
 	#undef X_
-	VTE_COUNT
+	VteCount
 };
 
 static struct {
 	const char *name;
 	void (*handler)(TTY *, Seq *, uint);
-} vtfuncs[VTE_COUNT] = {
-	#define X_(id) [VTE_##id] = { .name = #id },
+} vtfuncs[VteCount] = {
+	#define X_(id) [Vte##id] = { .name = #id },
 	VTE_FUNC_TABLE
 	#undef X_
 };
@@ -137,37 +138,35 @@ typedef struct SeqRes_ {
 #define RES(state_,func_) ((SeqRes){ .state = (state_), .func = (func_) })
 
 enum {
-	CTRL_NUL,
-	CTRL_BEL = '\a',
-	CTRL_BS  = '\b',
-	CTRL_HT  = '\t',
-	CTRL_LF  = '\n',
-	CTRL_VT  = '\v',
-	CTRL_FF  = '\f',
-	CTRL_CR  = '\r',
-	CTRL_SO  = 0x0e,
-	CTRL_SI  = 0x0f,
-	CTRL_CAN = 0x18,
-	CTRL_SUB = 0x1a,
-	CTRL_ESC = 0x1b,
-	CTRL_NEL = 0x85,
-	CTRL_HTS = 0x88,
-	CTRL_DCS = 0x90,
-	CTRL_SOS = 0x98,
-	CTRL_ST  = 0x9c,
-	CTRL_OSC = 0x9d,
-	CTRL_PM  = 0x9e,
-	CTRL_APC = 0x9f
+	CtrlNUL,
+	CtrlBEL = '\a',
+	CtrlBS  = '\b',
+	CtrlHT  = '\t',
+	CtrlLF  = '\n',
+	CtrlVT  = '\v',
+	CtrlFF  = '\f',
+	CtrlCR  = '\r',
+	CtrlSO  = 0x0e,
+	CtrlSI  = 0x0f,
+	CtrlCAN = 0x18,
+	CtrlSUB = 0x1a,
+	CtrlESC = 0x1b,
+	CtrlNEL = 0x85,
+	CtrlHTS = 0x88,
+	CtrlDCS = 0x90,
+	CtrlSOS = 0x98,
+	CtrlST  = 0x9c,
+	CtrlOSC = 0x9d,
+	CtrlPM  = 0x9e,
+	CtrlAPC = 0x9f
 };
 
-enum {
-	STATE_DEFAULT,
-	STATE_ESC = (1 << 0),
-	STATE_CSI = (1 << 1),
-	STATE_DCS = (1 << 2),
-	STATE_OSC = (1 << 3),
-	STATE_MAX = (1 << 4)
-};
+#define STATE_DEFAULT (0)
+#define STATE_ESC     (1 << 0)
+#define STATE_CSI     (1 << 1)
+#define STATE_DCS     (1 << 2)
+#define STATE_OSC     (1 << 3)
+#define STATE_MAX     (1 << 4)
 
 static const char *statenames[STATE_MAX] = {
 	[STATE_DEFAULT] = "---",
@@ -198,6 +197,7 @@ static void vte_ed(TTY *, Seq *, uint);
 static void vte_el(TTY *, Seq *, uint);
 static void vte_sgr(TTY *, Seq *, uint);
 static void vte_decset(TTY *, Seq *, uint);
+static void vte_decscusr(TTY *, Seq *, uint);
 static void vte_osc(TTY *, Seq *, uint);
 
 static uchar *input_;
@@ -233,20 +233,21 @@ tty_init(TTY *tty, struct TTYConfig config)
 	seq_reset_template(&tty->seq);
 
 #define SET_FUNC(id,fn) vtfuncs[(id)].handler = (fn)
-	SET_FUNC(VTE_RI,  vte_ri);
-	SET_FUNC(VTE_SGR, vte_sgr);
-	SET_FUNC(VTE_ICH, vte_ich);
-	SET_FUNC(VTE_CUU, vte_cu);
-	SET_FUNC(VTE_CUD, vte_cu);
-	SET_FUNC(VTE_CUF, vte_cu);
-	SET_FUNC(VTE_CUB, vte_cu);
-	SET_FUNC(VTE_CUP, vte_cu);
-	SET_FUNC(VTE_ED,  vte_ed);
-	SET_FUNC(VTE_EL,  vte_el);
-	SET_FUNC(VTE_DCH, vte_dch);
-	SET_FUNC(VTE_OSC, vte_osc);
-	SET_FUNC(VTE_DECSET, vte_decset);
-	SET_FUNC(VTE_DECRST, vte_decset);
+	SET_FUNC(VteRI, vte_ri);
+	SET_FUNC(VteSGR, vte_sgr);
+	SET_FUNC(VteICH, vte_ich);
+	SET_FUNC(VteCUU, vte_cu);
+	SET_FUNC(VteCUD, vte_cu);
+	SET_FUNC(VteCUF, vte_cu);
+	SET_FUNC(VteCUB, vte_cu);
+	SET_FUNC(VteCUP, vte_cu);
+	SET_FUNC(VteED, vte_ed);
+	SET_FUNC(VteEL, vte_el);
+	SET_FUNC(VteDCH, vte_dch);
+	SET_FUNC(VteOSC, vte_osc);
+	SET_FUNC(VteDECSET, vte_decset);
+	SET_FUNC(VteDECRST, vte_decset);
+	SET_FUNC(VteDECSCUSR, vte_decscusr);
 #undef SET_FUNC
 
 	tty->ref = config.ref;
@@ -367,7 +368,7 @@ seq_reset_template(Seq *seq)
 bool
 seq_dispatch(TTY *tty, Seq *seq, uint id)
 {
-	ASSERT(id < VTE_COUNT);
+	ASSERT(id < VteCount);
 	seq_print_func(seq, id);
 
 	if (vtfuncs[id].handler) {
@@ -389,7 +390,7 @@ parse_token(TTY *tty, Seq *seq, uint32 ucs4)
 	seq->templ.width = 0;
 	seq->templ.type  = 0;
 
-	if (ucs4 == CTRL_ESC) {
+	if (ucs4 == CtrlESC) {
 		seq->state |= STATE_ESC;
 		return true;
 	}
@@ -423,7 +424,7 @@ dispatch:
 		seq->state = 0;
 		seq->templ.ucs4  = ucs4;
 		seq->templ.width = 1;
-		seq->templ.type  = CELLTYPE_NORMAL;
+		seq->templ.type  = CellTypeNormal;
 	} else if (res.state != seq->state) {
 		seq->state = res.state;
 		seq->tokens[0] = 0;
@@ -502,11 +503,11 @@ seq_parse_dcs(Seq *seq, uint32 ucs4)
 		break;
 	}
 
-	if (ucs4 == CTRL_ST || ucs4 == CTRL_BEL) {
+	if (ucs4 == CtrlST || ucs4 == CtrlBEL) {
 		switch (seq->tokens[0]) {
-		case '|': return RES(0, VTE_DECUDK);
-		case '$': return RES(0, VTE_DECRQSS);
-		case '+': return RES(0, VTE_OTHER);
+		case '|': return RES(0, VteDECUDK);
+		case '$': return RES(0, VteDECRQSS);
+		case '+': return RES(0, VteOther);
 		}
 		return RES(0, 0);
 	}
@@ -532,8 +533,8 @@ seq_parse_osc(Seq *seq, uint32 ucs4)
 		}
 	}
 
-	if (ucs4 == CTRL_ST || ucs4 == CTRL_BEL) {
-		return RES(0, VTE_OSC);
+	if (ucs4 == CtrlST || ucs4 == CtrlBEL) {
+		return RES(0, VteOSC);
 	}
 	arr_push(seq->args, ucs4);
 
@@ -546,18 +547,18 @@ seq_parse_esc(Seq *seq, uint32 ucs4, uint32 *ret)
 	uint32 conv = 0;
 
 	switch (ucs4) {
-		case CTRL_CAN:
-		case CTRL_SUB:
+		case CtrlCAN:
+		case CtrlSUB:
 			break;
 		case '[': return RES(STATE_CSI, 0);
 		case ']': return RES(STATE_OSC, 0);
-		case 'E': return RES(0, VTE_NEL);
-		case 'H': return RES(0, VTE_HTS);
-		case 'M': return RES(0, VTE_RI);
+		case 'E': return RES(0, VteNEL);
+		case 'H': return RES(0, VteHTS);
+		case 'M': return RES(0, VteRI);
 		case 'P': return RES(STATE_DCS, 0);
 
-		case 'X':  conv = CTRL_SOS; break;
-		case '\\': conv = CTRL_ST;  break;
+		case 'X':  conv = CtrlSOS; break;
+		case '\\': conv = CtrlST;  break;
 	}
 
 	if (conv) {
@@ -586,86 +587,92 @@ seq_parse_csi(Seq *seq, uint32 ucs4)
 		case '"':
 		case '\'':
 		case '$':
+		case ' ':
 		case '>': return RES(seq->state, 0);
 
-		case '@': return RES(0, VTE_ICH);
-		case 'A': return RES(0, VTE_CUU);
-		case 'B': return RES(0, VTE_CUD);
-		case 'C': return RES(0, VTE_CUF);
-		case 'D': return RES(0, VTE_CUB);
-		case 'E': return RES(0, VTE_CNL);
-		case 'F': return RES(0, VTE_CPL);
-		case 'G': return RES(0, VTE_CHA);
-		case 'H': return RES(0, VTE_CUP);
-		case 'I': return RES(0, VTE_CHT);
-		case 'J': return RES(0, VTE_ED);
-		case 'K': return RES(0, VTE_EL);
-		case 'L': return RES(0, VTE_IL);
-		case 'M': return RES(0, VTE_DL);
-		case 'P': return RES(0, VTE_DCH);
-		case 'S': return RES(0, VTE_SU);
-		case 'T': return RES(0, VTE_SD);
-		case 'X': return RES(0, VTE_ECH);
-		case 'Z': return RES(0, VTE_CBT);
-		case '`': return RES(0, VTE_HPA);
-		case 'b': return RES(0, VTE_REP);
-		case 'd': return RES(0, VTE_VPA);
-		case 'f': return RES(0, VTE_HVP);
-		case 'g': return RES(0, VTE_TBC);
-		case 'h': return RES(0, VTE_SM);
-		case 'i': return RES(0, VTE_MC);
-		case 'l': return RES(0, VTE_RM);
-		case 'm': return RES(0, VTE_SGR);
-		case 'r': return RES(0, VTE_DECSTBM);
+		case '@': return RES(0, VteICH);
+		case 'A': return RES(0, VteCUU);
+		case 'B': return RES(0, VteCUD);
+		case 'C': return RES(0, VteCUF);
+		case 'D': return RES(0, VteCUB);
+		case 'E': return RES(0, VteCNL);
+		case 'F': return RES(0, VteCPL);
+		case 'G': return RES(0, VteCHA);
+		case 'H': return RES(0, VteCUP);
+		case 'I': return RES(0, VteCHT);
+		case 'J': return RES(0, VteED);
+		case 'K': return RES(0, VteEL);
+		case 'L': return RES(0, VteIL);
+		case 'M': return RES(0, VteDL);
+		case 'P': return RES(0, VteDCH);
+		case 'S': return RES(0, VteSU);
+		case 'T': return RES(0, VteSD);
+		case 'X': return RES(0, VteECH);
+		case 'Z': return RES(0, VteCBT);
+		case '`': return RES(0, VteHPA);
+		case 'b': return RES(0, VteREP);
+		case 'd': return RES(0, VteVPA);
+		case 'f': return RES(0, VteHVP);
+		case 'g': return RES(0, VteTBC);
+		case 'h': return RES(0, VteSM);
+		case 'i': return RES(0, VteMC);
+		case 'l': return RES(0, VteRM);
+		case 'm': return RES(0, VteSGR);
+		case 'r': return RES(0, VteDECSTBM);
 		case 'c':
 		case 's':
 		case 't':
-		case 'x': return RES(0, VTE_OTHER);
+		case 'x': return RES(0, VteOther);
 		}
 		break;
 	case '?':
 		switch (ucs4) {
-		case 'J': return RES(0, VTE_DECSED);
-		case 'K': return RES(0, VTE_DECSEL);
-		case 'h': return RES(0, VTE_DECSET);
-		case 'i': return RES(0, VTE_DECMC);
-		case 'l': return RES(0, VTE_DECRST);
-		case 'n': return RES(0, VTE_DECDSR);
+		case 'J': return RES(0, VteDECSED);
+		case 'K': return RES(0, VteDECSEL);
+		case 'h': return RES(0, VteDECSET);
+		case 'i': return RES(0, VteDECMC);
+		case 'l': return RES(0, VteDECRST);
+		case 'n': return RES(0, VteDECDSR);
 		case 'q':
 		case 'r':
-		case 's': return RES(0, VTE_OTHER);
+		case 's': return RES(0, VteOther);
 		}
 		break;
 	case '!':
 		switch (ucs4) {
-		case 'p': return RES(0, VTE_DECSTR);
+		case 'p': return RES(0, VteDECSTR);
 		}
 		break;
 	case '"':
 		switch (ucs4) {
-		case 'p': return RES(0, VTE_DECSCL);
-		case 'q': return RES(0, VTE_OTHER);
+		case 'p': return RES(0, VteDECSCL);
+		case 'q': return RES(0, VteOther);
 		}
 		break;
 	case '\'':
 		switch (ucs4) {
-		case 'w': return RES(0, VTE_DECEFR);
-		case 'z': return RES(0, VTE_DECELR);
-		case '{': return RES(0, VTE_DECSLE);
-		case '|': return RES(0, VTE_DECRQLP);
+		case 'w': return RES(0, VteDECEFR);
+		case 'z': return RES(0, VteDECELR);
+		case '{': return RES(0, VteDECSLE);
+		case '|': return RES(0, VteDECRQLP);
 		}
 		break;
 	case '$':
 		switch (ucs4) {
-		case 't': return RES(0, VTE_DECCARA);
-		case 'v': return RES(0, VTE_DECCRA);
-		case 'x': return RES(0, VTE_DECFRA);
-		case 'z': return RES(0, VTE_DECERA);
+		case 't': return RES(0, VteDECCARA);
+		case 'v': return RES(0, VteDECCRA);
+		case 'x': return RES(0, VteDECFRA);
+		case 'z': return RES(0, VteDECERA);
+		}
+		break;
+	case ' ':
+		switch (ucs4) {
+		case 'q': return RES(0, VteDECSCUSR);
 		}
 		break;
 	case '>':
 		switch (ucs4) {
-		case 'c': return RES(0, VTE_OTHER);
+		case 'c': return RES(0, VteOther);
 		}
 		break;
 	}
@@ -695,13 +702,23 @@ vte_osc(TTY *tty, Seq *seq, uint id)
 }
 
 void
+vte_decscusr(TTY *tty, Seq *seq, uint id)
+{
+	uint32 o = SEQOPT(seq, 0);
+
+	if (o < 8) {
+		tty->cursor.style = o;
+	}
+}
+
+void
 vte_decset(TTY *tty, Seq *seq, uint id)
 {
 	uint32 o = SEQOPT(seq, 0);
 
 	switch (o) {
 		case 25: {
-			tty->cursor.hide = (id == VTE_DECRST);
+			tty->cursor.hide = (id == VteDECRST);
 			break;
 		}
 	}
@@ -877,19 +894,19 @@ vte_cu(TTY *tty, Seq *seq, uint id)
 	uint32 o[2] = { SEQOPT(seq, 0), SEQOPT(seq, 1) };
 
 	switch (id) {
-	case VTE_CUU:
+	case VteCUU:
 		cmd_move_cursor_y(tty, -DEFAULT(o[0], 1));
 		break;
-	case VTE_CUD:
+	case VteCUD:
 		cmd_move_cursor_y(tty, +DEFAULT(o[0], 1));
 		break;
-	case VTE_CUF:
+	case VteCUF:
 		cmd_move_cursor_x(tty, +DEFAULT(o[0], 1));
 		break;
-	case VTE_CUB:
+	case VteCUB:
 		cmd_move_cursor_x(tty, -DEFAULT(o[0], 1));
 		break;
-	case VTE_CUP:
+	case VteCUP:
 		cmd_set_cursor_x(tty, o[1]);
 		cmd_set_cursor_y(tty, o[0]);
 		break;
@@ -916,7 +933,7 @@ vte_ri(TTY *tty, Seq *seq, uint id)
 void
 seq_print_func(Seq *seq, uint id)
 {
-#if 0
+#if 1
 	fprintf(stderr, "\033[01;33m"
 	                "VtCode("
 	                "\033[0m%02u"

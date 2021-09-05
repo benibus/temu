@@ -6,35 +6,37 @@
 #define INPUT_CHAR 1
 #define INPUT_KEY  2
 
+#define ATTR_NONE      (0)
+#define ATTR_BOLD      (1 << 0)
+#define ATTR_UNDERLINE (1 << 1)
+#define ATTR_BLINK     (1 << 2)
+#define ATTR_ITALIC    (1 << 3)
+#define ATTR_INVERT    (1 << 4)
+#define ATTR_INVISIBLE (1 << 5)
+#define ATTR_MAX       (1 << 6)
+#define ATTR_MASK      (ATTR_MAX-1)
+
+#define CURSOR_DEFAULT  (0)
+#define CURSOR_WRAPNEXT (1 << 0)
+#define CURSOR_HIDDEN   (1 << 1)
+#define CURSOR_INVERT   (1 << 2)
+#define CURSOR_BLINKING (1 << 3)
+
 enum {
-	DESC_NONE,
-	DESC_DUMMY_TAB  = (1 << 0),
-	DESC_DUMMY_WIDE = (1 << 1),
-	DESC_NEWLINE    = (1 << 2),
-	DESC_DIRTY      = (1 << 3),
-	DESC_MAX        = (1 << 4)
+	CursorStyleDefault,
+	CursorStyleBar,
+	CursorStyleBlock,
+	CursorStyleUnderscore,
 };
 
 enum {
-	ATTR_NONE,
-	ATTR_BOLD       = (1 << 0),
-	ATTR_UNDERLINE  = (1 << 1),
-	ATTR_BLINK      = (1 << 2),
-	ATTR_ITALIC     = (1 << 3),
-	ATTR_INVERT     = (1 << 4),
-	ATTR_INVISIBLE  = (1 << 5),
-	ATTR_MAX        = (1 << 6)
-};
-
-#define ATTR_MASK (ATTR_MAX - 1)
-
-enum {
-	CELLTYPE_BLANK,
-	CELLTYPE_NORMAL,
-	CELLTYPE_COMPLEX,
-	CELLTYPE_DUMMY_TAB,
-	CELLTYPE_DUMMY_WIDE,
-	CELLTYPE_COUNT
+	CellTypeBlank,
+	CellTypeNormal,
+	CellTypeComplex,
+	CellTypeTab,
+	CellTypeDummyTab,
+	CellTypeDummyWide,
+	CellTypeCount
 };
 
 typedef struct {
@@ -44,7 +46,11 @@ typedef struct {
 } ColorSet;
 
 typedef struct {
+#if 1
+	wchar_t ucs4;   // UCS4 character code
+#else
 	uint32 ucs4;    // UCS4 character code
+#endif
 	ColorSet color; // color context
 	uint16 attr;    // visual attribute flags
 	uint8 type;     // cell type ID
@@ -82,6 +88,8 @@ typedef struct TTY_ {
 	struct { int x, y; } pos;
 
 	struct {
+		uint32 ucs4;
+		uint8 style;
 		bool wrap;
 		bool hide;
 	} cursor;
@@ -129,7 +137,8 @@ void cmd_set_cursor_y(TTY *, uint);
 size_t key_get_sequence(uint, uint, char *, size_t);
 
 void dummy__(TTY *);
-void dbg_dump_history(TTY *);
+void dbg_print_history(TTY *);
+void dbg_print_tty(const TTY *, uint);
 
 #define COLOR_DARK_BLACK    0x00
 #define COLOR_DARK_RED      0x01

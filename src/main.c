@@ -361,10 +361,10 @@ event_key_press(void *ref, int key, int mod, char *buf, int len)
 	if (mod == MOD_ALT) {
 		switch (key) {
 		case KEY_F9:
-			dbg_dump_history(tty);
+			dbg_print_history(tty);
 			return;
 		case KEY_F10:
-			toggle_render = !toggle_render;
+			dbg_print_tty(tty, ~0);
 			return;
 		case 'u':
 			tty_scroll(tty, -client->scrollinc);

@@ -6,14 +6,11 @@
 #include "types.h"
 #include "keymap.h"
 
-enum {
-	WINATTR_NONE,
-	WINATTR_FLOATING  = (1 << 0),
-	WINATTR_RESIZABLE = (1 << 1),
-	WINATTR_OPENGL    = (1 << 2),
-	WINATTR_DEFAULT   = (1 << 3),
-	WINATTR_MAX
-};
+#define WINATTR_NONE      (0)
+#define WINATTR_FLOATING  (1 << 0)
+#define WINATTR_RESIZABLE (1 << 1)
+#define WINATTR_OPENGL    (1 << 2)
+#define WINATTR_DEFAULT   (1 << 3)
 
 typedef struct {
 	void *ref;
@@ -34,13 +31,11 @@ typedef struct {
 	} events;
 } Win;
 
-enum {
-	STYLE_REGULAR,
-	STYLE_ITALIC  = (1 << 0),
-	STYLE_OBLIQUE = (1 << 1),
-	STYLE_BOLD    = (1 << 2),
-	STYLE_MAX     = (1 << 3)
-};
+#define STYLE_REGULAR (0)
+#define STYLE_ITALIC  (1 << 0)
+#define STYLE_OBLIQUE (1 << 1)
+#define STYLE_BOLD    (1 << 2)
+#define STYLE_MAX     (1 << 3)
 
 typedef struct FontFace_ FontFace;
 
@@ -75,12 +70,10 @@ typedef struct {
 	uint32 flags;
 } GlyphRender;
 
-enum {
-	RC_MODE_DEFAULT,
-	RC_MODE_FILL =   (1 << 0),
-	RC_MODE_INVERT = (1 << 1),
-	RC_MODE_MAX  =   (1 << 2)
-};
+#define RC_MODE_DEFAULT (0)
+#define RC_MODE_FILL    (1 << 0)
+#define RC_MODE_INVERT  (1 << 1)
+#define RC_MODE_MAX     (1 << 2)
 
 typedef struct {
 	Win *win;

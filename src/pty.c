@@ -25,6 +25,8 @@
 
 #define WRITE_LIMIT 1024
 
+static void sys_sigchld(int);
+
 int
 pty_init(TTY *tty, const char *shell)
 {
@@ -56,6 +58,7 @@ pty_init(TTY *tty, const char *shell)
 			// execute shell
 			setenv("SHELL", cmd, 1);
 
+			// TODO(ben): Move to non-deprecated sigaction API
 			signal(SIGCHLD, SIG_DFL);
 			signal(SIGHUP,  SIG_DFL);
 			signal(SIGINT,  SIG_DFL);
@@ -70,7 +73,7 @@ pty_init(TTY *tty, const char *shell)
 		break;
 	default: // parent process
 		close(pty->sfd);
-		signal(SIGCHLD, SIG_DFL);
+		signal(SIGCHLD, sys_sigchld);
 		break;
 	}
 
@@ -148,7 +151,7 @@ pty_resize(const TTY *tty, int cols, int rows)
 {
 	struct winsize region = {
 		.ws_col = cols,
-		.ws_row = cols,
+		.ws_row = rows,
 		.ws_xpixel = cols * tty->colpx,
 		.ws_ypixel = rows * tty->rowpx
 	};
@@ -156,5 +159,14 @@ pty_resize(const TTY *tty, int cols, int rows)
 	if (ioctl(tty->pty.mfd, TIOCSWINSZ, &region) < 0) {
 		fprintf(stderr, "ERROR: pty_resize() - ioctl() failure\n");
 	}
+}
+
+void
+sys_sigchld(int arg)
+{
+	(void)arg;
+	// TODO(ben): Actually implement this. Right now it just prevents returning an error code
+	// as a result of normal shell termination (via "$ exit")
+	_exit(0);
 }
 
