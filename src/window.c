@@ -523,8 +523,8 @@ x11_wait_sys(Display *dpy, double *timeout)
 int
 x11_translate_key(uint ksym, uint mask, int *id_, int *mod_)
 {
-	int id = KEY_NONE;
-	int mod = MOD_NONE;
+	int id = KeyNone;
+	int mod = ModNone;
 
 	// X11's printable Latin range (keysymdef.h)
 	if ((ksym > 0x01f && ksym < 0x07f) ||
@@ -533,89 +533,89 @@ x11_translate_key(uint ksym, uint mask, int *id_, int *mod_)
 	} else if (ksym & 0x100) {
 #define SETKEY(k1,k2) case (k1): { id = (k2); }; break
 		switch (ksym) {
-		SETKEY(XK_Escape,       KEY_ESCAPE);
-		SETKEY(XK_Return,       KEY_RETURN);
-		SETKEY(XK_Tab,          KEY_TAB);
-		SETKEY(XK_BackSpace,    KEY_BACKSPACE);
-		SETKEY(XK_Insert,       KEY_INSERT);
-		SETKEY(XK_Delete,       KEY_DELETE);
-		SETKEY(XK_Right,        KEY_RIGHT);
-		SETKEY(XK_Left,         KEY_LEFT);
-		SETKEY(XK_Down,         KEY_DOWN);
-		SETKEY(XK_Up,           KEY_UP);
-		SETKEY(XK_Page_Up,      KEY_PAGE_UP);
-		SETKEY(XK_Page_Down,    KEY_PAGE_DOWN);
-		SETKEY(XK_Home,         KEY_HOME);
-		SETKEY(XK_End,          KEY_END);
+		SETKEY(XK_Escape,       KeyEscape);
+		SETKEY(XK_Return,       KeyReturn);
+		SETKEY(XK_Tab,          KeyTab);
+		SETKEY(XK_BackSpace,    KeyBackspace);
+		SETKEY(XK_Insert,       KeyInsert);
+		SETKEY(XK_Delete,       KeyDelete);
+		SETKEY(XK_Right,        KeyRight);
+		SETKEY(XK_Left,         KeyLeft);
+		SETKEY(XK_Down,         KeyDown);
+		SETKEY(XK_Up,           KeyUp);
+		SETKEY(XK_Page_Up,      KeyPageUp);
+		SETKEY(XK_Page_Down,    KeyPageDown);
+		SETKEY(XK_Home,         KeyHome);
+		SETKEY(XK_End,          KeyEnd);
 
-		SETKEY(XK_F1,           KEY_F1);
-		SETKEY(XK_F2,           KEY_F2);
-		SETKEY(XK_F3,           KEY_F3);
-		SETKEY(XK_F4,           KEY_F4);
-		SETKEY(XK_F5,           KEY_F5);
-		SETKEY(XK_F6,           KEY_F6);
-		SETKEY(XK_F7,           KEY_F7);
-		SETKEY(XK_F8,           KEY_F8);
-		SETKEY(XK_F9,           KEY_F9);
-		SETKEY(XK_F10,          KEY_F10);
-		SETKEY(XK_F11,          KEY_F11);
-		SETKEY(XK_F12,          KEY_F12);
-		SETKEY(XK_F13,          KEY_F13);
-		SETKEY(XK_F14,          KEY_F14);
-		SETKEY(XK_F15,          KEY_F15);
-		SETKEY(XK_F16,          KEY_F16);
-		SETKEY(XK_F17,          KEY_F17);
-		SETKEY(XK_F18,          KEY_F18);
-		SETKEY(XK_F19,          KEY_F19);
-		SETKEY(XK_F20,          KEY_F20);
-		SETKEY(XK_F21,          KEY_F21);
-		SETKEY(XK_F22,          KEY_F22);
-		SETKEY(XK_F23,          KEY_F23);
-		SETKEY(XK_F24,          KEY_F24);
-		SETKEY(XK_F25,          KEY_F25);
+		SETKEY(XK_F1,           KeyF1);
+		SETKEY(XK_F2,           KeyF2);
+		SETKEY(XK_F3,           KeyF3);
+		SETKEY(XK_F4,           KeyF4);
+		SETKEY(XK_F5,           KeyF5);
+		SETKEY(XK_F6,           KeyF6);
+		SETKEY(XK_F7,           KeyF7);
+		SETKEY(XK_F8,           KeyF8);
+		SETKEY(XK_F9,           KeyF9);
+		SETKEY(XK_F10,          KeyF10);
+		SETKEY(XK_F11,          KeyF11);
+		SETKEY(XK_F12,          KeyF12);
+		SETKEY(XK_F13,          KeyF13);
+		SETKEY(XK_F14,          KeyF14);
+		SETKEY(XK_F15,          KeyF15);
+		SETKEY(XK_F16,          KeyF16);
+		SETKEY(XK_F17,          KeyF17);
+		SETKEY(XK_F18,          KeyF18);
+		SETKEY(XK_F19,          KeyF19);
+		SETKEY(XK_F20,          KeyF20);
+		SETKEY(XK_F21,          KeyF21);
+		SETKEY(XK_F22,          KeyF22);
+		SETKEY(XK_F23,          KeyF23);
+		SETKEY(XK_F24,          KeyF24);
+		SETKEY(XK_F25,          KeyF25);
 
-		SETKEY(XK_KP_0,         KEY_KP_0);
-		SETKEY(XK_KP_1,         KEY_KP_1);
-		SETKEY(XK_KP_2,         KEY_KP_2);
-		SETKEY(XK_KP_3,         KEY_KP_3);
-		SETKEY(XK_KP_4,         KEY_KP_4);
-		SETKEY(XK_KP_5,         KEY_KP_5);
-		SETKEY(XK_KP_6,         KEY_KP_6);
-		SETKEY(XK_KP_7,         KEY_KP_7);
-		SETKEY(XK_KP_8,         KEY_KP_8);
-		SETKEY(XK_KP_9,         KEY_KP_9);
+		SETKEY(XK_KP_0,         KeyKP0);
+		SETKEY(XK_KP_1,         KeyKP1);
+		SETKEY(XK_KP_2,         KeyKP2);
+		SETKEY(XK_KP_3,         KeyKP3);
+		SETKEY(XK_KP_4,         KeyKP4);
+		SETKEY(XK_KP_5,         KeyKP5);
+		SETKEY(XK_KP_6,         KeyKP6);
+		SETKEY(XK_KP_7,         KeyKP7);
+		SETKEY(XK_KP_8,         KeyKP8);
+		SETKEY(XK_KP_9,         KeyKP9);
 
-		SETKEY(XK_KP_Decimal,   KEY_KP_DECIMAL);
-		SETKEY(XK_KP_Divide,    KEY_KP_DIVIDE);
-		SETKEY(XK_KP_Multiply,  KEY_KP_MULTIPLY);
-		SETKEY(XK_KP_Subtract,  KEY_KP_SUBTRACT);
-		SETKEY(XK_KP_Add,       KEY_KP_ADD);
-		SETKEY(XK_KP_Enter,     KEY_KP_ENTER);
-		SETKEY(XK_KP_Equal,     KEY_KP_EQUAL);
-		SETKEY(XK_KP_Tab,       KEY_KP_TAB);
-		SETKEY(XK_KP_Space,     KEY_KP_SPACE);
-		SETKEY(XK_KP_Insert,    KEY_KP_INSERT);
-		SETKEY(XK_KP_Delete,    KEY_KP_DELETE);
-		SETKEY(XK_KP_Right,     KEY_KP_RIGHT);
-		SETKEY(XK_KP_Left,      KEY_KP_LEFT);
-		SETKEY(XK_KP_Down,      KEY_KP_DOWN);
-		SETKEY(XK_KP_Up,        KEY_KP_UP);
-		SETKEY(XK_KP_Page_Up,   KEY_KP_PAGE_UP);
-		SETKEY(XK_KP_Page_Down, KEY_KP_PAGE_DOWN);
-		SETKEY(XK_KP_Home,      KEY_KP_HOME);
-		SETKEY(XK_KP_End,       KEY_KP_END);
+		SETKEY(XK_KP_Decimal,   KeyKPDecimal);
+		SETKEY(XK_KP_Divide,    KeyKPDivide);
+		SETKEY(XK_KP_Multiply,  KeyKPMultiply);
+		SETKEY(XK_KP_Subtract,  KeyKPSubtract);
+		SETKEY(XK_KP_Add,       KeyKPAdd);
+		SETKEY(XK_KP_Enter,     KeyKPEnter);
+		SETKEY(XK_KP_Equal,     KeyKPEqual);
+		SETKEY(XK_KP_Tab,       KeyKPTab);
+		SETKEY(XK_KP_Space,     KeyKPSpace);
+		SETKEY(XK_KP_Insert,    KeyKPInsert);
+		SETKEY(XK_KP_Delete,    KeyKPDelete);
+		SETKEY(XK_KP_Right,     KeyKPRight);
+		SETKEY(XK_KP_Left,      KeyKPLeft);
+		SETKEY(XK_KP_Down,      KeyKPDown);
+		SETKEY(XK_KP_Up,        KeyKPUp);
+		SETKEY(XK_KP_Page_Up,   KeyKPPageUp);
+		SETKEY(XK_KP_Page_Down, KeyKPPageDown);
+		SETKEY(XK_KP_Home,      KeyKPHome);
+		SETKEY(XK_KP_End,       KeyKPEnd);
 
 		default: goto done;
 		}
 #undef  SETKEY
 
-		mod |= (mask & ShiftMask) ? MOD_SHIFT : 0;
+		mod |= (mask & ShiftMask) ? ModShift : 0;
 	}
 
 done:
 	if (id != ID_NULL) {
-		mod |= (mask & Mod1Mask)    ? MOD_ALT  : 0;
-		mod |= (mask & ControlMask) ? MOD_CTRL : 0;
+		mod |= (mask & Mod1Mask)    ? ModAlt  : 0;
+		mod |= (mask & ControlMask) ? ModCtrl : 0;
 	}
 
 	*id_  = id;
@@ -697,7 +697,7 @@ win_poll_events(WinData *win)
 				buf[k.len] = 0;
 				x11_translate_key(ksym, e->state, &k.id, &k.mod);
 
-				if (win->pub.events.key_press && k.id != KEY_NONE) {
+				if (win->pub.events.key_press && k.id != KeyNone) {
 					win->pub.events.key_press(win->pub.ref,
 					                          k.id, k.mod, buf, k.len);
 				}

@@ -358,12 +358,12 @@ event_key_press(void *ref, int key, int mod, char *buf, int len)
 	int seqlen = 0;
 
 #if 1
-	if (mod == MOD_ALT) {
+	if (mod == ModAlt) {
 		switch (key) {
-		case KEY_F9:
+		case KeyF9:
 			dbg_print_history(tty);
 			return;
-		case KEY_F10:
+		case KeyF10:
 			dbg_print_tty(tty, ~0);
 			return;
 		case 'u':

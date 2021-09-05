@@ -140,24 +140,26 @@ void dummy__(TTY *);
 void dbg_print_history(TTY *);
 void dbg_print_tty(const TTY *, uint);
 
-#define COLOR_DARK_BLACK    0x00
-#define COLOR_DARK_RED      0x01
-#define COLOR_DARK_GREEN    0x02
-#define COLOR_DARK_YELLOW   0x03
-#define COLOR_DARK_BLUE     0x04
-#define COLOR_DARK_MAGENTA  0x05
-#define COLOR_DARK_CYAN     0x06
-#define COLOR_DARK_WHITE    0x07
-#define COLOR_LIGHT_BLACK   0x08
-#define COLOR_LIGHT_RED     0x09
-#define COLOR_LIGHT_GREEN   0x0a
-#define COLOR_LIGHT_YELLOW  0x0b
-#define COLOR_LIGHT_BLUE    0x0c
-#define COLOR_LIGHT_MAGENTA 0x0d
-#define COLOR_LIGHT_CYAN    0x0e
-#define COLOR_LIGHT_WHITE   0x0f
+enum {
+	ColorDarkBlack    = 0x00,
+	ColorDarkRed      = 0x01,
+	ColorDarkGreen    = 0x02,
+	ColorDarkYellow   = 0x03,
+	ColorDarkBlue     = 0x04,
+	ColorDarkMagenta  = 0x05,
+	ColorDarkCyan     = 0x06,
+	ColorDarkWhite    = 0x07,
+	ColorLightBlack   = 0x08,
+	ColorLightRed     = 0x09,
+	ColorLightGreen   = 0x0a,
+	ColorLightYellow  = 0x0b,
+	ColorLightBlue    = 0x0c,
+	ColorLightMagenta = 0x0d,
+	ColorLightCyan    = 0x0e,
+	ColorLightWhite   = 0x0f
+};
 
-#define COLOR_BG COLOR_DARK_BLACK
-#define COLOR_FG COLOR_DARK_WHITE
+#define COLOR_BG ColorDarkBlack
+#define COLOR_FG ColorDarkWhite
 
 #endif

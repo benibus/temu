@@ -21,89 +21,89 @@ typedef struct KeyString {
 	char *suffix;
 } KeyString;
 
-static KeyString keys_normal[NUM_KEY] = {
-	[KEY_UP]           = { { CSI,     CSI"1" }, "A" },
-	[KEY_DOWN]         = { { CSI,     CSI"1" }, "B" },
-	[KEY_RIGHT]        = { { CSI,     CSI"1" }, "C" },
-	[KEY_LEFT]         = { { CSI,     CSI"1" }, "D" },
-	[KEY_END]          = { { CSI,     CSI"1" }, "F" },
-	[KEY_HOME]         = { { CSI,     CSI"1" }, "H" },
-	[KEY_INSERT]       = { { CSI"2",  NULL   }, "~" },
-	[KEY_DELETE]       = { { CSI"3",  NULL   }, "~" },
-	[KEY_PAGE_UP]      = { { CSI"5",  NULL   }, "~" },
-	[KEY_PAGE_DOWN]    = { { CSI"6",  NULL   }, "~" },
+static KeyString keys_normal[KeyCount] = {
+	[KeyUp]          = { { CSI,     CSI"1" }, "A" },
+	[KeyDown]        = { { CSI,     CSI"1" }, "B" },
+	[KeyRight]       = { { CSI,     CSI"1" }, "C" },
+	[KeyLeft]        = { { CSI,     CSI"1" }, "D" },
+	[KeyEnd]         = { { CSI,     CSI"1" }, "F" },
+	[KeyHome]        = { { CSI,     CSI"1" }, "H" },
+	[KeyInsert]      = { { CSI"2",  NULL   }, "~" },
+	[KeyDelete]      = { { CSI"3",  NULL   }, "~" },
+	[KeyPageUp]      = { { CSI"5",  NULL   }, "~" },
+	[KeyPageDown]    = { { CSI"6",  NULL   }, "~" },
 
-	[KEY_KP_UP]        = { { CSI,     CSI"1" }, "A" },
-	[KEY_KP_DOWN]      = { { CSI,     CSI"1" }, "B" },
-	[KEY_KP_RIGHT]     = { { CSI,     CSI"1" }, "C" },
-	[KEY_KP_LEFT]      = { { CSI,     CSI"1" }, "D" },
-	[KEY_KP_END]       = { { CSI,     CSI"1" }, "F" },
-	[KEY_KP_HOME]      = { { CSI,     CSI"1" }, "H" },
-	[KEY_KP_INSERT]    = { { CSI"2",  NULL   }, "~" },
-	[KEY_KP_DELETE]    = { { CSI"3",  NULL   }, "~" },
-	[KEY_KP_PAGE_UP]   = { { CSI"5",  NULL   }, "~" },
-	[KEY_KP_PAGE_DOWN] = { { CSI"6",  NULL   }, "~" },
+	[KeyKPUp]        = { { CSI,     CSI"1" }, "A" },
+	[KeyKPDown]      = { { CSI,     CSI"1" }, "B" },
+	[KeyKPRight]     = { { CSI,     CSI"1" }, "C" },
+	[KeyKPLeft]      = { { CSI,     CSI"1" }, "D" },
+	[KeyKPEnd]       = { { CSI,     CSI"1" }, "F" },
+	[KeyKPHome]      = { { CSI,     CSI"1" }, "H" },
+	[KeyKPInsert]    = { { CSI"2",  NULL   }, "~" },
+	[KeyKPDelete]    = { { CSI"3",  NULL   }, "~" },
+	[KeyKPPageUp]    = { { CSI"5",  NULL   }, "~" },
+	[KeyKPPageDown]  = { { CSI"6",  NULL   }, "~" },
 
-	[KEY_F1]           = { { CSI,     SS3"1" }, "P" },
-	[KEY_F2]           = { { CSI,     SS3"1" }, "Q" },
-	[KEY_F3]           = { { CSI,     SS3"1" }, "R" },
-	[KEY_F4]           = { { CSI,     SS3"1" }, "S" },
-	[KEY_F5]           = { { CSI"15", NULL   }, "~" },
-	[KEY_F6]           = { { CSI"17", NULL   }, "~" },
-	[KEY_F7]           = { { CSI"18", NULL   }, "~" },
-	[KEY_F8]           = { { CSI"19", NULL   }, "~" },
-	[KEY_F9]           = { { CSI"20", NULL   }, "~" },
-	[KEY_F10]          = { { CSI"21", NULL   }, "~" },
-	[KEY_F11]          = { { CSI"23", NULL   }, "~" },
-	[KEY_F12]          = { { CSI"24", NULL   }, "~" },
-	[KEY_F13]          = { { CSI"25", NULL   }, "~" },
-	[KEY_F14]          = { { CSI"26", NULL   }, "~" },
-	[KEY_F15]          = { { CSI"28", NULL   }, "~" },
-	[KEY_F16]          = { { CSI"29", NULL   }, "~" },
-	[KEY_F17]          = { { CSI"31", NULL   }, "~" },
-	[KEY_F18]          = { { CSI"32", NULL   }, "~" },
-	[KEY_F19]          = { { CSI"33", NULL   }, "~" },
-	[KEY_F20]          = { { CSI"34", NULL   }, "~" }
+	[KeyF1]          = { { CSI,     SS3"1" }, "P" },
+	[KeyF2]          = { { CSI,     SS3"1" }, "Q" },
+	[KeyF3]          = { { CSI,     SS3"1" }, "R" },
+	[KeyF4]          = { { CSI,     SS3"1" }, "S" },
+	[KeyF5]          = { { CSI"15", NULL   }, "~" },
+	[KeyF6]          = { { CSI"17", NULL   }, "~" },
+	[KeyF7]          = { { CSI"18", NULL   }, "~" },
+	[KeyF8]          = { { CSI"19", NULL   }, "~" },
+	[KeyF9]          = { { CSI"20", NULL   }, "~" },
+	[KeyF10]         = { { CSI"21", NULL   }, "~" },
+	[KeyF11]         = { { CSI"23", NULL   }, "~" },
+	[KeyF12]         = { { CSI"24", NULL   }, "~" },
+	[KeyF13]         = { { CSI"25", NULL   }, "~" },
+	[KeyF14]         = { { CSI"26", NULL   }, "~" },
+	[KeyF15]         = { { CSI"28", NULL   }, "~" },
+	[KeyF16]         = { { CSI"29", NULL   }, "~" },
+	[KeyF17]         = { { CSI"31", NULL   }, "~" },
+	[KeyF18]         = { { CSI"32", NULL   }, "~" },
+	[KeyF19]         = { { CSI"33", NULL   }, "~" },
+	[KeyF20]         = { { CSI"34", NULL   }, "~" }
 };
 
 static KeyString keys_appkeypad[] = {
-	[KEY_KP_TAB]       = { { SS3, NULL }, "I" },
-	[KEY_KP_ENTER]     = { { SS3, NULL }, "M" },
-	[KEY_KP_SPACE]     = { { SS3, NULL }, " " },
-	[KEY_KP_MULTIPLY]  = { { SS3, NULL }, "j" },
-	[KEY_KP_ADD]       = { { SS3, NULL }, "k" },
-	[KEY_KP_SEPARATOR] = { { SS3, NULL }, "l" },
-	[KEY_KP_SUBTRACT]  = { { SS3, NULL }, "m" },
-	[KEY_KP_DECIMAL]   = { { SS3, NULL }, "n" },
-	[KEY_KP_DIVIDE]    = { { SS3, NULL }, "o" },
-	[KEY_KP_EQUAL]     = { { SS3, NULL }, "X" },
+	[KeyKPTab]       = { { SS3, NULL }, "I" },
+	[KeyKPEnter]     = { { SS3, NULL }, "M" },
+	[KeyKPSpace]     = { { SS3, NULL }, " " },
+	[KeyKPMultiply]  = { { SS3, NULL }, "j" },
+	[KeyKPAdd]       = { { SS3, NULL }, "k" },
+	[KeyKPSeparator] = { { SS3, NULL }, "l" },
+	[KeyKPSubtract]  = { { SS3, NULL }, "m" },
+	[KeyKPDecimal]   = { { SS3, NULL }, "n" },
+	[KeyKPDivide]    = { { SS3, NULL }, "o" },
+	[KeyKPEqual]     = { { SS3, NULL }, "X" },
 
-	[KEY_KP_0]         = { { SS3, NULL }, "p" },
-	[KEY_KP_1]         = { { SS3, NULL }, "q" },
-	[KEY_KP_2]         = { { SS3, NULL }, "r" },
-	[KEY_KP_3]         = { { SS3, NULL }, "s" },
-	[KEY_KP_4]         = { { SS3, NULL }, "t" },
-	[KEY_KP_5]         = { { SS3, NULL }, "u" },
-	[KEY_KP_6]         = { { SS3, NULL }, "v" },
-	[KEY_KP_7]         = { { SS3, NULL }, "w" },
-	[KEY_KP_8]         = { { SS3, NULL }, "x" },
-	[KEY_KP_9]         = { { SS3, NULL }, "y" }
+	[KeyKP0]         = { { SS3, NULL }, "p" },
+	[KeyKP1]         = { { SS3, NULL }, "q" },
+	[KeyKP2]         = { { SS3, NULL }, "r" },
+	[KeyKP3]         = { { SS3, NULL }, "s" },
+	[KeyKP4]         = { { SS3, NULL }, "t" },
+	[KeyKP5]         = { { SS3, NULL }, "u" },
+	[KeyKP6]         = { { SS3, NULL }, "v" },
+	[KeyKP7]         = { { SS3, NULL }, "w" },
+	[KeyKP8]         = { { SS3, NULL }, "x" },
+	[KeyKP9]         = { { SS3, NULL }, "y" }
 };
 
-static KeyString keys_appcursor[NUM_KEY] = {
-	[KEY_UP]       = { { SS3"A", NULL }, NULL },
-	[KEY_DOWN]     = { { SS3"B", NULL }, NULL },
-	[KEY_RIGHT]    = { { SS3"C", NULL }, NULL },
-	[KEY_LEFT]     = { { SS3"D", NULL }, NULL },
-	[KEY_HOME]     = { { SS3"H", NULL }, NULL },
-	[KEY_END]      = { { SS3"F", NULL }, NULL },
+static KeyString keys_appcursor[KeyCount] = {
+	[KeyUp]          = { { SS3"A", NULL }, NULL },
+	[KeyDown]        = { { SS3"B", NULL }, NULL },
+	[KeyRight]       = { { SS3"C", NULL }, NULL },
+	[KeyLeft]        = { { SS3"D", NULL }, NULL },
+	[KeyHome]        = { { SS3"H", NULL }, NULL },
+	[KeyEnd]         = { { SS3"F", NULL }, NULL },
 
-	[KEY_KP_UP]    = { { SS3"A", NULL }, NULL },
-	[KEY_KP_DOWN]  = { { SS3"B", NULL }, NULL },
-	[KEY_KP_RIGHT] = { { SS3"C", NULL }, NULL },
-	[KEY_KP_LEFT]  = { { SS3"D", NULL }, NULL },
-	[KEY_KP_HOME]  = { { SS3"H", NULL }, NULL },
-	[KEY_KP_END]   = { { SS3"F", NULL }, NULL }
+	[KeyKPUp]        = { { SS3"A", NULL }, NULL },
+	[KeyKPDown]      = { { SS3"B", NULL }, NULL },
+	[KeyKPRight]     = { { SS3"C", NULL }, NULL },
+	[KeyKPLeft]      = { { SS3"D", NULL }, NULL },
+	[KeyKPHome]      = { { SS3"H", NULL }, NULL },
+	[KeyKPEnd]       = { { SS3"F", NULL }, NULL }
 };
 
 static inline KeyString *
@@ -119,7 +119,7 @@ key_lookup(int key, KeyString *table)
 size_t
 key_get_sequence(uint key, uint mod, char *buf, size_t size)
 {
-	if (key > NUM_KEY - 1 || mod > NUM_MOD - 1)
+	if (key > KeyCount - 1 || mod > ModCount - 1)
 		return 0;
 
 	KeyString *item = NULL;
@@ -135,13 +135,13 @@ key_get_sequence(uint key, uint mod, char *buf, size_t size)
 		char *str = NULL;
 
 		switch (key) {
-		case KEY_RETURN:
-		case KEY_KP_ENTER:
+		case KeyReturn:
+		case KeyKPEnter:
 			switch (mod) {
-			case MOD_ALT:
+			case ModAlt:
 				str = ESC"\r";
 				break;
-			case MOD_CTRL:
+			case ModCtrl:
 				str = CSI"27;5;13~";
 				break;
 			default:
@@ -149,13 +149,13 @@ key_get_sequence(uint key, uint mod, char *buf, size_t size)
 				break;
 			}
 			break;
-		case KEY_TAB:
-		case KEY_KP_TAB:
+		case KeyTab:
+		case KeyKPTab:
 			switch (mod) {
-			case MOD_ALT:
+			case ModAlt:
 				str = ESC"\t";
 				break;
-			case MOD_CTRL:
+			case ModCtrl:
 				str = CSI"27;5;13~";
 				break;
 			default:
@@ -163,9 +163,9 @@ key_get_sequence(uint key, uint mod, char *buf, size_t size)
 				break;
 			}
 			break;
-		case KEY_BACKSPACE:
+		case KeyBackspace:
 			switch (mod) {
-			case MOD_ALT:
+			case ModAlt:
 				str = ESC"\177";
 				break;
 			default:
