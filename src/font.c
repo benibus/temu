@@ -501,20 +501,39 @@ Color *
 color_create_name(RC *rc, Color *output, const char *name)
 {
 	WinData *win = (WinData *)rc->win;
-	XColor screen, channels;
 	Color *color = output;
+	XColor target, nearest;
 
-	if (XAllocNamedColor(win->x11->dpy, win->colormap, name, &screen, &channels)) {
+	if (XAllocNamedColor(win->x11->dpy, win->colormap, name, &nearest, &target)) {
 		if (!color) {
 			color = xcalloc(1, sizeof(*color));
 		}
-		color->pixel = screen.pixel;
-		color->values.red   = channels.red;
-		color->values.green = channels.green;
-		color->values.blue  = channels.blue;
-		color->values.alpha = 0xffff;
 
-		color->fill = XRenderCreateSolidFill(win->x11->dpy, &color->values);
+		XRenderColor xcolor = { 0 };
+		color->pixel = nearest.pixel;
+#if 1
+		color->rgba = (target.pixel << 8)|0xff;
+		xcolor = XCOLOR(color);
+#else
+		color->r = (xcolor.red = target.red) >> 8;
+		color->g = (xcolor.green = target.green) >> 8;
+		color->b = (xcolor.blue = target.blue) >> 8;
+		color->a = (xcolor.alpha = 0xff00) >> 8;
+#endif
+		ASSERT((uint32)RGBA32_PACK(color) == color->rgba);
+		ASSERT(color->rgba >> 8 == target.pixel);
+		color->id = XRenderCreateSolidFill(win->x11->dpy, &xcolor);
+
+#if 1
+		fprintf(stderr, "X11(%s) allocating color \"%s\" ... "
+		                "ID: %lu Pixel: %#6.6lx RGBA: [ %03u, %03u, %03u, %03u ] = %#6.6x\n",
+		  __FILE__, name,
+		  color->id,
+		  color->pixel,
+		  color->r, color->g, color->b, color->a,
+		  color->rgba >> 8
+		);
+#endif
 
 		return color;
 	}
@@ -531,8 +550,8 @@ color_free_data(RC *rc, Color *color)
 	if (win->x11->vis->visual->class != TrueColor) {
 		XFreeColors(win->x11->dpy, win->colormap, &color->pixel, 1, 0);
 	}
-	XRenderFreePicture(win->x11->dpy, color->fill);
-	color->fill = 0;
+	XRenderFreePicture(win->x11->dpy, color->id);
+	color->id = 0;
 }
 
 void
@@ -547,10 +566,11 @@ draw_rect_solid(const RC *rc, const Color *color_, int x_, int y_, int w_, int h
 
 	const Color *color = (color_) ? color_ : rc->color.fg;
 	if (!color) return;
+
 	XRenderFillRectangle(win->x11->dpy,
 	                     PictOpOver,
 	                     win->pic,
-	                     &color->values,
+	                     &XCOLOR(color),
 	                     x, y, w, h);
 }
 
@@ -577,7 +597,7 @@ draw_string(const RC *rc, int x, int y, const void *str, uint len, uint width)
 	}
 #define RENDER_STRING(T_,sz) \
 XRenderCompositeString##sz(win->x11->dpy,                        \
-                           PictOpOver, color.fg->fill, win->pic, \
+                           PictOpOver, color.fg->id, win->pic, \
                            rc->font->picfmt, rc->font->glyphset, \
                            0, 0, x, y + rc->font->ascent,        \
                            (const T_ *)str, len)
@@ -700,7 +720,7 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 		// render elt buffer
 		XRenderCompositeText32(win->x11->dpy,
 			               PictOpOver,
-			               brush.foreground->fill,
+			               brush.foreground->id,
 			               win->pic,
 			               brush.font->picfmt,
 			               0, 0,
@@ -722,9 +742,10 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 GlyphInfo *
 font_add_glyph(FontFace *font, uint32 addr, uint32 ucs4)
 {
-	uchar local[4096];
-	uchar *buf = local;
-	uint size = 0;
+	Buf(uchar, 4096) buf = { 0 };
+	buf.data = buf.local;
+	buf.limit = LEN(buf.local);
+
 	GlyphInfo glyph = { 0 };
 	GlyphInfo *data = NULL;
 
@@ -766,10 +787,9 @@ font_add_glyph(FontFace *font, uint32 addr, uint32 ucs4)
 		return data;
 	}
 
-	size = glyph_write_image(glyph.metrics,
-	                         slot->bitmap,
-	                         &buf,
-	                         sizeof(local));
+	buf.count = glyph_write_image(glyph.metrics,
+	                              slot->bitmap,
+	                              &buf.data, buf.limit);
 #if 0
 	dbg_print_glyph_bitmap(buf, glyph.metrics, 1);
 #endif
@@ -785,11 +805,13 @@ font_add_glyph(FontFace *font, uint32 addr, uint32 ucs4)
 		         font->glyphset,
 		         (XGlyph *)&glyph.index,
 		         &info, 1,
-		         (char *)buf, size);
+		         (char *)buf.data, buf.count);
 
 	data = glyph_insert(font, addr, &glyph);
 
-	if (buf != local) free(buf);
+	if (buf.data != buf.local) {
+		free(buf.data);
+	}
 	return data;
 }
 

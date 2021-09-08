@@ -54,6 +54,14 @@ static void render_frame(Client *);
 static void event_key_press(void *, int, int, char *, int);
 static void event_resize(void *, int, int);
 
+static void *
+passbuf(void *raw)
+{
+	struct Buf_ *buf = raw;
+	PRINTBUF(buf);
+	return buf;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -228,6 +236,13 @@ run(Client *client)
 	TimeVal t1 = { 0 };
 
 	tty_exec(tty, config.shell);
+#if 1
+	fprintf(stderr, "App(%s) TTY PID: %d\n"
+	                "App(%s) PTY PID: %d\n",
+	  __FILE__, win->pid,
+	  __FILE__, tty->pty.pid
+	);
+#endif
 
 	fd_set rset;
 	int maxfd = MAX(win->fd, tty->pty.mfd);

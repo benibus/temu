@@ -1,8 +1,6 @@
 #ifndef WINDOW_H__
 #define WINDOW_H__
 
-#include <X11/extensions/Xrender.h>
-
 #include "types.h"
 #include "keymap.h"
 
@@ -14,6 +12,7 @@
 
 typedef struct {
 	void *ref;
+	pid_t pid;
 	bool state;
 	char *title, *instance, *class;
 	int fd;
@@ -49,11 +48,29 @@ typedef struct {
 	struct { float x, y; } size_pt;
 } FontMetrics;
 
-typedef struct {
-	Picture fill;
-	ulong pixel;
-	XRenderColor values;
-} Color;
+struct Color32LE {
+	uint64 id;
+	uint64 pixel;
+	// TODO(ben): Deep-dive into the C11 type-punning spec
+	union {
+		uint32 rgba;
+		struct {
+			uint8 a;
+			uint8 b;
+			uint8 g;
+			uint8 r;
+		};
+	};
+};
+
+typedef struct Color32LE Color;
+
+#define RGBA32_PACK(color) ( \
+  ((color)->r << 24) | \
+  ((color)->g << 16) | \
+  ((color)->b << 8 ) | \
+  ((color)->a << 0 )   \
+)
 
 typedef struct {
 	uint width, height;

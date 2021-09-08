@@ -31,4 +31,13 @@ typedef struct {
 	GC gc;
 } WinData;
 
+#define XCOLOR(color) (       \
+  (XRenderColor){             \
+    .red   = (color)->r << 8, \
+    .green = (color)->g << 8, \
+    .blue  = (color)->b << 8, \
+    .alpha = (color)->a << 8  \
+  }                           \
+)
+
 #endif

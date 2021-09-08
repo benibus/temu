@@ -257,10 +257,10 @@ win_init_client(Win *pub)
 		XSetWMProtocols(x11->dpy, win->xid, supported, LEN(supported));
 
 		// link window to pid
-		pid_t pid = getpid();
+		win->pub.pid = getpid();
 		XChangeProperty(x11->dpy, win->xid,
 		    ATOM(_NET_WM_PID), XA_CARDINAL,
-		    32, PropModeReplace, (u8 *)&pid, 1);
+		    32, PropModeReplace, (uchar *)&win->pub.pid, 1);
 	}
 
 	// Set WM hints

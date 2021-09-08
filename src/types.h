@@ -64,8 +64,9 @@ typedef uint32_t UTF8;
 typedef uint32_t UCS4;
 
 typedef struct {
-	char *str;
-	uint len;
+	uint32 len;
+	uint32 max;
+	char *data;
 } String;
 
 #if STD_C11
