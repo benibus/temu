@@ -70,7 +70,7 @@ typedef struct {
 } String;
 
 #if STD_C11
-  #define vecx(...) { .arr = { __VA_ARGS__ } }
+  #define vecx(...) { { __VA_ARGS__ } }
 
   #define V2(T_,x,y)     \
   union {                \

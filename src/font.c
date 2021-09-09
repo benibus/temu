@@ -32,7 +32,7 @@
 #define PX_TRUNC(n) ((n) >> 6)
 #define PX_ROUND_UP(n)   (((n)+(SUBPX/2)) & SUBPX_MASK)
 #define PX_ROUND_DOWN(n) (((n)-(SUBPX/2)) & SUBPX_MASK)
-#define PIXELS(subpx) PX_TRUNC(subpx)
+#define PIXELS(subpx) ((subpx) >> 6)
 
 struct SLLNode_;
 struct DLLNode_;
@@ -69,8 +69,6 @@ struct FontSource_ {
 	char *file;
 	int index;
 	FT_Face face;
-	FT_Matrix matrix;
-	struct { long x, y; } size_px;
 	int num_glyphs;
 	int refcount;
 	bool locked;
@@ -89,11 +87,9 @@ struct FontFace_ {
 	FcPattern *pattern;
 	FcCharSet *charset;
 	int num_codepoints;
-	struct { long x, y; } size_px;
-	struct { float x, y; } size_pt;
+	struct { int64 x, y; } size_px;
 	bool antialias, bold, transform, has_color;
 	int subpx_order, lcd_filter, spacing;
-	int fixed_width;
 	int width, height;
 	int ascent, descent;
 	int max_advance;
@@ -105,12 +101,39 @@ static struct {
 	FontSource *font_sources;
 } shared;
 
+struct FontConfig {
+	double pixel_size;
+	double dpi;
+	double aspect;
+	int subpixel_order;
+	int spacing_style;
+	int char_width;
+	int hint_style;
+	int pixel_fmt;
+	int lcd_filter;
+	bool use_hinting;
+	bool use_autohint;
+	bool use_embolden;
+	bool use_vertlayout;
+	bool use_antialias;
+	bool use_color;
+	FcCharSet *charset;
+	FT_Matrix matrix;
+};
+
+#define FCMATRIX_DFL ((FcMatrix){ 1, 0, 0, 1 })
+#define FTMATRIX_DFL ((FT_Matrix){ 0x10000, 0, 0, 0x10000 })
+#define FCRES_FOUND(res) ((res) == FcResultMatch)
+#define FCRES_VALID(res) (FCRES_FOUND(res) || (res) == FcResultNoMatch)
+
 static uint32 hash32(uint32);
 static uint32 font_load_glyph(FontFace *, uint32);
 static void font_load_glyphs(FontFace *);
 static void font_free_glyphs(FontFace *);
 static GlyphInfo *font_add_glyph(FontFace *, uint32, uint32);
 static void font_destroy_source(FontSource *);
+static bool fc_extract_prop(const FcPattern *, const char *, void *);
+static FT_Vector ft_get_vec2(FT_Matrix, int64, int64);
 
 static GlyphMetrics *glyph_set_metrics(GlyphMetrics *, const FontFace *, const FT_GlyphSlotRec *);
 static uint glyph_write_image(GlyphMetrics, FT_Bitmap, uchar **, uint);
@@ -291,8 +314,9 @@ font_get_face_metrics(FontFace *font, FontMetrics *ret)
 
 		ret->size_px.x = font->size_px.x;
 		ret->size_px.y = font->size_px.y;
-		ret->size_pt.x = font->size_pt.x;
-		ret->size_pt.y = font->size_pt.y;
+		// TODO(ben): Maybe re-add this?
+		ret->size_pt.x = 0;
+		ret->size_pt.y = 0;
 
 		return true;
 	}
@@ -367,7 +391,7 @@ font_insert_source(FcPattern *pattern)
 	for (p = (SLLNode **)&shared.font_sources; *p; p = &(*p)->next) {
 		obj = (FontSource *)*p;
 		// As far as I can tell, this is the canonical way to check for uniqueness
-		if (!strcmp((char *)file, obj->file) && index == obj->index) {
+		if (strmatch((char *)file, obj->file) && index == obj->index) {
 			assert(obj->refcount && obj->file);
 			obj->refcount++;
 			return obj;
@@ -424,40 +448,46 @@ font_create_face(RC *rc, const char *name)
 	assert(pattern.conf);
 	FcConfigSubstitute(NULL, pattern.conf, FcMatchPattern);
 
-#define ADDVAL(T_,obj,val) \
-if (FcPatternGet(pattern.conf, (obj), 0, &dummy) == FcResultNoMatch) { \
-	FcPatternAdd##T_(pattern.conf, (obj), (val));                  \
+#define SETDFL(pat,T_,obj,val)                                  \
+if (FcPatternGet((pat), (obj), 0, &dummy) == FcResultNoMatch) { \
+	fprintf(stderr, "Font(%s) setting defaults ... %s\n", __FILE__, #obj); \
+	FcPatternAdd##T_((pat), (obj), (val));                      \
 }
-	ADDVAL(Bool,    FC_ANTIALIAS,  FcTrue);
-	ADDVAL(Bool,    FC_EMBOLDEN,   FcFalse);
-	ADDVAL(Bool,    FC_HINTING,    FcTrue);
-	ADDVAL(Integer, FC_HINT_STYLE, FC_HINT_FULL);
-	ADDVAL(Bool,    FC_AUTOHINT,   FcFalse);
-	ADDVAL(Integer, FC_LCD_FILTER, FC_LCD_DEFAULT);
-	ADDVAL(Bool,    FC_MINSPACE,   False);
-	ADDVAL(Double,  FC_DPI,        win->x11->dpi);
-	ADDVAL(Integer, FC_SPACING,    FC_MONO);
-	ADDVAL(Bool,    FC_VERTICAL_LAYOUT, FcFalse);
+	SETDFL(pattern.conf, Double,  FC_DPI,        win->x11->dpi);
+	SETDFL(pattern.conf, Bool,    FC_HINTING,    FcTrue);
+	SETDFL(pattern.conf, Integer, FC_HINT_STYLE, FC_HINT_FULL);
+	SETDFL(pattern.conf, Bool,    FC_AUTOHINT,   FcFalse);
+	SETDFL(pattern.conf, Integer, FC_LCD_FILTER, FC_LCD_DEFAULT);
+	SETDFL(pattern.conf, Integer, FC_SPACING,    FC_MONO);
+	SETDFL(pattern.conf, Bool,    FC_VERTICAL_LAYOUT, FcFalse);
 
 	if (FcPatternGet(pattern.conf, FC_RGBA, 0, &dummy) == FcResultNoMatch) {
-		int subpx = FC_RGBA_UNKNOWN;
-		int order = XRenderQuerySubpixelOrder(win->x11->dpy, win->x11->screen);
-		switch (order) {
-			case SubPixelNone:          subpx = FC_RGBA_NONE; break;
-			case SubPixelHorizontalRGB: subpx = FC_RGBA_RGB;  break;
-			case SubPixelHorizontalBGR: subpx = FC_RGBA_BGR;  break;
-			case SubPixelVerticalRGB:   subpx = FC_RGBA_VRGB; break;
-			case SubPixelVerticalBGR:   subpx = FC_RGBA_VBGR; break;
+		int val = FC_RGBA_UNKNOWN;
+		switch (XRenderQuerySubpixelOrder(win->x11->dpy, win->x11->screen)) {
+			case SubPixelNone:          val = FC_RGBA_NONE; break;
+			case SubPixelHorizontalRGB: val = FC_RGBA_RGB;  break;
+			case SubPixelHorizontalBGR: val = FC_RGBA_BGR;  break;
+			case SubPixelVerticalRGB:   val = FC_RGBA_VRGB; break;
+			case SubPixelVerticalBGR:   val = FC_RGBA_VBGR; break;
 		}
-		FcPatternAddInteger(pattern.conf, FC_RGBA, subpx);
+		FcPatternAddInteger(pattern.conf, FC_RGBA, val);
 	}
-#undef ADDVAL
+
 	FcDefaultSubstitute(pattern.conf);
 	pattern.match = FcFontMatch(NULL, pattern.conf, &res);
 
+	SETDFL(pattern.match, Double,  FC_PIXEL_SIZE, 16.f);
+	SETDFL(pattern.match, Double,  FC_ASPECT,     1.f);
+	SETDFL(pattern.match, Bool,    FC_EMBOLDEN,   FcFalse);
+	SETDFL(pattern.match, Bool,    FC_ANTIALIAS,  FcTrue);
+	SETDFL(pattern.match, Integer, FC_CHAR_WIDTH, 0);
+	SETDFL(pattern.match, Matrix,  FC_MATRIX,     &FCMATRIX_DFL);
+	SETDFL(pattern.match, CharSet, FC_CHARSET,    NULL);
+#undef SETDFL
+
 	FcPatternDestroy(pattern.base);
 	FcPatternDestroy(pattern.conf);
-	/* FcPatternPrint(pattern.match); */
+	FcPatternPrint(pattern.match);
 
 	FontFace *font = font_insert_face(pattern.match);
 	if (font && !font->src->dpy) {
@@ -490,7 +520,7 @@ font_create_derived_face(FontFace *font, uint style)
 	FcDefaultSubstitute(pattern.conf);
 	pattern.match = FcFontMatch(NULL, pattern.conf, &res);
 	FcPatternDestroy(pattern.conf);
-	/* FcPatternPrint(pattern.match); */
+	FcPatternPrint(pattern.match);
 
 	FontFace *new_font = font_insert_face(pattern.match);
 
@@ -905,7 +935,68 @@ glyph_set_metrics(GlyphMetrics *metrics, const FontFace *font, const FT_GlyphSlo
 	return metrics;
 }
 
-// TODO(ben): Make this function not be the worst thing ever
+FT_Vector
+ft_get_vec2(FT_Matrix mat, int64 vx, int64 vy)
+{
+	FT_Vector vec = { vx, vy };
+	FT_Vector_Transform(&vec, &mat);
+
+	return vec;
+}
+
+bool
+fc_extract_prop(const FcPattern *pat, const char *name, void *data)
+{
+	ASSERT(pat && data);
+
+	if (!name) return false;
+
+	FcResult res = FcResultNoMatch;
+	const FcObjectType *ent = FcNameGetObjectType(name);
+
+	switch (ent->type) {
+		case FcTypeDouble: {
+			res = FcPatternGetDouble(pat, ent->object, 0, data);
+			break;
+		}
+		case FcTypeInteger: {
+			res = FcPatternGetInteger(pat, ent->object, 0, data);
+			break;
+		}
+		case FcTypeString: {
+			res = FcPatternGetString(pat, ent->object, 0, data);
+			break;
+		}
+		case FcTypeBool: {
+			FcBool src = 0;
+			res = FcPatternGetBool(pat, ent->object, 0, &src);
+			*(bool *)data = !!src;
+			break;
+		}
+		case FcTypeMatrix: {
+			FcMatrix *matf = &FCMATRIX_DFL;
+			FT_Matrix *mati = data;
+			res = FcPatternGetMatrix(pat, ent->object, 0, &matf);
+			// convert to freetype's int64 format
+			mati->xx = 0x10000L * matf->xx;
+			mati->xy = 0x10000L * matf->xy;
+			mati->yx = 0x10000L * matf->yx;
+			mati->yy = 0x10000L * matf->yy;
+			break;
+		}
+		case FcTypeCharSet: {
+			res = FcPatternGetCharSet(pat, ent->object, 0, data);
+			break;
+		}
+		default: {
+			break;
+		}
+	};
+
+	ASSERT(FCRES_VALID(res));
+	return FCRES_FOUND(res);
+}
+
 bool
 font_init_face(FontFace *font)
 {
@@ -913,235 +1004,146 @@ font_init_face(FontFace *font)
 
 	if (font->glyphs) return true;
 
-	FcResult res;
-	struct {
-		FcMatrix *matrix;
-		FcCharSet *charset;
-		FcBool antialias, bold;
-		FcBool hint_enable, hint_auto;
-		FcBool vert_layout;
-		int target;
-		int hint_style;
-		int fmt_id;
-		double pxsize, dpi, aspect;
-	} tmp;
+	FontSource *root = font->src;
+	FT_FaceRec *face = font->src->face;
 
-#define GETVAL(T_,obj,val) ((res = FcPatternGet##T_(font->pattern, (obj), 0, (val))) == FcResultMatch)
-	font->loadflags = FT_LOAD_DEFAULT;
+	struct FontConfig cfg = { 0 };
 
-	// Font size metrics
-	if (!GETVAL(Double, FC_PIXEL_SIZE, &tmp.pxsize))
-		return false;
-	if (!GETVAL(Double, FC_DPI, &tmp.dpi))
-		return false;
-	if (!GETVAL(Double, FC_ASPECT, &tmp.aspect))
-		tmp.aspect = 1.0;
+	int load_target = FT_LOAD_TARGET_NORMAL;
+	int load_flags = 0;
+	int render_mode = FT_RENDER_MODE_NORMAL;
+	int pixel_fmt = PictStandardA8;
 
-	font->size_px.x = (long)(tmp.pxsize * SUBPX);
-	font->size_px.y = (long)(tmp.pxsize * SUBPX * tmp.aspect);
-	font->size_pt.x = tmp.pxsize * 72.0 / tmp.dpi;
-	font->size_pt.y = tmp.pxsize * 72.0 / tmp.dpi * tmp.aspect;
+#define fc_extract_prop(...) ASSERT(fc_extract_prop(__VA_ARGS__))
+	fc_extract_prop(font->pattern, FC_PIXEL_SIZE, &cfg.pixel_size);
+	fc_extract_prop(font->pattern, FC_DPI,        &cfg.dpi);
+	fc_extract_prop(font->pattern, FC_ASPECT,     &cfg.aspect);
+	fc_extract_prop(font->pattern, FC_RGBA,       &cfg.subpixel_order)
+	fc_extract_prop(font->pattern, FC_LCD_FILTER, &cfg.lcd_filter);
+	fc_extract_prop(font->pattern, FC_MATRIX,     &cfg.matrix);
+	fc_extract_prop(font->pattern, FC_EMBOLDEN,   &cfg.use_embolden);
+	fc_extract_prop(font->pattern, FC_SPACING,    &cfg.spacing_style);
+	fc_extract_prop(font->pattern, FC_HINTING,    &cfg.use_hinting);
+	fc_extract_prop(font->pattern, FC_AUTOHINT,   &cfg.use_autohint);
+	fc_extract_prop(font->pattern, FC_HINT_STYLE, &cfg.hint_style);
+	fc_extract_prop(font->pattern, FC_CHAR_WIDTH, &cfg.char_width);
+	fc_extract_prop(font->pattern, FC_VERTICAL_LAYOUT, &cfg.use_vertlayout);
+	fc_extract_prop(font->pattern, FC_ANTIALIAS,  &cfg.use_antialias);
+	fc_extract_prop(font->pattern, FC_CHARSET,    &cfg.charset);
+#undef fc_extract_prop
 
-	// Subpixel ordering
-	if (!GETVAL(Integer, FC_RGBA, &font->subpx_order)) {
-		if (res != FcResultNoMatch) return false;
-		font->subpx_order = FC_RGBA_UNKNOWN;
-	}
-
-	// LCD filter settings
-	if (!GETVAL(Integer, FC_LCD_FILTER, &font->lcd_filter)) {
-		if (res != FcResultNoMatch) return false;
-		font->lcd_filter = FC_LCD_DEFAULT;
-	}
-
-	// Character spacing type
-	if (!GETVAL(Integer, FC_SPACING, &font->spacing)) {
-		if (res != FcResultNoMatch) return false;
-		font->spacing = FC_PROPORTIONAL;
-	}
-
-	// Transformation matrix (for synthetic fonts)
-	if (!GETVAL(Matrix, FC_MATRIX, &tmp.matrix)) {
-		if (res != FcResultNoMatch) return false;
-		font->matrix.xx = font->matrix.yy = 0x10000L;
-		font->matrix.xy = font->matrix.yx = 0L;
-	} else {
-		// convert from fontconfig to freetype scaling
-		font->matrix.xx = 0x10000L * tmp.matrix->xx;
-		font->matrix.xy = 0x10000L * tmp.matrix->xy;
-		font->matrix.yx = 0x10000L * tmp.matrix->yx;
-		font->matrix.yy = 0x10000L * tmp.matrix->yy;
-	}
-	// Enable transform if this is not the default matrix
-	font->transform = (font->matrix.xx != 0x10000L ||
-	                   font->matrix.xy != 0L ||
-	                   font->matrix.yx != 0L ||
-	                   font->matrix.yy != 0x10000L);
-
-	// Hinting settings
-	if (!GETVAL(Bool, FC_HINTING, &tmp.hint_enable)) {
-		if (res != FcResultNoMatch) return false;
-		tmp.hint_enable = FcTrue;
-	}
-	if (!GETVAL(Integer, FC_HINT_STYLE, &tmp.hint_style)) {
-		if (res != FcResultNoMatch) return false;
-		tmp.hint_style = FC_HINT_FULL;
-	}
-	/* font->loadflags |= (!tmp.hint_enable || tmp.hint_style == FC_HINT_NONE) */
-	/*     ? FT_LOAD_NO_HINTING : 0; */
-
-	if (!GETVAL(Bool, FC_AUTOHINT, &tmp.hint_auto)) {
-		if (res != FcResultNoMatch) return false;
-		tmp.hint_auto = FcFalse;
-	}
-	font->loadflags |= (tmp.hint_auto) ? FT_LOAD_FORCE_AUTOHINT : 0;
-
-	// Embolden before render
-	if (!GETVAL(Bool, FC_EMBOLDEN, &tmp.bold)) {
-		if (res != FcResultNoMatch) return false;
-		tmp.bold = FcFalse;
-	}
-	font->bold = !!tmp.bold;
-
-	// Global character width
-	if (!GETVAL(Integer, FC_CHAR_WIDTH, &font->fixed_width)) {
-		if (res == FcResultNoMatch) font->fixed_width = 0;
-	}
-
-	// Vertical/horizontal layout
-	if (GETVAL(Bool, FC_VERTICAL_LAYOUT, &tmp.vert_layout)) {
-		if (tmp.vert_layout == FcTrue) return false;
-	}
-
-	// Antialiasing settings
-	if (!GETVAL(Bool, FC_ANTIALIAS, &tmp.antialias)) {
-		if (res != FcResultNoMatch) return false;
-		tmp.antialias = FcTrue;
-	}
-
-	// Finally load the Freetype face object
-	if (!font->src->face) {
+	if (!face) {
 		if (!shared.ft) {
-			if (FT_Init_FreeType(&shared.ft) != 0) exit(2);
+			ASSERT(!FT_Init_FreeType(&shared.ft));
 		}
-		FT_New_Face(shared.ft, font->src->file, font->src->index, &font->src->face);
-		font->src->num_glyphs = font->src->face->num_glyphs + 1;
-	}
-	assert(font->src->face);
-
-	// Get the character set and codepoint range
-	if (GETVAL(CharSet, FC_CHARSET, &tmp.charset)) {
-		font->charset = FcCharSetCopy(tmp.charset);
-	} else {
-		font->charset = FcFreeTypeCharSet(font->src->face, NULL);
-	}
-	if (!font->charset) return false;
-	font->num_codepoints = FcCharSetCount(font->charset);
-
-	// Set the pixel size that we previously extracted
-	if (FT_Set_Char_Size(font->src->face, font->size_px.x, font->size_px.y, 0, 0) != 0) {
-		return false;
+		FT_New_Face(shared.ft, root->file, root->index, &root->face);
+		face = root->face;
+		root->num_glyphs = face->num_glyphs + 1;
 	}
 
-	// Set the transform with the provided matrix
-	FT_Set_Transform(font->src->face, &font->matrix, NULL);
-	font->src->size_px.x = font->size_px.x;
-	font->src->size_px.y = font->size_px.y;
-	font->src->matrix = font->matrix;
+	font->size_px.x = (int64)(cfg.pixel_size * SUBPX);
+	font->size_px.y = (int64)(cfg.pixel_size * SUBPX * cfg.aspect);
 
-	// Set properties that we needed the face for
-	if (!(font->src->face->face_flags & FT_FACE_FLAG_SCALABLE)) {
-		tmp.antialias = FcFalse;
+	FT_Set_Char_Size(face, font->size_px.x, font->size_px.y, 0, 0);
+	FT_Set_Transform(face, &cfg.matrix, NULL);
+
+	if (FT_HAS_COLOR(face)) {
+		cfg.use_color = true;
 	}
-	font->antialias = !!tmp.antialias;
-	font->loadflags |= (font->antialias || font->transform) ? FT_LOAD_NO_BITMAP : 0;
-	font->has_color = FT_HAS_COLOR(font->src->face);
+	if (!(face->face_flags & FT_FACE_FLAG_SCALABLE)) {
+		cfg.use_antialias = false;
+	}
 
-	// defaults (?)
-	tmp.fmt_id = PictStandardA8;
-	tmp.target = FT_LOAD_TARGET_NORMAL;
-	font->mode = FT_RENDER_MODE_NORMAL;
-
-	if (font->has_color) {
-		font->loadflags |= FT_LOAD_COLOR;
-		tmp.fmt_id = PictStandardARGB32;
-	} else if (!font->antialias) {
-		if (tmp.hint_style == FC_HINT_NONE) {
-			font->loadflags |= FT_LOAD_NO_HINTING;
+	// TODO(ben): Make this less confusing
+	if (cfg.use_autohint) {
+		load_flags |= FT_LOAD_FORCE_AUTOHINT;
+	}
+	if (cfg.use_color) {
+		pixel_fmt = PictStandardARGB32;
+		load_flags |= FT_LOAD_COLOR;
+	} else if (!cfg.use_antialias) {
+		if (cfg.hint_style == FC_HINT_NONE) {
+			load_flags |= FT_LOAD_NO_HINTING;
 		} else {
-			tmp.target = FT_LOAD_TARGET_MONO;
+			load_target = FT_LOAD_TARGET_MONO;
 		}
-		tmp.fmt_id = PictStandardA1;
-		font->loadflags |= FT_LOAD_MONOCHROME;
-		font->mode = FT_RENDER_MODE_MONO;
-	} else if (!tmp.hint_enable) {
-		font->loadflags |= FT_LOAD_NO_HINTING;
+		pixel_fmt = PictStandardA1;
+		load_flags |= FT_LOAD_MONOCHROME;
+		render_mode = FT_RENDER_MODE_MONO;
+	} else if (!cfg.use_hinting) {
+		load_flags |= FT_LOAD_NO_BITMAP;
+		load_flags |= FT_LOAD_NO_HINTING;
 	} else {
-		switch (tmp.hint_style) {
-			case FC_HINT_NONE:
-				font->loadflags |= FT_LOAD_NO_HINTING;
+		load_flags |= FT_LOAD_NO_BITMAP;
+		switch (cfg.hint_style) {
+		case FC_HINT_NONE:
+			load_flags |= FT_LOAD_NO_HINTING;
+			break;
+		case FC_HINT_SLIGHT:
+			load_target = FT_LOAD_TARGET_LIGHT;
+			break;
+		case FC_HINT_MEDIUM:
+			break;
+		default:
+			switch (cfg.subpixel_order)
+			case FC_RGBA_RGB:
+			case FC_RGBA_BGR: {
+				pixel_fmt = PictStandardARGB32;
+				load_target = FT_LOAD_TARGET_LCD;
+				render_mode = FT_RENDER_MODE_LCD;
 				break;
-			case FC_HINT_SLIGHT:
-				tmp.target = FT_LOAD_TARGET_LIGHT;
+			case FC_RGBA_VRGB:
+			case FC_RGBA_VBGR:
+				pixel_fmt = PictStandardARGB32;
+				load_target = FT_LOAD_TARGET_LCD_V;
+				render_mode = FT_RENDER_MODE_LCD_V;
 				break;
-			case FC_HINT_MEDIUM:
+			default:
 				break;
-			default: {
-				switch (font->subpx_order) {
-					case FC_RGBA_RGB:
-					case FC_RGBA_BGR: {
-						font->mode = FT_RENDER_MODE_LCD;
-						tmp.target = FT_LOAD_TARGET_LCD;
-						tmp.fmt_id = PictStandardARGB32;
-						break;
-					}
-					case FC_RGBA_VRGB:
-					case FC_RGBA_VBGR: {
-						tmp.target = FT_LOAD_TARGET_LCD_V;
-						font->mode = FT_RENDER_MODE_LCD_V;
-						tmp.fmt_id = PictStandardARGB32;
-						break;
-					}
-					default: {
-						break;
-					}
-				}
 			}
 		}
 	}
-	font->loadflags |= tmp.target;
-	font->picfmt = XRenderFindStandardFormat(font->src->dpy, tmp.fmt_id);
-	assert(font->picfmt);
 
-	FT_Size_Metrics mtx = font->src->face->size->metrics;
-	// Transform and set the public global metrics
-	if (!font->transform) {
-		font->ascent  = PIXELS(mtx.ascender);
-		font->descent = -PIXELS(mtx.descender);
-		font->height  = PIXELS(mtx.height);
-		font->max_advance = (font->fixed_width)
-		    ? font->fixed_width
-		    : PIXELS(mtx.max_advance);
+	FT_Size_Metrics mtx = face->size->metrics;
+	if (memmatch(&cfg.matrix, &FTMATRIX_DFL, sizeof(FT_Matrix))) {
+		font->transform = false;
+		font->ascent  = +(mtx.ascender >> 6);
+		font->descent = -(mtx.descender >> 6);
+		font->height  = +(mtx.height >> 6);
+		font->max_advance = DEFAULT(cfg.char_width, mtx.max_advance >> 6);
 	} else {
-		FT_Vector vec;
+		font->transform = true;
+		font->loadflags |= FT_LOAD_NO_BITMAP;
 
-		vec.x = 0, vec.y = mtx.ascender;
-		FT_Vector_Transform(&vec, &font->matrix);
-		font->ascent = PIXELS(vec.y);
-
-		vec.x = 0, vec.y = mtx.descender;
-		FT_Vector_Transform(&vec, &font->matrix);
-		font->descent = -PIXELS(vec.y);
-
-		vec.x = 0, vec.y = mtx.height;
-		FT_Vector_Transform(&vec, &font->matrix);
-		font->height = PIXELS(vec.y);
-
-		vec.x = mtx.max_advance, vec.y = 0;
-		FT_Vector_Transform(&vec, &font->matrix);
-		font->max_advance = PIXELS(vec.x);
+		// transform the default metrics
+		FT_Vector v = { 0 };
+		v = ft_get_vec2(cfg.matrix, 0, mtx.ascender);
+		font->ascent = +(v.y >> 6);
+		v = ft_get_vec2(cfg.matrix, 0, mtx.descender);
+		font->descent = -(v.y >> 6);
+		v = ft_get_vec2(cfg.matrix, 0, mtx.height);
+		font->height = +(v.y >> 6);
+		v = ft_get_vec2(cfg.matrix, mtx.max_advance, 0);
+		font->max_advance = +(v.x >> 6);
 	}
-#undef GETVAL
+
+	font->loadflags = load_flags|load_target;
+	font->mode = render_mode;
+	font->subpx_order = cfg.subpixel_order;
+	font->has_color = cfg.use_color;
+	font->lcd_filter = cfg.lcd_filter;
+	font->bold = cfg.use_embolden;
+	font->antialias = cfg.use_antialias;
+	font->spacing = cfg.spacing_style;
+	font->matrix = cfg.matrix;
+	font->picfmt = XRenderFindStandardFormat(root->dpy, pixel_fmt);
+	if (cfg.charset) {
+		font->charset = FcCharSetCopy(cfg.charset);
+	} else {
+		font->charset = FcFreeTypeCharSet(face, NULL);
+		ASSERT(font->charset);
+	}
+	font->num_codepoints = FcCharSetCount(font->charset);
 
 	font_load_glyphs(font);
 
