@@ -1,7 +1,9 @@
 #ifndef TERM_H__
 #define TERM_H__
 
-#include "types.h"
+#include "defs.h"
+
+#include <sys/types.h>
 
 #define INPUT_CHAR 1
 #define INPUT_KEY  2

@@ -1,7 +1,8 @@
 #ifndef WINDOW_H__
 #define WINDOW_H__
 
-#include "types.h"
+#include "defs.h"
+
 #include "keymap.h"
 
 #define WINATTR_NONE      (0)

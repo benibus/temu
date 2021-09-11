@@ -1,7 +1,8 @@
 #ifndef PTY_H__
 #define PTY_H__
 
-#include "types.h"
+#include "defs.h"
+
 #include "term.h"
 
 int pty_init(TTY *, const char *);

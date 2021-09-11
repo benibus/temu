@@ -1,7 +1,7 @@
 #ifndef RING_H__
 #define RING_H__
 
-#include "types.h"
+#include "defs.h"
 
 struct Ring_ {
 	int read, write;

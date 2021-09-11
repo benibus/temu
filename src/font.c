@@ -1,14 +1,4 @@
-#include <assert.h>
-#include <ctype.h>
 #include <math.h>
-#include <stdarg.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-#include <limits.h>
 #include <locale.h>
 #include <unistd.h>
 
@@ -337,7 +327,7 @@ font_init_face(FontFace *font)
 	}
 
 	FT_Size_Metrics mtx = face->size->metrics;
-	if (memmatch(&cfg.matrix, &FTMATRIX_DFL, sizeof(FT_Matrix))) {
+	if (memequal(&cfg.matrix, &FTMATRIX_DFL, sizeof(FT_Matrix))) {
 		font->ascent  = +(mtx.ascender >> 6);
 		font->descent = -(mtx.descender >> 6);
 		font->height  = +(mtx.height >> 6);
@@ -713,7 +703,7 @@ font_insert_source(FcPattern *pattern)
 	for (p = (SLLNode **)&shared.font_sources; *p; p = &(*p)->next) {
 		obj = (FontSource *)*p;
 		// As far as I can tell, this is the canonical way to check for uniqueness
-		if (strmatch((char *)file, obj->file) && index == obj->index) {
+		if (strequal((char *)file, obj->file) && index == obj->index) {
 			assert(obj->refcount && obj->file);
 			obj->refcount++;
 			return obj;

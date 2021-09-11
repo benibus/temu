@@ -1,5 +1,17 @@
-#ifndef UTILS_TYPES_H__
-#define UTILS_TYPES_H__
+#ifndef CORE_DEFS_H__
+#define CORE_DEFS_H__
+
+#if defined(__GNUC__)
+  #define CC_GCC 1
+#elif defined(__clang__)
+  #define CC_CLANG 1
+#elif defined(__TINYC__)
+  #define CC_TCC 1
+#elif defined(_MSC_VER)
+  #define CC_MSVC 1
+#elif defined(__MINGW32__) || defined(__MINGW64__)
+  #define CC_MINGW 1
+#endif
 
 #if (__STDC_VERSION__ < 199901L)
   #define STD_C89 1
@@ -27,12 +39,12 @@
   #define STDC 2018L
 #endif
 
-#include <assert.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <wchar.h>
+#include <limits.h>
 
 typedef long long llong;
 typedef long double ldouble;
@@ -69,6 +81,14 @@ typedef struct {
 	char *data;
 } String;
 
+#define MIN(a,b)       (((a) < (b)) ? (a) : (b))
+#define MAX(a,b)       (((a) > (b)) ? (a) : (b))
+#define CLAMP(n,a,b)   (((n) < (a)) ? (a) : (((n) > (b)) ? (b) : (n)))
+#define BETWEEN(n,a,b) (((n) >= (a)) && ((n) <= (b)))
+#define ABS(n)         (((n) < 0) ? -(n) : (n))
+#define LEN(arr)       (sizeof((arr)) / sizeof((arr)[0]))
+#define DEFAULT(v1,v2) ((!!(v1)) ? (v1) : (v2))
+
 #if STD_C11
   #define vecx(...) { { __VA_ARGS__ } }
 
@@ -99,7 +119,7 @@ typedef struct {
       T_ w;              \
     };                   \
   }
-#elif STD_C99
+#else
   #define vecx(...) { __VA_ARGS__ }
 
   #define V2(T_,x,y)     \
@@ -120,8 +140,6 @@ typedef struct {
     T_ z;                \
     T_ w;                \
   }
-#else
-  #error "Build requires C99 or later"
 #endif
 
 #define VLEN(v) (sizeof(v))

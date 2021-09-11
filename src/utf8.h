@@ -1,7 +1,7 @@
 #ifndef UTF8_H__
 #define UTF8_H__
 
-#include "types.h"
+#include "defs.h"
 
 #define UCS4_INVALID 0xfffd
 #define UCS4_MAX     0x10ffff

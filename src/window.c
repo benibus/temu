@@ -1,18 +1,4 @@
-#if !defined(_POSIX_C_SOURCE)
-  #define _POSIX_C_SOURCE 199309L
-#endif
-
-#include <assert.h>
-#include <ctype.h>
-#include <stdarg.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <time.h>
-
-#include <limits.h>
 #include <locale.h>
 #include <unistd.h>
 #include <sys/select.h>

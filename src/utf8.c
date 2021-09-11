@@ -1,7 +1,3 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
 #include "utils.h"
 #include "utf8.h"
 #include "ascii.h"
