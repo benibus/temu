@@ -13,6 +13,8 @@
 #include "term.h"
 #include "window.h"
 
+#define MAX_COLORS 256
+
 typedef struct Config {
 	char *wm_class;
 	char *wm_instance;

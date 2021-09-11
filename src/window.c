@@ -167,7 +167,7 @@ x11_set_visual_format(X11 *x11)
 	XVisualInfo vistmp = { 0 };
 	int count;
 
-#if defined(XW_API_X11)
+#if 1
 	vistmp.visualid =
 	    XVisualIDFromVisual(
 	        DefaultVisual(x11->dpy, x11->screen));
@@ -613,7 +613,7 @@ x11_translate_key(uint ksym, uint mask, int *id_, int *mod_)
 	}
 
 done:
-	if (id != ID_NULL) {
+	if (id >= 0) {
 		mod |= (mask & Mod1Mask)    ? ModAlt  : 0;
 		mod |= (mask & ControlMask) ? ModCtrl : 0;
 	}

@@ -39,29 +39,12 @@ struct DLLNode_;
 typedef struct SLLNode_ {
 	struct SLLNode_ *next;
 } SLLNode;
-typedef struct DLLNode_ {
-	struct DLLNode_ *prev, *next;
-} DLLNode;
 
 typedef Glyph XGlyph;
 typedef GlyphSet XGlyphSet;
 #define Font FontFace
 
 typedef struct FontSource_ FontSource;
-typedef struct GlyphInfo_ GlyphInfo;
-typedef struct GlyphTable_ GlyphTable;
-
-struct GlyphInfo_ {
-	uint32 ucs4;
-	uint32 hash;
-	ulong index;
-	GlyphMetrics metrics;
-};
-
-struct GlyphTable_ {
-	GlyphInfo *items;
-	uint32 count, max;
-};
 
 struct FontSource_ {
 	SLLNode node;
@@ -74,26 +57,71 @@ struct FontSource_ {
 	bool locked;
 };
 
+#define FONTATTR_MONOSPACE (1 << 0)
+#define FONTATTR_EMBOLDEN  (1 << 1)
+#define FONTATTR_TRANSFORM (1 << 2)
+#define FONTATTR_ANTIALIAS (1 << 3)
+#define FONTATTR_COLOR     (1 << 4)
+#define FONTATTR_HINTING   (1 << 5)
+#define FONTATTR_AUTOHINT  (1 << 6)
+
 struct FontFace_ {
 	SLLNode node;
 	FontSource *src;
+
 	FT_Matrix matrix;
 	FT_Int loadflags;
 	FT_Render_Mode mode;
-	XGlyphSet glyphset;
-	XRenderPictFormat *picfmt;
-	GlyphInfo *glyphs;
-	GlyphTable table;
+
 	FcPattern *pattern;
 	FcCharSet *charset;
-	int num_codepoints;
-	struct { int64 x, y; } size_px;
+
+	XGlyphSet glyphset;
+	XRenderPictFormat *picfmt;
+
 	bool antialias, bold, transform, has_color;
+	struct { int64 x, y; } size_px;
 	int subpx_order, lcd_filter, spacing;
 	int width, height;
 	int ascent, descent;
 	int max_advance;
+
+	struct GlyphCache_ {
+		uint32 num_ents;
+		uint32 max_ents;
+
+		struct GlyphMapping_ {
+			uint32 key;
+			uint32 index;
+		} *map;
+
+		struct GlyphData_ {
+			uint32 index;
+			struct GlyphMetrics_ {
+				int width, height;
+				int size;
+				struct { int x, y; } bearing;
+				struct { int x, y; } advance;
+			} metrics;
+		} *glyphs;
+	} cache;
 };
+
+typedef struct GlyphCache_   GlyphCache;
+typedef struct GlyphMapping_ GlyphMapping;
+typedef struct GlyphData_    GlyphData;
+typedef struct GlyphMetrics_ GlyphMetrics;
+
+typedef struct GlyphMeta_ {
+	FontFace *font;
+	GlyphData *data;
+} GlyphMeta;
+
+typedef enum {
+	GlyphStateMissing  = -1,
+	GlyphStateUncached =  0,
+	GlyphStateCached   = +1
+} GlyphState;
 
 static struct {
 	FT_Library ft;
@@ -126,176 +154,469 @@ struct FontConfig {
 #define FCRES_FOUND(res) ((res) == FcResultMatch)
 #define FCRES_VALID(res) (FCRES_FOUND(res) || (res) == FcResultNoMatch)
 
-static uint32 hash32(uint32);
-static uint32 font_load_glyph(FontFace *, uint32);
-static void font_load_glyphs(FontFace *);
-static void font_free_glyphs(FontFace *);
-static GlyphInfo *font_add_glyph(FontFace *, uint32, uint32);
-static void font_destroy_source(FontSource *);
-static bool fc_extract_prop(const FcPattern *, const char *, void *);
-static FT_Vector ft_get_vec2(FT_Matrix, int64, int64);
+#define MASK_UCS4 ((1 << 21) - 1)
+#define MASK_META (~MASK_UCS4)
+#define ENT_PACK(u) ((u) | MASK_META)
+#define ENT_UCS4(c) ((c) & MASK_UCS4)
 
-static GlyphMetrics *glyph_set_metrics(GlyphMetrics *, const FontFace *, const FT_GlyphSlotRec *);
-static uint glyph_write_image(GlyphMetrics, FT_Bitmap, uchar **, uint);
-static GlyphTable *glyph_table_init(FontFace *);
-static uint32 glyph_get_ucs4(FontFace *, uint32);
-static uint32 glyph_lookup_ucs4(FontFace *, uint32);
-static GlyphInfo *glyph_insert(FontFace *, uint32, GlyphInfo *);
+#define DUMMY__(c) ((uint8)(powf((c) / 255.0f, 0.75f) * 255.0f))
+
+static uint32 font_init_cache(GlyphCache *, uint, uint);
+static GlyphMeta font_load_glyph(FontFace *, uint32);
+static GlyphState font_query_glyph(FontFace *, uint32, uint32 *);
+static GlyphData *font_cache_glyph(FontFace *, uint32);
+static bool font_extract_prop(const FcPattern *, const char *, void *);
+static uint32 font_get_glyph_index(const FontFace *, uint32);
+static GlyphMetrics font_get_glyph_metrics(const FontFace *, const FT_FaceRec *);
+static void font_free_glyphs(FontFace *);
+static void font_destroy_source(FontSource *);
 
 static void dbg_print_glyph_bitmap(const uchar *, GlyphMetrics, uint);
 
-uint32
-hash32(uint32 n)
+GlyphState
+font_query_glyph(FontFace *font, uint32 ucs4, uint32 *index)
 {
-	n = (n + 0x7ed55d16) + (n << 12);
-	n = (n ^ 0xc761c23c) ^ (n >> 19);
-	n = (n + 0x165667b1) + (n <<  5);
-	n = (n + 0xd3a2646c) ^ (n <<  9);
-	n = (n + 0xfd7046c5) + (n <<  3);
-	n = (n ^ 0xb55a4f09) ^ (n >> 16);
-
-	return n;
-}
-
-uint
-glyph_write_image(GlyphMetrics metrics, FT_Bitmap src, uchar **buf, uint max)
-{
-	if (!buf) return 0;
-
-	uint size = metrics.pitch * metrics.height;
-	uchar *img = *buf;
-
-	if (!img || size > max) {
-		img = xmalloc(1, size);
+	if (!font->cache.max_ents) {
+		return 0;
 	}
-	memset(img, 0, size);
 
-	uchar *p1 = src.buffer;
-	uchar *p2 = img;
+	const uint32 limit = font->cache.max_ents;
+	uint32 hash = ucs4 % limit;
+	uint32 offset = 0;
+	GlyphState state = GlyphStateUncached;
 
-	for (uint y = 0; y < metrics.height; y++) {
-#if 0
-		memcpy(p2, p1, glyph.width);
-#else
-		for (uint x = 0; x < metrics.width; x++) {
-			float c = p1[x];
-			p2[x] = (uint8)(powf(c / 255.0f, 0.75f) * 255.0f);
-			/* p2[x] = (uint8)(sqrtf(c / 255.0f) * 255.0f); */
+	GlyphMapping *ent = font->cache.map + hash;
+
+	for (;;) {
+		if (!ent->key) {
+			uint32 index = font_get_glyph_index(font, ucs4);
+			if (!index) {
+				return GlyphStateMissing;
+			}
+			ent->key = ENT_PACK(ucs4);
+			ent->index = index;
+			break;
+		} else if (ucs4 == ENT_UCS4(ent->key)) {
+			state = GlyphStateCached;
+			break;
 		}
-#endif
-		p1 += src.pitch;
-		p2 += metrics.pitch;
+
+		if (!offset) {
+			offset = ucs4 % (limit - 2);
+			offset += !offset;
+		}
+		hash += offset;
+		hash -= (hash >= limit) ? limit : 0;
+
+		ent = font->cache.map + hash;
 	}
 
-	*buf = img;
-	return size;
-}
+	if (index) {
+		*index = ent->index;
+	}
+	if (!state) {
+		font->cache.num_ents++;
+	}
 
-#if 1
-GlyphTable *
-glyph_table_init(FontFace *font)
-{
-	assert(font && font->num_codepoints);
-	GlyphTable *table = &font->table;
-
-	assert(font->num_codepoints >= 128 - 32);
-	assert(font->num_codepoints < 0x10ffff);
-	memset(table, 0, sizeof(*table));
-	table->max = MIN(font->num_codepoints / 2 * 3, 0x10ffff);
-	table->items = xcalloc(table->max, sizeof(*table->items));
-
-	return table;
+	return state;
 }
 
 uint32
-glyph_get_ucs4(FontFace *font, uint32 addr)
+font_get_glyph_index(const FontFace *font, uint32 ucs4)
 {
-	GlyphTable *table = &font->table;
-
-	if (addr < table->max) {
-		return table->items[addr].ucs4;
+	if (FcCharSetHasChar(font->charset, ucs4)) {
+		return FcFreeTypeCharIndex(font->src->face, ucs4);
 	}
 
 	return 0;
+}
+
+bool
+font_init_face(FontFace *font)
+{
+	if (!font) return false;
+
+	FontSource *root = font->src;
+	FT_FaceRec *face = font->src->face;
+
+	struct FontConfig cfg = { 0 };
+
+	int load_target = FT_LOAD_TARGET_NORMAL;
+	int load_flags = 0;
+	int render_mode = FT_RENDER_MODE_NORMAL;
+	int pixel_fmt = PictStandardA8;
+
+#define font_extract_prop(...) ASSERT(font_extract_prop(__VA_ARGS__))
+	font_extract_prop(font->pattern, FC_PIXEL_SIZE, &cfg.pixel_size);
+	font_extract_prop(font->pattern, FC_DPI,        &cfg.dpi);
+	font_extract_prop(font->pattern, FC_ASPECT,     &cfg.aspect);
+	font_extract_prop(font->pattern, FC_RGBA,       &cfg.subpixel_order)
+	font_extract_prop(font->pattern, FC_LCD_FILTER, &cfg.lcd_filter);
+	font_extract_prop(font->pattern, FC_MATRIX,     &cfg.matrix);
+	font_extract_prop(font->pattern, FC_EMBOLDEN,   &cfg.use_embolden);
+	font_extract_prop(font->pattern, FC_SPACING,    &cfg.spacing_style);
+	font_extract_prop(font->pattern, FC_HINTING,    &cfg.use_hinting);
+	font_extract_prop(font->pattern, FC_AUTOHINT,   &cfg.use_autohint);
+	font_extract_prop(font->pattern, FC_HINT_STYLE, &cfg.hint_style);
+	font_extract_prop(font->pattern, FC_CHAR_WIDTH, &cfg.char_width);
+	font_extract_prop(font->pattern, FC_VERTICAL_LAYOUT, &cfg.use_vertlayout);
+	font_extract_prop(font->pattern, FC_ANTIALIAS,  &cfg.use_antialias);
+	font_extract_prop(font->pattern, FC_CHARSET,    &cfg.charset);
+#undef font_extract_prop
+
+	if (!face) {
+		if (!shared.ft) {
+			ASSERT(!FT_Init_FreeType(&shared.ft));
+		}
+		FT_New_Face(shared.ft, root->file, root->index, &root->face);
+		face = root->face;
+		root->num_glyphs = face->num_glyphs + 1;
+	}
+
+	font->size_px.x = (int64)(cfg.pixel_size * SUBPX);
+	font->size_px.y = (int64)(cfg.pixel_size * SUBPX * cfg.aspect);
+
+	FT_Set_Char_Size(face, font->size_px.x, font->size_px.y, 0, 0);
+	FT_Set_Transform(face, &cfg.matrix, NULL);
+
+	if (FT_HAS_COLOR(face)) {
+		cfg.use_color = true;
+	}
+	if (!(face->face_flags & FT_FACE_FLAG_SCALABLE)) {
+		cfg.use_antialias = false;
+	}
+
+	// TODO(ben): Make this less confusing
+	if (cfg.use_autohint) {
+		load_flags |= FT_LOAD_FORCE_AUTOHINT;
+	}
+	if (cfg.use_color) {
+		pixel_fmt = PictStandardARGB32;
+		load_flags |= FT_LOAD_COLOR;
+	} else if (!cfg.use_antialias) {
+		if (cfg.hint_style == FC_HINT_NONE) {
+			load_flags |= FT_LOAD_NO_HINTING;
+		} else {
+			load_target = FT_LOAD_TARGET_MONO;
+		}
+		pixel_fmt = PictStandardA1;
+		load_flags |= FT_LOAD_MONOCHROME;
+		render_mode = FT_RENDER_MODE_MONO;
+	} else if (!cfg.use_hinting) {
+		load_flags |= FT_LOAD_NO_BITMAP;
+		load_flags |= FT_LOAD_NO_HINTING;
+	} else {
+		load_flags |= FT_LOAD_NO_BITMAP;
+		switch (cfg.hint_style) {
+		case FC_HINT_NONE:
+			load_flags |= FT_LOAD_NO_HINTING;
+			break;
+		case FC_HINT_SLIGHT:
+			load_target = FT_LOAD_TARGET_LIGHT;
+			break;
+		case FC_HINT_MEDIUM:
+			break;
+		default:
+			switch (cfg.subpixel_order)
+			case FC_RGBA_RGB:
+			case FC_RGBA_BGR: {
+				pixel_fmt = PictStandardARGB32;
+				load_target = FT_LOAD_TARGET_LCD;
+				render_mode = FT_RENDER_MODE_LCD;
+				break;
+			case FC_RGBA_VRGB:
+			case FC_RGBA_VBGR:
+				pixel_fmt = PictStandardARGB32;
+				load_target = FT_LOAD_TARGET_LCD_V;
+				render_mode = FT_RENDER_MODE_LCD_V;
+				break;
+			default:
+				break;
+			}
+		}
+	}
+
+	FT_Size_Metrics mtx = face->size->metrics;
+	if (memmatch(&cfg.matrix, &FTMATRIX_DFL, sizeof(FT_Matrix))) {
+		font->ascent  = +(mtx.ascender >> 6);
+		font->descent = -(mtx.descender >> 6);
+		font->height  = +(mtx.height >> 6);
+		font->max_advance = DEFAULT(cfg.char_width, mtx.max_advance >> 6);
+
+		font->transform = false;
+	} else {
+		// transform the default metrics
+		FT_Vector v = { 0 };
+
+		v.x = 0, v.y = mtx.ascender;
+		FT_Vector_Transform(&v, &cfg.matrix);
+		font->ascent = +(v.y >> 6);
+
+		v.x = 0, v.y = mtx.descender;
+		FT_Vector_Transform(&v, &cfg.matrix);
+		font->descent = -(v.y >> 6);
+
+		v.x = 0, v.y = mtx.height;
+		FT_Vector_Transform(&v, &cfg.matrix);
+		font->height = +(v.y >> 6);
+
+		v.x = mtx.max_advance, v.y = 0;
+		FT_Vector_Transform(&v, &cfg.matrix);
+		font->max_advance = +(v.x >> 6);
+
+		font->transform = true;
+		font->loadflags |= FT_LOAD_NO_BITMAP;
+	}
+
+	font->loadflags = load_flags|load_target;
+	font->mode = render_mode;
+	font->subpx_order = cfg.subpixel_order;
+	font->has_color = cfg.use_color;
+	font->lcd_filter = cfg.lcd_filter;
+	font->bold = cfg.use_embolden;
+	font->antialias = cfg.use_antialias;
+	font->spacing = cfg.spacing_style;
+	font->matrix = cfg.matrix;
+	font->picfmt = XRenderFindStandardFormat(root->dpy, pixel_fmt);
+	font->charset = (cfg.charset) ? FcCharSetCopy(cfg.charset) : NULL;
+	if (cfg.charset) {
+		font->charset = FcCharSetCopy(cfg.charset);
+	} else {
+		font->charset = FcFreeTypeCharSet(font->src->face, NULL);
+	}
+
+	ASSERT(font_init_cache(&font->cache, FcCharSetCount(font->charset), root->num_glyphs));
+	font->glyphset = XRenderCreateGlyphSet(font->src->dpy, font->picfmt);
+
+	// override everything and pre-render the "missing glyph" glyph
+	font_cache_glyph(font, 0);
+	// pre-cache the ASCII range
+	for (int c = 1; c < 128; c++) {
+		font_load_glyph(font, c);
+	};
+
+	return true;
+}
+
+GlyphMeta
+font_load_glyph(FontFace *font, uint32 ucs4)
+{
+	uint32 index = 0;
+	GlyphState state = font_query_glyph(font, ucs4, &index);
+
+	if (state == GlyphStateUncached) {
+		font_cache_glyph(font, index);
+	}
+
+	return (GlyphMeta){
+		.font = font,
+		.data = font->cache.glyphs + index
+	};
+}
+
+GlyphData *
+font_cache_glyph(FontFace *font, uint32 index)
+{
+	FT_FaceRec *face = font->src->face;
+	FT_GlyphSlotRec *slot = face->glyph;
+
+	static uchar local[4096];
+	uchar *data = local;
+	uint size;
+
+	GlyphData glyph = { .index = index };
+
+	FT_Library_SetLcdFilter(shared.ft, font->lcd_filter);
+	{
+		FT_Error err;
+		err = FT_Load_Glyph(face, index, font->loadflags);
+		ASSERT(!err);
+		if (!font->width) {
+			font->width = PIXELS(slot->metrics.horiAdvance);
+		}
+		if (font->bold) {
+			FT_GlyphSlot_Embolden(slot);
+		}
+		if (slot->format != FT_GLYPH_FORMAT_BITMAP) {
+			err = FT_Render_Glyph(slot, font->mode);
+			ASSERT(!err);
+			slot = face->glyph;
+		}
+	}
+	FT_Library_SetLcdFilter(shared.ft, FT_LCD_FILTER_NONE);
+
+	ASSERT(face->glyph->format == FT_GLYPH_FORMAT_BITMAP);
+	glyph.metrics = font_get_glyph_metrics(font, face);
+
+	if (glyph.metrics.size > (int)sizeof(local)) {
+		data = xmalloc(glyph.metrics.size, sizeof(*data));
+	}
+	if (glyph.metrics.size > 0) {
+		uchar *src = slot->bitmap.buffer;
+		uchar *dst = data;
+		uint pitch = glyph.metrics.size / glyph.metrics.height;
+
+		for (int y = 0; y < glyph.metrics.height; y++) {
+			memcpy(dst, src, glyph.metrics.width);
+			src += slot->bitmap.pitch;
+			dst += pitch;
+		}
+	}
+#if 0
+	dbg_print_glyph_bitmap(data, glyph.metrics, 1);
+#endif
+
+	XGlyphInfo info = {
+		.width  = glyph.metrics.width,
+		.height = glyph.metrics.height,
+		.x      = glyph.metrics.bearing.x,
+		.y      = glyph.metrics.bearing.y,
+		.xOff   = glyph.metrics.advance.x,
+		.yOff   = glyph.metrics.advance.y
+	};
+	XRenderAddGlyphs(font->src->dpy, font->glyphset,
+	                 (XGlyph *)&index, &info, 1,
+	                 (char *)data, glyph.metrics.size);
+
+	if (data != local) free(data);
+
+	return memcpy(font->cache.glyphs + glyph.index, &glyph, sizeof(glyph));
 }
 
 GlyphMetrics
-glyph_get_metrics(FontFace *font, uint32 addr)
+font_get_glyph_metrics(const FontFace *font, const FT_FaceRec *face)
 {
-	GlyphTable *table = &font->table;
+	GlyphMetrics metrics = { 0 };
+	const FT_GlyphSlotRec *slot = face->glyph;
+	const FT_Bitmap bitmap = slot->bitmap;
 
-	if (addr < table->max) {
-		return table->items[addr].metrics;
+	if (font->spacing == FC_MONO) {
+		if (font->loadflags & FT_LOAD_VERTICAL_LAYOUT) {
+			metrics.advance.x = 0;
+			metrics.advance.y = -font->width;
+		} else {
+			metrics.advance.x = font->width;
+			metrics.advance.y = 0;
+		}
+	} else {
+		return (GlyphMetrics){ 0 };
 	}
 
-	return (GlyphMetrics){ 0 };
+	metrics.width  = bitmap.width;
+	metrics.height = bitmap.rows;
+	metrics.bearing.x = -slot->bitmap_left;
+	metrics.bearing.y = +slot->bitmap_top;
+
+	int pitch = (metrics.width + 3) & ~3;
+
+	switch (bitmap.pixel_mode) {
+		case FT_PIXEL_MODE_MONO: {
+			if (font->mode == FT_RENDER_MODE_MONO) {
+				pitch = (((metrics.width + 31) & ~31) >> 3);
+				break;
+			}
+		}
+		// fallthrough
+		case FT_PIXEL_MODE_GRAY: {
+			switch (font->mode) {
+				case FT_RENDER_MODE_LCD:
+				case FT_RENDER_MODE_LCD_V: {
+					pitch = metrics.width * sizeof(uint32);
+					break;
+				}
+				default: {
+					break;
+				}
+			}
+			break;
+		}
+		default: {
+			return (GlyphMetrics){ 0 };
+		}
+	}
+
+	metrics.size = pitch * metrics.height;
+
+	return metrics;
 }
 
-ulong
-glyph_get_index(FontFace *font, uint32 addr)
+bool
+font_extract_prop(const FcPattern *pattern, const char *name, void *data)
 {
-	GlyphTable *table = &font->table;
+	ASSERT(pattern && data);
 
-	if (addr < table->max) {
-		return table->items[addr].index;
-	}
+	if (!name) return false;
 
-	return 0;
-}
+	FcResult res = FcResultNoMatch;
+	const FcObjectType *ent = FcNameGetObjectType(name);
 
-GlyphInfo *
-glyph_get_data(FontFace *font, uint32 addr)
-{
-	GlyphTable *table = &font->table;
+	switch (ent->type) {
+		case FcTypeDouble: {
+			res = FcPatternGetDouble(pattern, ent->object, 0, data);
+			break;
+		}
+		case FcTypeInteger: {
+			res = FcPatternGetInteger(pattern, ent->object, 0, data);
+			break;
+		}
+		case FcTypeString: {
+			res = FcPatternGetString(pattern, ent->object, 0, data);
+			break;
+		}
+		case FcTypeBool: {
+			FcBool src = 0;
+			res = FcPatternGetBool(pattern, ent->object, 0, &src);
+			*(bool *)data = !!src;
+			break;
+		}
+		case FcTypeMatrix: {
+			FcMatrix *matf = &FCMATRIX_DFL;
+			FT_Matrix *mati = data;
+			res = FcPatternGetMatrix(pattern, ent->object, 0, &matf);
+			// convert to freetype's int64 format
+			mati->xx = 0x10000L * matf->xx;
+			mati->xy = 0x10000L * matf->xy;
+			mati->yx = 0x10000L * matf->yx;
+			mati->yy = 0x10000L * matf->yy;
+			break;
+		}
+		case FcTypeCharSet: {
+			res = FcPatternGetCharSet(pattern, ent->object, 0, data);
+			break;
+		}
+		default: {
+			break;
+		}
+	};
 
-	if (addr < table->max) {
-		return table->items + addr;
-	}
-
-	return NULL;
+	ASSERT(FCRES_VALID(res));
+	return FCRES_FOUND(res);
 }
 
 uint32
-glyph_lookup_ucs4(FontFace *font, uint32 ucs4)
+font_init_cache(GlyphCache *cache, uint num_chars, uint num_glyphs)
 {
-	if (!ucs4) return 0;
+	uint32 max_ents = 0;
 
-	GlyphTable *table = &font->table;
-
-	uint32 hash = hash32(ucs4);
-	if (!hash) return 0;
-
-	uint32 start = (hash % table->max);
-	uint32 addr = start;
-	uint32 result = 0;
-
-	do {
-		GlyphInfo *data = &table->items[addr];
-		if (!data->ucs4 || ucs4 == data->ucs4) {
-			assert(data->ucs4 || (!data->ucs4 && !data->index));
-			result = addr;
-			break;
+	if (num_chars) {
+		max_ents = num_chars + (num_chars >> 1);
+		max_ents = ((max_ents + 1) & ~1) + 1;
+		while (!isprime(max_ents)) {
+			max_ents += 2;
 		}
-		if (++addr == table->max) {
-			addr = 1;
-		}
-	} while (addr != start);
+	}
 
-	return result;
+	if (!num_glyphs || !max_ents) {
+		return 0;
+	}
+
+	memset(cache, 0, sizeof(*cache));
+	cache->map = xcalloc(max_ents, sizeof(*cache->map));
+	cache->glyphs = xcalloc(num_glyphs, sizeof(*cache->glyphs));
+	cache->max_ents = max_ents;
+
+	return max_ents;
 }
-
-GlyphInfo *
-glyph_insert(FontFace *font, uint32 addr, GlyphInfo *src)
-{
-	GlyphTable *table = &font->table;
-	GlyphInfo *dst = &table->items[addr];
-
-	table->count += !dst->ucs4;
-	memcpy(dst, src, sizeof(*dst));
-
-	return dst;
-}
-#endif
 
 bool
 font_get_face_metrics(FontFace *font, FontMetrics *ret)
@@ -357,10 +678,10 @@ font_destroy_face(FontFace *target)
 		FcPatternDestroy(obj->pattern);
 		FcCharSetDestroy(obj->charset);
 		XRenderFreeGlyphSet(obj->src->dpy, obj->glyphset);
+		font_free_glyphs(obj);
 		if (!--obj->src->refcount) {
 			font_destroy_source(obj->src);
 		}
-		free(obj->glyphs);
 		free(obj);
 	}
 }
@@ -371,9 +692,10 @@ font_free_glyphs(FontFace *target)
 	if (target) {
 		FcCharSetDestroy(target->charset);
 		XRenderFreeGlyphSet(target->src->dpy, target->glyphset);
-		free(target->glyphs);
-		target->num_codepoints = 0;
-		target->glyphs = NULL;
+		FREE(target->cache.map);
+		FREE(target->cache.glyphs);
+		target->cache.num_ents = 0;
+		target->cache.max_ents = 0;
 	}
 }
 
@@ -605,59 +927,6 @@ draw_rect_solid(const RC *rc, const Color *color_, int x_, int y_, int w_, int h
 }
 
 void
-draw_string(const RC *rc, int x, int y, const void *str, uint len, uint width)
-{
-	WinData *win = (WinData *)rc->win;
-	struct { Color *fg, *bg; } color;
-
-	if (rc->mode & RC_MODE_INVERT) {
-		color.fg = rc->color.bg;
-		color.bg = rc->color.fg;
-	} else {
-		color.fg = rc->color.fg;
-		color.bg = rc->color.bg;
-	}
-	if (!color.fg) return;
-	if (rc->mode & RC_MODE_FILL) {
-		draw_rect_solid(rc,
-		                color.bg,
-		                x, y,
-		                rc->font->width * len,
-		                rc->font->ascent + rc->font->descent);
-	}
-#define RENDER_STRING(T_,sz) \
-XRenderCompositeString##sz(win->x11->dpy,                        \
-                           PictOpOver, color.fg->id, win->pic, \
-                           rc->font->picfmt, rc->font->glyphset, \
-                           0, 0, x, y + rc->font->ascent,        \
-                           (const T_ *)str, len)
-	switch (width) {
-		case 1: RENDER_STRING(char, 8); break;
-		case 2: RENDER_STRING(uint16, 16); break;
-		case 4: RENDER_STRING(uint32, 32); break;
-	}
-#undef RENDER_STRING
-}
-
-void
-draw_string8(const RC *rc, int x, int y, const char *str, uint len)
-{
-	draw_string(rc, x, y, str, len, sizeof(*str));
-}
-
-void
-draw_string16(const RC *rc, int x, int y, const uint16 *str, uint len)
-{
-	draw_string(rc, x, y, str, len, sizeof(*str));
-}
-
-void
-draw_string32(const RC *rc, int x, int y, const uint32 *str, uint len)
-{
-	draw_string(rc, x, y, str, len, sizeof(*str));
-}
-
-void
 draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 {
 	assert(rc);
@@ -690,12 +959,10 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 	bool flushed = true;
 
 	for (uint i = 0; i < max; i++) {
-		uint32 entry = font_load_glyph(brush.font, glyphs[i].ucs4);
-		uint32 idx = glyph_get_index(brush.font, entry);
-		GlyphMetrics metrics = glyph_get_metrics(brush.font, entry);
+		GlyphMeta glyph = font_load_glyph(brush.font, glyphs[i].ucs4);
 
-		int chdx = metrics.advance.x;
-		int chdy = metrics.advance.y;
+		int chdx = glyph.data->metrics.advance.x;
+		int chdy = glyph.data->metrics.advance.y;
 		int adjx = 0;
 		int adjy = 0;
 
@@ -709,7 +976,7 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 			pos.x0 = pos.x1;
 			pos.y0 = pos.y1;
 			pos.kx = 0;
-			pos.ky = brush.font->ascent;
+			pos.ky = glyph.font->ascent;
 		}
 		// Elt positions must be specified relative to the previous elt in the array.
 		// This is why only the first elt (per draw call) receives the offset from
@@ -721,9 +988,9 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 
 		elts.buf[elts.n].xOff = pos.x0 + pos.kx + adjx;
 		elts.buf[elts.n].yOff = pos.y0 + pos.ky + adjy;
-		elts.buf[elts.n].glyphset = brush.font->glyphset;
+		elts.buf[elts.n].glyphset = glyph.font->glyphset;
 		elts.buf[elts.n].nchars++;
-		text.buf[text.n++] = idx;
+		text.buf[text.n++] = glyph.data->index;
 
 		flushed = false;
 		// accumulate position so we can set the new leading elt after drawing
@@ -735,7 +1002,7 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 		if (i + 1 < max && elts.n < LEN(elts.buf) && text.n < LEN(text.buf)) {
 			if (glyphs[i+1].foreground == brush.foreground &&
 			    glyphs[i+1].background == brush.background &&
-			    glyphs[i+1].font == brush.font)
+			    glyphs[i+1].font == glyph.font)
 			{
 				continue;
 			}
@@ -745,14 +1012,14 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 			draw_rect_solid(rc, brush.background,
 			                    pos.x0, pos.y0,
 			                    pos.x1 - pos.x0,
-			                    brush.font->ascent + brush.font->descent);
+			                    glyph.font->ascent + glyph.font->descent);
 		}
 		// render elt buffer
 		XRenderCompositeText32(win->x11->dpy,
 			               PictOpOver,
 			               brush.foreground->id,
 			               win->pic,
-			               brush.font->picfmt,
+			               glyph.font->picfmt,
 			               0, 0,
 			               elts.buf[0].xOff,
 			               elts.buf[0].yOff,
@@ -769,402 +1036,22 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 	}
 }
 
-GlyphInfo *
-font_add_glyph(FontFace *font, uint32 addr, uint32 ucs4)
-{
-	Buf(uchar, 4096) buf = { 0 };
-	buf.data = buf.local;
-	buf.limit = LEN(buf.local);
-
-	GlyphInfo glyph = { 0 };
-	GlyphInfo *data = NULL;
-
-	FT_FaceRec *face = font->src->face;
-	FT_GlyphSlotRec *slot = face->glyph;
-
-	FT_Library_SetLcdFilter(shared.ft, font->lcd_filter);
-	{
-		if (addr) {
-			glyph.index = FcFreeTypeCharIndex(face, ucs4);
-			glyph.ucs4 = ucs4;
-#if 1
-			// temporary, until missing glyph lookups
-			if (!glyph.index) {
-				return NULL;
-			}
-#endif
-		}
-
-		FT_Error err;
-		err = FT_Load_Glyph(face, glyph.index, font->loadflags);
-		if (err) return data;
-
-		if (!font->width) {
-			font->width = PIXELS(slot->metrics.horiAdvance);
-		}
-		if (font->bold) {
-			FT_GlyphSlot_Embolden(slot);
-		}
-		if (slot->format != FT_GLYPH_FORMAT_BITMAP) {
-			err = FT_Render_Glyph(slot, font->mode);
-			if (err) return data;
-			slot = face->glyph;
-		}
-	}
-	FT_Library_SetLcdFilter(shared.ft, FT_LCD_FILTER_NONE);
-
-	if (!glyph_set_metrics(&glyph.metrics, font, face->glyph)) {
-		return data;
-	}
-
-	buf.count = glyph_write_image(glyph.metrics,
-	                              slot->bitmap,
-	                              &buf.data, buf.limit);
-#if 0
-	dbg_print_glyph_bitmap(buf, glyph.metrics, 1);
-#endif
-	XGlyphInfo info = { 0 };
-	info.width  = glyph.metrics.width;
-	info.height = glyph.metrics.height;
-	info.x      = glyph.metrics.bearing.x;
-	info.y      = glyph.metrics.bearing.y;
-	info.xOff   = glyph.metrics.advance.x;
-	info.yOff   = glyph.metrics.advance.y;
-
-	XRenderAddGlyphs(font->src->dpy,
-		         font->glyphset,
-		         (XGlyph *)&glyph.index,
-		         &info, 1,
-		         (char *)buf.data, buf.count);
-
-	data = glyph_insert(font, addr, &glyph);
-
-	if (buf.data != buf.local) {
-		free(buf.data);
-	}
-	return data;
-}
-
-uint32
-font_load_glyph(FontFace *font, uint32 ucs4)
-{
-	uint32 addr = glyph_lookup_ucs4(font, ucs4);
-
-	if (addr && !glyph_get_ucs4(font, addr)) {
-		if (!font_add_glyph(font, addr, ucs4)) {
-			return 0;
-		}
-	}
-
-	return addr;
-}
-
-void
-font_load_glyphs(FontFace *font)
-{
-	if (!font->glyphset) {
-		font->glyphset = XRenderCreateGlyphSet(font->src->dpy, font->picfmt);
-	}
-
-	// Initialize the table and force-render the placeholder glyph first.
-	// Otherwise, the lookup logic will always treat it as "found" and never autoload it.
-	if (!font->table.items) {
-		glyph_table_init(font);
-		font_add_glyph(font, 0, 0);
-	}
-
-	for (uint ucs4 = ' '; ucs4 < 127; ucs4++) {
-		font_load_glyph(font, ucs4);
-	}
-}
-
-GlyphMetrics *
-glyph_set_metrics(GlyphMetrics *metrics, const FontFace *font, const FT_GlyphSlotRec *slot)
-{
-	GlyphMetrics tmp = *metrics;
-
-	if (slot->format != FT_GLYPH_FORMAT_BITMAP)
-		return NULL;
-
-	if (font->spacing == FC_MONO) {
-		if (font->loadflags & FT_LOAD_VERTICAL_LAYOUT) {
-			tmp.advance.x = 0;
-			tmp.advance.y = -font->width;
-		} else {
-			tmp.advance.x = font->width;
-			tmp.advance.y = 0;
-		}
-	} else {
-		return NULL;
-	}
-
-	tmp.width  = slot->bitmap.width;
-	tmp.height = slot->bitmap.rows;
-	tmp.pitch  = (tmp.width + 3) & ~3;
-	tmp.bearing.x = -slot->bitmap_left;
-	tmp.bearing.y = slot->bitmap_top;
-
-	switch (slot->bitmap.pixel_mode) {
-		case FT_PIXEL_MODE_MONO: {
-			if (font->mode == FT_RENDER_MODE_MONO) {
-				tmp.pitch = (((tmp.width + 31) & ~31) >> 3);
-				break;
-			}
-		}
-		// fallthrough
-		case FT_PIXEL_MODE_GRAY: {
-			switch (font->mode) {
-				case FT_RENDER_MODE_LCD:
-				case FT_RENDER_MODE_LCD_V: {
-					tmp.pitch = tmp.width * sizeof(uint32);
-					break;
-				}
-				default: {
-					break;
-				}
-			}
-			break;
-		}
-		default: {
-			return NULL;
-		}
-	}
-
-	memcpy(metrics, &tmp, sizeof(tmp));
-
-	return metrics;
-}
-
-FT_Vector
-ft_get_vec2(FT_Matrix mat, int64 vx, int64 vy)
-{
-	FT_Vector vec = { vx, vy };
-	FT_Vector_Transform(&vec, &mat);
-
-	return vec;
-}
-
-bool
-fc_extract_prop(const FcPattern *pat, const char *name, void *data)
-{
-	ASSERT(pat && data);
-
-	if (!name) return false;
-
-	FcResult res = FcResultNoMatch;
-	const FcObjectType *ent = FcNameGetObjectType(name);
-
-	switch (ent->type) {
-		case FcTypeDouble: {
-			res = FcPatternGetDouble(pat, ent->object, 0, data);
-			break;
-		}
-		case FcTypeInteger: {
-			res = FcPatternGetInteger(pat, ent->object, 0, data);
-			break;
-		}
-		case FcTypeString: {
-			res = FcPatternGetString(pat, ent->object, 0, data);
-			break;
-		}
-		case FcTypeBool: {
-			FcBool src = 0;
-			res = FcPatternGetBool(pat, ent->object, 0, &src);
-			*(bool *)data = !!src;
-			break;
-		}
-		case FcTypeMatrix: {
-			FcMatrix *matf = &FCMATRIX_DFL;
-			FT_Matrix *mati = data;
-			res = FcPatternGetMatrix(pat, ent->object, 0, &matf);
-			// convert to freetype's int64 format
-			mati->xx = 0x10000L * matf->xx;
-			mati->xy = 0x10000L * matf->xy;
-			mati->yx = 0x10000L * matf->yx;
-			mati->yy = 0x10000L * matf->yy;
-			break;
-		}
-		case FcTypeCharSet: {
-			res = FcPatternGetCharSet(pat, ent->object, 0, data);
-			break;
-		}
-		default: {
-			break;
-		}
-	};
-
-	ASSERT(FCRES_VALID(res));
-	return FCRES_FOUND(res);
-}
-
-bool
-font_init_face(FontFace *font)
-{
-	if (!font) return false;
-
-	if (font->glyphs) return true;
-
-	FontSource *root = font->src;
-	FT_FaceRec *face = font->src->face;
-
-	struct FontConfig cfg = { 0 };
-
-	int load_target = FT_LOAD_TARGET_NORMAL;
-	int load_flags = 0;
-	int render_mode = FT_RENDER_MODE_NORMAL;
-	int pixel_fmt = PictStandardA8;
-
-#define fc_extract_prop(...) ASSERT(fc_extract_prop(__VA_ARGS__))
-	fc_extract_prop(font->pattern, FC_PIXEL_SIZE, &cfg.pixel_size);
-	fc_extract_prop(font->pattern, FC_DPI,        &cfg.dpi);
-	fc_extract_prop(font->pattern, FC_ASPECT,     &cfg.aspect);
-	fc_extract_prop(font->pattern, FC_RGBA,       &cfg.subpixel_order)
-	fc_extract_prop(font->pattern, FC_LCD_FILTER, &cfg.lcd_filter);
-	fc_extract_prop(font->pattern, FC_MATRIX,     &cfg.matrix);
-	fc_extract_prop(font->pattern, FC_EMBOLDEN,   &cfg.use_embolden);
-	fc_extract_prop(font->pattern, FC_SPACING,    &cfg.spacing_style);
-	fc_extract_prop(font->pattern, FC_HINTING,    &cfg.use_hinting);
-	fc_extract_prop(font->pattern, FC_AUTOHINT,   &cfg.use_autohint);
-	fc_extract_prop(font->pattern, FC_HINT_STYLE, &cfg.hint_style);
-	fc_extract_prop(font->pattern, FC_CHAR_WIDTH, &cfg.char_width);
-	fc_extract_prop(font->pattern, FC_VERTICAL_LAYOUT, &cfg.use_vertlayout);
-	fc_extract_prop(font->pattern, FC_ANTIALIAS,  &cfg.use_antialias);
-	fc_extract_prop(font->pattern, FC_CHARSET,    &cfg.charset);
-#undef fc_extract_prop
-
-	if (!face) {
-		if (!shared.ft) {
-			ASSERT(!FT_Init_FreeType(&shared.ft));
-		}
-		FT_New_Face(shared.ft, root->file, root->index, &root->face);
-		face = root->face;
-		root->num_glyphs = face->num_glyphs + 1;
-	}
-
-	font->size_px.x = (int64)(cfg.pixel_size * SUBPX);
-	font->size_px.y = (int64)(cfg.pixel_size * SUBPX * cfg.aspect);
-
-	FT_Set_Char_Size(face, font->size_px.x, font->size_px.y, 0, 0);
-	FT_Set_Transform(face, &cfg.matrix, NULL);
-
-	if (FT_HAS_COLOR(face)) {
-		cfg.use_color = true;
-	}
-	if (!(face->face_flags & FT_FACE_FLAG_SCALABLE)) {
-		cfg.use_antialias = false;
-	}
-
-	// TODO(ben): Make this less confusing
-	if (cfg.use_autohint) {
-		load_flags |= FT_LOAD_FORCE_AUTOHINT;
-	}
-	if (cfg.use_color) {
-		pixel_fmt = PictStandardARGB32;
-		load_flags |= FT_LOAD_COLOR;
-	} else if (!cfg.use_antialias) {
-		if (cfg.hint_style == FC_HINT_NONE) {
-			load_flags |= FT_LOAD_NO_HINTING;
-		} else {
-			load_target = FT_LOAD_TARGET_MONO;
-		}
-		pixel_fmt = PictStandardA1;
-		load_flags |= FT_LOAD_MONOCHROME;
-		render_mode = FT_RENDER_MODE_MONO;
-	} else if (!cfg.use_hinting) {
-		load_flags |= FT_LOAD_NO_BITMAP;
-		load_flags |= FT_LOAD_NO_HINTING;
-	} else {
-		load_flags |= FT_LOAD_NO_BITMAP;
-		switch (cfg.hint_style) {
-		case FC_HINT_NONE:
-			load_flags |= FT_LOAD_NO_HINTING;
-			break;
-		case FC_HINT_SLIGHT:
-			load_target = FT_LOAD_TARGET_LIGHT;
-			break;
-		case FC_HINT_MEDIUM:
-			break;
-		default:
-			switch (cfg.subpixel_order)
-			case FC_RGBA_RGB:
-			case FC_RGBA_BGR: {
-				pixel_fmt = PictStandardARGB32;
-				load_target = FT_LOAD_TARGET_LCD;
-				render_mode = FT_RENDER_MODE_LCD;
-				break;
-			case FC_RGBA_VRGB:
-			case FC_RGBA_VBGR:
-				pixel_fmt = PictStandardARGB32;
-				load_target = FT_LOAD_TARGET_LCD_V;
-				render_mode = FT_RENDER_MODE_LCD_V;
-				break;
-			default:
-				break;
-			}
-		}
-	}
-
-	FT_Size_Metrics mtx = face->size->metrics;
-	if (memmatch(&cfg.matrix, &FTMATRIX_DFL, sizeof(FT_Matrix))) {
-		font->transform = false;
-		font->ascent  = +(mtx.ascender >> 6);
-		font->descent = -(mtx.descender >> 6);
-		font->height  = +(mtx.height >> 6);
-		font->max_advance = DEFAULT(cfg.char_width, mtx.max_advance >> 6);
-	} else {
-		font->transform = true;
-		font->loadflags |= FT_LOAD_NO_BITMAP;
-
-		// transform the default metrics
-		FT_Vector v = { 0 };
-		v = ft_get_vec2(cfg.matrix, 0, mtx.ascender);
-		font->ascent = +(v.y >> 6);
-		v = ft_get_vec2(cfg.matrix, 0, mtx.descender);
-		font->descent = -(v.y >> 6);
-		v = ft_get_vec2(cfg.matrix, 0, mtx.height);
-		font->height = +(v.y >> 6);
-		v = ft_get_vec2(cfg.matrix, mtx.max_advance, 0);
-		font->max_advance = +(v.x >> 6);
-	}
-
-	font->loadflags = load_flags|load_target;
-	font->mode = render_mode;
-	font->subpx_order = cfg.subpixel_order;
-	font->has_color = cfg.use_color;
-	font->lcd_filter = cfg.lcd_filter;
-	font->bold = cfg.use_embolden;
-	font->antialias = cfg.use_antialias;
-	font->spacing = cfg.spacing_style;
-	font->matrix = cfg.matrix;
-	font->picfmt = XRenderFindStandardFormat(root->dpy, pixel_fmt);
-	if (cfg.charset) {
-		font->charset = FcCharSetCopy(cfg.charset);
-	} else {
-		font->charset = FcFreeTypeCharSet(face, NULL);
-		ASSERT(font->charset);
-	}
-	font->num_codepoints = FcCharSetCount(font->charset);
-
-	font_load_glyphs(font);
-
-	return true;
-}
-
 void
 dbg_print_glyph_bitmap(const uchar *data, GlyphMetrics metrics, uint hscale)
 {
 	static const char density[] = { " .:;?%@#" };
 	const uchar *row = data;
+	int pitch = (metrics.size) ? metrics.size / metrics.height : 0;
 
 	printf("==> (%04u) w/h/p = ( %03u, %03u, %03d ) brg = ( %02d, %02d ) adv = ( %02d, %02d )\n",
-	       metrics.pitch * metrics.height,
-	       metrics.width, metrics.height, metrics.pitch,
+	       metrics.size,
+	       metrics.width, metrics.height, pitch,
 	       metrics.bearing.x, metrics.bearing.y,
 	       metrics.advance.x, metrics.advance.y);
 
-	for (uint y = 0; y < metrics.height; row += metrics.pitch, y++) {
-		for (uint x = 0; x < metrics.width; x++) {
-			for (uint n = hscale; n--; ) {
+	for (int y = 0; y < metrics.height; row += pitch, y++) {
+		for (int x = 0; x < metrics.width; x++) {
+			for (int n = hscale; n--; ) {
 #if 0
 				putchar(density[row[x]/32]);
 			}

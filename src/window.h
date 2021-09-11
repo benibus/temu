@@ -73,24 +73,12 @@ typedef struct Color32LE Color;
 )
 
 typedef struct {
-	uint width, height;
-	int pitch;
-	struct { int x, y; } bearing;
-	struct { int x, y; } advance;
-} GlyphMetrics;
-
-typedef struct {
 	uint32 ucs4;
 	FontFace *font;
 	Color *foreground;
 	Color *background;
 	uint32 flags;
 } GlyphRender;
-
-#define RC_MODE_DEFAULT (0)
-#define RC_MODE_FILL    (1 << 0)
-#define RC_MODE_INVERT  (1 << 1)
-#define RC_MODE_MAX     (1 << 2)
 
 typedef struct {
 	Win *win;
@@ -101,12 +89,6 @@ typedef struct {
 		Color *bg;
 	} color;
 } RC;
-
-#define MAX_FONTS  2
-#define MAX_COLORS 16
-#define XW_API_X11 1
-
-#define ID_NULL (-1)
 
 Win *win_create_client(void);
 bool win_init_client(Win *);
@@ -130,9 +112,6 @@ void font_destroy_face(FontFace *);
 Color *color_create_name(RC *, Color *, const char *);
 void color_free_data(RC *, Color *);
 void draw_rect_solid(const RC *, const Color *, int, int, int, int);
-void draw_string8(const RC *, int, int, const char *, uint);
-void draw_string16(const RC *, int, int, const uint16 *, uint);
-void draw_string32(const RC *, int, int, const uint32 *, uint);
 void draw_text_utf8(const RC *, const GlyphRender *, uint, int, int);
 
 #endif
