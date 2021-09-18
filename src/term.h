@@ -3,8 +3,6 @@
 
 #include "defs.h"
 
-#include <sys/types.h>
-
 #define INPUT_CHAR 1
 #define INPUT_KEY  2
 
@@ -41,18 +39,24 @@ enum {
 	CellTypeCount
 };
 
+#define CELLSPEC(...) ((Cell){ __VA_ARGS__ })
+#define CELLDFL(c) CELLSPEC( \
+  .ucs4  = (c),              \
+  .type  = CellTypeNormal,   \
+  .width = 1,                \
+  .color.bg = COLOR_BG,      \
+  .color.fg = COLOR_FG       \
+)
+#define CELLCLEAR CELLSPEC(0)
+#define CELLSPACE CELLDFL(' ')
+
 typedef struct {
 	uint16 fg; // foreground color index
 	uint16 bg; // background color index
-	uint16 hl; // highlight color index (rarely used)
 } ColorSet;
 
 typedef struct {
-#if 1
-	wchar_t ucs4;   // UCS4 character code
-#else
 	uint32 ucs4;    // UCS4 character code
-#endif
 	ColorSet color; // color context
 	uint16 attr;    // visual attribute flags
 	uint8 type;     // cell type ID
@@ -62,6 +66,7 @@ typedef struct {
 typedef struct PTY_ PTY;
 typedef struct Seq_ Seq;
 typedef struct Ring_ Ring;
+typedef struct Parser_ Parser;
 
 typedef uint LineID;
 
@@ -91,27 +96,38 @@ typedef struct TTY_ {
 
 	struct {
 		Cell cell;
-		/* uint32 ucs4; */
 		uint8 style;
 		bool wrap;
 		bool hide;
 	} cursor;
 
 	struct PTY_ {
-		pid_t pid;
+		int pid;
 		int mfd, sfd;
 		uchar buf[4096];
 		uint size;
 	} pty;
 
-	struct Seq_ {
-		Cell templ;
-		uchar *buf, *args;
-		uint32 *opts;
-		char tokens[8];
-		uint8 depth;
-		uint8 state;
-	} seq;
+	Cell cell;
+
+	struct Parser_ {
+		uint state;  // Current FSM state
+		uint32 ucs4; // Current codepoint being decoded
+		Cell cell;   // Current template to write to stream
+
+		// Dynamic buffer for OSC/DCS/APC string sequences
+		uchar *data;
+
+		// Stashed intermediate tokens for lookback
+		uchar stash[2];
+		int stash_index;
+		// Offsets to OSC parameter strings within the byte buffer
+		int osc_offsets[16];
+		int osc_index;
+		// Numeric CSI parameters
+		int csi_params[16];
+		int csi_index;
+	} parser;
 } TTY;
 
 TTY *tty_create(struct TTYConfig);
@@ -145,25 +161,27 @@ void dbg_print_history(TTY *);
 void dbg_print_tty(const TTY *, uint);
 
 enum {
-	ColorDarkBlack    = 0x00,
-	ColorDarkRed      = 0x01,
-	ColorDarkGreen    = 0x02,
-	ColorDarkYellow   = 0x03,
-	ColorDarkBlue     = 0x04,
-	ColorDarkMagenta  = 0x05,
-	ColorDarkCyan     = 0x06,
-	ColorDarkWhite    = 0x07,
-	ColorLightBlack   = 0x08,
-	ColorLightRed     = 0x09,
-	ColorLightGreen   = 0x0a,
-	ColorLightYellow  = 0x0b,
-	ColorLightBlue    = 0x0c,
-	ColorLightMagenta = 0x0d,
-	ColorLightCyan    = 0x0e,
-	ColorLightWhite   = 0x0f
+	ColorBlack         = 0x00,
+	ColorRed           = 0x01,
+	ColorGreen         = 0x02,
+	ColorYellow        = 0x03,
+	ColorBlue          = 0x04,
+	ColorMagenta       = 0x05,
+	ColorCyan          = 0x06,
+	ColorWhite         = 0x07,
+	ColorBrightBlack   = 0x08,
+	ColorBrightRed     = 0x09,
+	ColorBrightGreen   = 0x0a,
+	ColorBrightYellow  = 0x0b,
+	ColorBrightBlue    = 0x0c,
+	ColorBrightMagenta = 0x0d,
+	ColorBrightCyan    = 0x0e,
+	ColorBrightWhite   = 0x0f
 };
 
-#define COLOR_BG ColorDarkBlack
-#define COLOR_FG ColorDarkWhite
+#define COLOR_BG ColorBlack
+#define COLOR_FG ColorWhite
+
+#define ISBRIGHT(color) (!!((color) & 0x08))
 
 #endif

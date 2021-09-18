@@ -88,6 +88,10 @@ typedef struct {
 #define ABS(n)         (((n) < 0) ? -(n) : (n))
 #define LEN(arr)       (sizeof((arr)) / sizeof((arr)[0]))
 #define DEFAULT(v1,v2) ((!!(v1)) ? (v1) : (v2))
+#define ALIGN(n,a)     ((n) & ~((a) - 1))
+#define ALIGNUP(n,a)   (((n) + ((a) - 1)) & ~((a) - 1))
+#define BSET(n,m,c)    ((!!(c)) ? ((n) |= (m)) : ((n) &= ~(m)))
+#define RANGE(v1,o1,v2,o2,v3) (((v1) o1 (v2)) && ((v2) o2 (v3)))
 
 #if STD_C11
   #define vecx(...) { { __VA_ARGS__ } }

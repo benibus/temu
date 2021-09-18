@@ -328,14 +328,16 @@ render_frame(Client *client)
 				font = fonts[0];
 			}
 
+			// TODO(ben): impliment ansi colors 16 -> 255
+#define COLOR_FALLBACK(color,val) (((color) < 16) ? (color) : (val))
 			if (cell.attr & ATTR_INVERT) {
-				color.fg = cell.color.bg;
-				color.bg = cell.color.fg;
+				color.fg = COLOR_FALLBACK(cell.color.bg, COLOR_FG);
+				color.bg = COLOR_FALLBACK(cell.color.fg, COLOR_BG);
 			} else {
-				color.fg = cell.color.fg;
-				color.bg = cell.color.bg;
+				color.fg = COLOR_FALLBACK(cell.color.fg, COLOR_FG);
+				color.bg = COLOR_FALLBACK(cell.color.bg, COLOR_BG);
 			}
-			color.hl = cell.color.hl;
+#undef COLOR_FALLBACK
 
 			glyphs[x].ucs4 = cell.ucs4;
 			glyphs[x].font = font;

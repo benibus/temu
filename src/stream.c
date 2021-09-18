@@ -650,9 +650,8 @@ dbg_print_tty(const TTY *tty, uint flags)
 			out_("ucs4", "%u", tty->cursor.cell.ucs4);
 			out_("attr", "%u", tty->cursor.cell.attr);
 			out_("type", "%u", tty->cursor.cell.type);
-			out_("color", "[ %u, %u, %u ]", tty->cursor.cell.color.fg,
-			                                tty->cursor.cell.color.bg,
-			                                tty->cursor.cell.color.hl);
+			out_("color", "[ %u, %u ]", tty->cursor.cell.color.fg,
+			                            tty->cursor.cell.color.bg);
 			out_("style", "%u", tty->cursor.style);
 			out_("wrap", "%d", tty->cursor.wrap);
 			out_("hide", "%d", tty->cursor.hide);
