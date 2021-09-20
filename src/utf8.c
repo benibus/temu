@@ -1,6 +1,5 @@
 #include "utils.h"
 #include "utf8.h"
-#include "ascii.h"
 
 uint8
 utf8_decode(const void *data, size_t max, uint32 *res, uint *err)

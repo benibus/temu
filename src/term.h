@@ -108,12 +108,10 @@ typedef struct TTY_ {
 		uint size;
 	} pty;
 
-	Cell cell;
-
 	struct Parser_ {
 		uint state;  // Current FSM state
-		uint32 ucs4; // Current codepoint being decoded
 		Cell cell;   // Current template to write to stream
+		uint32 ucs4; // Current codepoint being decoded
 
 		// Dynamic buffer for OSC/DCS/APC string sequences
 		uchar *data;
@@ -160,28 +158,7 @@ void dummy__(TTY *);
 void dbg_print_history(TTY *);
 void dbg_print_tty(const TTY *, uint);
 
-enum {
-	ColorBlack         = 0x00,
-	ColorRed           = 0x01,
-	ColorGreen         = 0x02,
-	ColorYellow        = 0x03,
-	ColorBlue          = 0x04,
-	ColorMagenta       = 0x05,
-	ColorCyan          = 0x06,
-	ColorWhite         = 0x07,
-	ColorBrightBlack   = 0x08,
-	ColorBrightRed     = 0x09,
-	ColorBrightGreen   = 0x0a,
-	ColorBrightYellow  = 0x0b,
-	ColorBrightBlue    = 0x0c,
-	ColorBrightMagenta = 0x0d,
-	ColorBrightCyan    = 0x0e,
-	ColorBrightWhite   = 0x0f
-};
-
-#define COLOR_BG ColorBlack
-#define COLOR_FG ColorWhite
-
-#define ISBRIGHT(color) (!!((color) & 0x08))
+#define COLOR_BG 0x0
+#define COLOR_FG 0x7
 
 #endif

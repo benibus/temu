@@ -49,29 +49,26 @@ typedef struct {
 	struct { float x, y; } size_pt;
 } FontMetrics;
 
-struct Color32LE {
-	uint64 id;
-	uint64 pixel;
-	// TODO(ben): Deep-dive into the C11 type-punning spec
-	union {
-		uint32 rgba;
-		struct {
-			uint8 a;
-			uint8 b;
-			uint8 g;
-			uint8 r;
-		};
+typedef uint64 ColorID;
+
+typedef struct { uint8 r, g, b;    } RGB;
+typedef struct { uint8 r, g, b, a; } RGBA;
+
+typedef uint32 RGB32;
+typedef uint32 RGBA32;
+
+#define PACK_RGB(r,g,b)    (((r)<<16)|((g)<<8)|((b)<<0))
+#define PACK_RGBA(r,g,b,a) (((r)<<24)|((g)<<16)|((b)<<8)|((a)<<0))
+
+typedef struct {
+	ColorID id;
+	struct {
+		uint8 r;
+		uint8 g;
+		uint8 b;
+		uint8 a;
 	};
-};
-
-typedef struct Color32LE Color;
-
-#define RGBA32_PACK(color) ( \
-  ((color)->r << 24) | \
-  ((color)->g << 16) | \
-  ((color)->b << 8 ) | \
-  ((color)->a << 0 )   \
-)
+} Color;
 
 typedef struct {
 	uint32 ucs4;
@@ -101,6 +98,9 @@ void win_get_coords(Win *, int *, int *);
 void win_render_frame(Win *);
 bool win_init_render_context(Win *, RC *);
 int win_events_pending(Win *);
+ColorID win_alloc_color(const RC *, RGBA);
+void win_free_color(const RC *, ColorID);
+bool win_parse_color_string(const RC *, const char *, RGBA *rgba);
 
 u64 timer_current_ns(void);
 double timer_elapsed_s(u64, u64 *);
@@ -110,8 +110,6 @@ FontFace *font_create_derived_face(FontFace *, uint);
 bool font_get_face_metrics(FontFace *, FontMetrics *);
 bool font_init_face(FontFace *);
 void font_destroy_face(FontFace *);
-Color *color_create_name(RC *, Color *, const char *);
-void color_free_data(RC *, Color *);
 void draw_rect_solid(const RC *, const Color *, int, int, int, int);
 void draw_text_utf8(const RC *, const GlyphRender *, uint, int, int);
 

@@ -381,9 +381,11 @@ font_init_face(FontFace *font)
 	// override everything and pre-render the "missing glyph" glyph
 	font_cache_glyph(font, 0);
 	// pre-cache the ASCII range
+#if 0
 	for (int c = 1; c < 128; c++) {
 		font_load_glyph(font, c);
 	};
+#endif
 
 	return true;
 }
@@ -799,7 +801,7 @@ if (FcPatternGet((pat), (obj), 0, &dummy) == FcResultNoMatch) { \
 
 	FcPatternDestroy(pattern.base);
 	FcPatternDestroy(pattern.conf);
-	FcPatternPrint(pattern.match);
+	/* FcPatternPrint(pattern.match); */
 
 	FontFace *font = font_insert_face(pattern.match);
 	if (font && !font->src->dpy) {
@@ -832,68 +834,11 @@ font_create_derived_face(FontFace *font, uint style)
 	FcDefaultSubstitute(pattern.conf);
 	pattern.match = FcFontMatch(NULL, pattern.conf, &res);
 	FcPatternDestroy(pattern.conf);
-	FcPatternPrint(pattern.match);
+	/* FcPatternPrint(pattern.match); */
 
 	FontFace *new_font = font_insert_face(pattern.match);
 
 	return new_font;
-}
-
-Color *
-color_create_name(RC *rc, Color *output, const char *name)
-{
-	WinData *win = (WinData *)rc->win;
-	Color *color = output;
-	XColor target, nearest;
-
-	if (XAllocNamedColor(win->x11->dpy, win->colormap, name, &nearest, &target)) {
-		if (!color) {
-			color = xcalloc(1, sizeof(*color));
-		}
-
-		XRenderColor xcolor = { 0 };
-		color->pixel = nearest.pixel;
-#if 1
-		color->rgba = (target.pixel << 8)|0xff;
-		xcolor = XCOLOR(color);
-#else
-		color->r = (xcolor.red = target.red) >> 8;
-		color->g = (xcolor.green = target.green) >> 8;
-		color->b = (xcolor.blue = target.blue) >> 8;
-		color->a = (xcolor.alpha = 0xff00) >> 8;
-#endif
-		ASSERT((uint32)RGBA32_PACK(color) == color->rgba);
-		ASSERT(color->rgba >> 8 == target.pixel);
-		color->id = XRenderCreateSolidFill(win->x11->dpy, &xcolor);
-
-#if 1
-		fprintf(stderr, "X11(%s) allocating color \"%s\" ... "
-		                "ID: %lu Pixel: %#6.6lx RGBA: [ %03u, %03u, %03u, %03u ] = %#6.6x\n",
-		  __FILE__, name,
-		  color->id,
-		  color->pixel,
-		  color->r, color->g, color->b, color->a,
-		  color->rgba >> 8
-		);
-#endif
-
-		return color;
-	}
-
-	return NULL;
-}
-
-void
-color_free_data(RC *rc, Color *color)
-{
-	WinData *win = (WinData *)rc->win;
-	assert(color);
-
-	if (win->x11->vis->visual->class != TrueColor) {
-		XFreeColors(win->x11->dpy, win->colormap, &color->pixel, 1, 0);
-	}
-	XRenderFreePicture(win->x11->dpy, color->id);
-	color->id = 0;
 }
 
 void

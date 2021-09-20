@@ -6,8 +6,9 @@
 #include "utils.h"
 #include "term.h"
 #include "window.h"
+#include "color.h"
 
-#define MAX_COLORS 256
+#define MAX_COLORS 16
 
 typedef struct Config {
 	char *wm_class;
@@ -42,7 +43,9 @@ typedef struct Client_ {
 static Client client_;
 
 static FontFace *fonts[4];
-static Color colors[MAX_COLORS];
+static Color colors[256];
+/* static Color colors[256]; */
+/* static ColorSpec colors[256]; */
 static bool toggle_render = true;
 
 static void run(Client *);
@@ -131,22 +134,54 @@ error_invalid:
 		return 2;
 	if (!win_init_render_context(win, &rc))
 		return 3;
-	{
-		int n = 0;
 
-		for (uint i = 0; i < LEN(config.colors); i++) {
-			if (n == MAX_COLORS) {
-				break;
+	// load the user colors (or any fallbacks, if necessary) + the 240 standard colors.
+	// there should be no surprises here - if anything fails, we terminate
+	for (uint i = 0; i < LEN(colors); i++) {
+		RGBA rgba = { 0 };
+
+		// TODO(ben): default background/foreground should probably occupy two additional
+		// slots starting from the beginning.
+
+		// 16 user/programmer-configured colors
+		if (i < LEN(config.colors)) {
+			// All default strings MUST exist at compile-time
+			ASSERT(i < 16 && config.colors[i]);
+			if (!win_parse_color_string(&rc, config.colors[i], &rgba)) {
+				dbgprintf("failed to parse RGB string: %s\n", config.colors[i]);
+				exit(EXIT_FAILURE);
 			}
-			if (config.colors[i]) {
-				Color *res;
-				res = color_create_name(&rc, &colors[n], config.colors[i]);
-				ASSERT(res);
-				n++;
-			}
+		// the classic 6^3 color cube
+		} else if (i < 232) {
+			uint8 n = i - 16;
+			rgba.r = (((n / 36) % 6) ? (((n / 36) % 6) * 40 + 55) : 0);
+			rgba.g = (((n /  6) % 6) ? (((n /  6) % 6) * 40 + 55) : 0);
+			rgba.b = (((n /  1) % 6) ? (((n /  1) % 6) * 40 + 55) : 0);
+			rgba.a = 0xff;
+		// dark -> light grayscale till the end
+		} else {
+			ASSERT(i < 256);
+			uint8 n = i - 232;
+			rgba.r = (n * 10 + 8);
+			rgba.g = (n * 10 + 8);
+			rgba.b = (n * 10 + 8);
+			rgba.a = 0xff;
 		}
 
-		ASSERT(n >= 2);
+		ColorID handle = win_alloc_color(&rc, rgba);
+		if (!handle) {
+			dbgprintf("failed to create RGBA fill: [%03u]\n", i);
+			exit(EXIT_FAILURE);
+		}
+
+		dbgprintf("Mapping color[%03u] to RGBA(%03u, %03u, %03u, %03u)\n",
+		  i, rgba.r, rgba.g, rgba.b, rgba.a);
+
+		colors[i].id = handle;
+		colors[i].r = rgba.r;
+		colors[i].g = rgba.g;
+		colors[i].b = rgba.b;
+		colors[i].a = rgba.a;
 	}
 
 	fonts[0] = font_create_face(&rc, config.font);

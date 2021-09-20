@@ -167,6 +167,7 @@ x11_set_visual_format(X11 *x11)
 	}
 	x11->vis = XGetVisualInfo(x11->dpy, VisualIDMask, &vistmp, &count);
 	if (!x11->vis) return false;
+
 	x11->fmt = XRenderFindVisualFormat(x11->dpy, x11->vis->visual);
 	ASSERT(x11->fmt);
 
@@ -753,5 +754,51 @@ win_render_frame(Win *pub)
 	          0, 0,
 	          win->pub.w, win->pub.h,
 	          0, 0);
+}
+
+ColorID
+win_alloc_color(const RC *rc, RGBA rgba)
+{
+	const WinData *win = (const WinData *)rc->win;
+
+	uint64 handle = XRenderCreateSolidFill(
+		win->x11->dpy,
+		&(XRenderColor){
+			.red   = rgba.r << 8,
+			.green = rgba.g << 8,
+			.blue  = rgba.b << 8,
+			.alpha = rgba.a << 8
+		}
+	);
+
+	return handle;
+}
+
+void
+win_free_color(const RC *rc, ColorID handle)
+{
+	Display *dpy = ((const WinData *)rc->win)->x11->dpy;
+
+	if (handle) {
+		XRenderFreePicture(dpy, handle);
+	}
+}
+
+bool
+win_parse_color_string(const RC *rc, const char *name, RGBA *rgba)
+{
+	const WinData *win = (const WinData *)rc->win;
+	XColor xcolor = { 0 };
+
+	if (!XParseColor(win->x11->dpy, win->colormap, name, &xcolor)) {
+		return false;
+	}
+
+	rgba->r = xcolor.red >> 8;
+	rgba->g = xcolor.green >> 8;
+	rgba->b = xcolor.blue >> 8;
+	rgba->a = 0xff;
+
+	return true;
 }
 

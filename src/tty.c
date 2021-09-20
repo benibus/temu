@@ -7,7 +7,7 @@
 #include "fsm.h"
 
 static void vte_action_dispatch(TTY *, StateCode, ActionCode, uchar);
-static void vte_exec_write(TTY *, uchar);
+static void vte_exec_write(TTY *, uint32);
 static void vte_exec_ri(TTY *);
 static void vte_exec_ich(TTY *, int);
 static void vte_exec_cuu(TTY *, int);
@@ -118,8 +118,8 @@ vte_action_dispatch(TTY *tty, StateCode state, ActionCode action, uchar c)
 	int *argv, argc;
 
 #if 1
-	dbgprintf("FSM(%s): State%s -> State%s ... %s()\n",
-	  charstring(c),
+	dbgprintf("FSM(%s|%#.02x): State%s -> State%s ... %s()\n",
+	  charstring(c), c,
 	  fsm_get_state_string(parser->state),
 	  fsm_get_state_string(state),
 	  fsm_get_action_string(action));
@@ -129,27 +129,27 @@ vte_action_dispatch(TTY *tty, StateCode state, ActionCode action, uchar c)
 	case ActionIgnore:
 		break;
 	case ActionPrint:
-		vte_exec_write(tty, c & 0x7f);
+		vte_exec_write(tty, parser->ucs4 | (c & 0x7f));
 		parser->ucs4 = 0;
 		break;
 	case ActionUtf8Start:
 		switch (state) {
-		case StateUtf8B3: tty->cell.ucs4 |= (c & 0x07) << 18; break;
-		case StateUtf8B2: tty->cell.ucs4 |= (c & 0x0f) << 12; break;
-		case StateUtf8B1: tty->cell.ucs4 |= (c & 0x1f) <<  6; break;
+		case StateUtf8B3: parser->ucs4 |= (c & 0x07) << 18; break;
+		case StateUtf8B2: parser->ucs4 |= (c & 0x0f) << 12; break;
+		case StateUtf8B1: parser->ucs4 |= (c & 0x1f) <<  6; break;
 		default: break;
 		}
 		break;
 	case ActionUtf8Cont:
 		switch (state) {
-		case StateUtf8B2: tty->cell.ucs4 |= (c & 0x3f) << 12; break;
-		case StateUtf8B1: tty->cell.ucs4 |= (c & 0x3f) <<  6; break;
+		case StateUtf8B2: parser->ucs4 |= (c & 0x3f) << 12; break;
+		case StateUtf8B1: parser->ucs4 |= (c & 0x3f) <<  6; break;
 		default: break;
 		}
 		break;
 	case ActionUtf8Fail:
 		dbgprint("discarding malformed UTF-8 sequence");
-		tty->cell.ucs4 = 0;
+		parser->ucs4 = 0;
 		break;
 	case ActionExec:
 		vte_exec_write(tty, c);
@@ -331,13 +331,12 @@ vte_action_dispatch(TTY *tty, StateCode state, ActionCode action, uchar c)
 }
 
 void
-vte_exec_write(TTY *tty, uchar c)
+vte_exec_write(TTY *tty, uint32 ucs4)
 {
-	tty->cell.ucs4 |= c;
-	stream_write(tty, &tty->cell);
+	tty->parser.cell.ucs4 = ucs4;
+	tty->parser.cell.width = 1;
 
-	tty->cell.ucs4  = 0;
-	tty->cell.width = 0;
+	stream_write(tty, &tty->parser.cell);
 }
 
 void
@@ -395,7 +394,7 @@ vte_exec_cht(TTY *tty, int arg)
 {
 	FUNC_DEBUG(CHT);
 
-	Cell cell = tty->cell;
+	Cell cell = tty->parser.cell;
 	cell.ucs4 = '\t';
 	cell.width = 1;
 
@@ -459,7 +458,7 @@ vte_exec_sgr(TTY *tty, int *argv, int argc)
 {
 	FUNC_DEBUG(SGR);
 
-	Cell *cell = &tty->cell;
+	Cell *cell = &tty->parser.cell;
 	int i = 0;
 
 	do {
@@ -648,9 +647,8 @@ tty_init(TTY *tty, struct TTYConfig config)
 		tty->tabstops[i] |= (i % tty->tablen == 0) ? 1 : 0;
 	}
 
-	tty->cell = CELLDFL(' ');
-
 	arr_reserve(tty->parser.data, 4);
+	tty->parser.cell = CELLDFL(' ');
 
 	tty->ref = config.ref;
 	tty->colpx = config.colpx;
