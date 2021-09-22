@@ -1,5 +1,4 @@
 #include <limits.h>
-#include <unistd.h>
 
 #include "utils.h"
 #include "term.h"
@@ -7,22 +6,28 @@
 #include "fsm.h"
 
 static void vte_action_dispatch(TTY *, StateCode, ActionCode, uchar);
-static void vte_exec_write(TTY *, uint32);
-static void vte_exec_ri(TTY *);
-static void vte_exec_ich(TTY *, int);
-static void vte_exec_cuu(TTY *, int);
-static void vte_exec_cud(TTY *, int);
-static void vte_exec_cuf(TTY *, int);
-static void vte_exec_cub(TTY *, int);
-static void vte_exec_cup(TTY *, int, int);
-static void vte_exec_cht(TTY *, int);
-static void vte_exec_dch(TTY *, int);
-static void vte_exec_ed(TTY *, int);
-static void vte_exec_el(TTY *, int);
-static void vte_exec_sgr(TTY *, int *, int);
-static void vte_exec_decset(TTY *, int, bool);
-static void vte_exec_decscusr(TTY *, int);
-static void vte_exec_osc(TTY *, const uchar *, const int *, int);
+
+// Standard operations
+static void vte_write(TTY *, uint32);
+// C1 control functions
+static void vte_c1_ri(TTY *);
+// CSI functions
+static void vte_csi_ich(TTY *, const int *, int);
+static void vte_csi_cuu(TTY *, const int *, int);
+static void vte_csi_cud(TTY *, const int *, int);
+static void vte_csi_cuf(TTY *, const int *, int);
+static void vte_csi_cub(TTY *, const int *, int);
+static void vte_csi_cup(TTY *, const int *, int);
+static void vte_csi_cht(TTY *, const int *, int);
+static void vte_csi_dch(TTY *, const int *, int);
+static void vte_csi_ed(TTY *, const int *, int);
+static void vte_csi_el(TTY *, const int *, int);
+static void vte_csi_sgr(TTY *, const int *, int);
+static void vte_csi_decset(TTY *, const int *, int);
+static void vte_csi_decrst(TTY *, const int *, int);
+static void vte_csi_decscusr(TTY *, const int *, int);
+// OSC/DCS functions
+static void vte_osc(TTY *, const char *, const int *, int);
 
 static const Cell g_celltempl = {
 	.ucs4  = ' ',
@@ -31,11 +36,11 @@ static const Cell g_celltempl = {
 	.attr  = 0,
 	.color.bg = {
 		.tag = ColorTagNone,
-		.index = 0
+		.index = TCOLOR_BG
 	},
 	.color.fg = {
 		.tag = ColorTagNone,
-		.index = 1
+		.index = TCOLOR_FG
 	}
 };
 
@@ -130,9 +135,7 @@ vte_action_dispatch(TTY *tty, StateCode state, ActionCode action, uchar c)
 	if (!action) return;
 
 	Parser *parser = &tty->parser;
-	int *argv, argc;
-
-#if 1
+#if 0
 	dbgprintf("FSM(%s|%#.02x): State%s -> State%s ... %s()\n",
 	  charstring(c), c,
 	  fsm_get_state_string(parser->state),
@@ -140,11 +143,12 @@ vte_action_dispatch(TTY *tty, StateCode state, ActionCode action, uchar c)
 	  fsm_get_action_string(action));
 #endif
 
+	// TODO(ben): DCS functions
 	switch (action) {
 	case ActionIgnore:
 		break;
 	case ActionPrint:
-		vte_exec_write(tty, parser->ucs4 | (c & 0x7f));
+		vte_write(tty, parser->ucs4 | (c & 0x7f));
 		parser->ucs4 = 0;
 		break;
 	case ActionUtf8Start:
@@ -167,7 +171,7 @@ vte_action_dispatch(TTY *tty, StateCode state, ActionCode action, uchar c)
 		parser->ucs4 = 0;
 		break;
 	case ActionExec:
-		vte_exec_write(tty, c);
+		vte_write(tty, c);
 		break;
 	case ActionHook:
 		// sets handler based on DCS parameters, intermediates, and new char
@@ -203,10 +207,9 @@ vte_action_dispatch(TTY *tty, StateCode state, ActionCode action, uchar c)
 		}
 		break;
 	case ActionOscEnd:
+#define osc_params__ tty, (const char *)parser->data, parser->osc_offsets, parser->osc_index+1
 		arr_push(parser->data, 0);
-		argv = parser->osc_offsets;
-		argc = parser->osc_index + 1;
-		vte_exec_osc(tty, parser->data, argv, argc);
+		vte_osc(osc_params__);
 		break;
 	case ActionCollect:
 		if (parser->stash_index == LEN(parser->stash)) {
@@ -236,10 +239,11 @@ vte_action_dispatch(TTY *tty, StateCode state, ActionCode action, uchar c)
 		arr_clear(parser->data);
 		break;
 	case ActionEscDispatch:
+#define c1_params__ tty
 		switch (c) {
 		case 'E': break; // NEL
 		case 'H': break; // HTS
-		case 'M': vte_exec_ri(tty); break;
+		case 'M': vte_c1_ri(c1_params__); break;
 		case '\\': break; // ST
 		case '6': break; // DECBI
 		case '7': break; // DECSC
@@ -248,29 +252,26 @@ vte_action_dispatch(TTY *tty, StateCode state, ActionCode action, uchar c)
 		}
 		break;
 	case ActionCsiDispatch: {
-#define arg(n) (((n) < argc) ? argv[(n)] : 0)
-		argv = parser->csi_params;
-		argc = parser->csi_index + 1;
-
+#define csi_params__ tty, parser->csi_params, parser->csi_index + 1
 		ASSERT(parser->stash_index == 1 || (!parser->stash_index && !parser->stash[0]));
 		switch (parser->stash[0]) {
 		case 0:
 			switch (c) {
-			case '@': vte_exec_ich(tty, arg(0)); break;
-			case 'A': vte_exec_cuu(tty, arg(0)); break;
-			case 'B': vte_exec_cud(tty, arg(0)); break;
-			case 'C': vte_exec_cuf(tty, arg(0)); break;
-			case 'D': vte_exec_cub(tty, arg(0)); break;
+			case '@': vte_csi_ich(csi_params__); break;
+			case 'A': vte_csi_cuu(csi_params__); break;
+			case 'B': vte_csi_cud(csi_params__); break;
+			case 'C': vte_csi_cuf(csi_params__); break;
+			case 'D': vte_csi_cub(csi_params__); break;
 			case 'E': break; // CNL
 			case 'F': break; // CPL
 			case 'G': break; // CHA
-			case 'H': vte_exec_cup(tty, arg(0), arg(1)); break;
-			case 'I': vte_exec_cht(tty, arg(0)); break;
-			case 'J': vte_exec_ed(tty, arg(0)); break;
-			case 'K': vte_exec_el(tty, arg(0)); break;
+			case 'H': vte_csi_cup(csi_params__); break;
+			case 'I': vte_csi_cht(csi_params__); break;
+			case 'J': vte_csi_ed(csi_params__); break;
+			case 'K': vte_csi_el(csi_params__); break;
 			case 'L': break; // IL
 			case 'M': break; // DL
-			case 'P': vte_exec_dch(tty, arg(0)); break;
+			case 'P': vte_csi_dch(csi_params__); break;
 			case 'S': break; // SU
 			case 'T': break; // SD
 			case 'X': break; // ECH
@@ -284,7 +285,7 @@ vte_action_dispatch(TTY *tty, StateCode state, ActionCode action, uchar c)
 			case 'h': break; // SM
 			case 'i': break; // MC
 			case 'l': break; // RM
-			case 'm': vte_exec_sgr(tty, argv, argc); break;
+			case 'm': vte_csi_sgr(csi_params__); break;
 			case 'r': break; // DECSTBM
 			case 'c': break; // DA
 			case 's': break; // SCOSC
@@ -292,7 +293,7 @@ vte_action_dispatch(TTY *tty, StateCode state, ActionCode action, uchar c)
 			}
 			break;
 		case ' ':
-			if (c == 'q') { vte_exec_decscusr(tty, arg(0)); }
+			if (c == 'q') { vte_csi_decscusr(csi_params__); }
 			break;
 		case '!':
 			// 'p' == DECSTR
@@ -324,9 +325,9 @@ vte_action_dispatch(TTY *tty, StateCode state, ActionCode action, uchar c)
 			switch (c) {
 			case 'J': break; // DECSED
 			case 'K': break; // DECSEL
-			case 'h': vte_exec_decset(tty, arg(0), true);  break; // DECSET/DECTCEM
+			case 'h': vte_csi_decset(csi_params__); break; // DECSET/DECTCEM
 			case 'i': break; // DECMC
-			case 'l': vte_exec_decset(tty, arg(0), false); break; // DECRST/DECTCEM
+			case 'l': vte_csi_decrst(csi_params__); break; // DECRST/DECTCEM
 			case 'n': break; // DECDSR
 			}
 			break;
@@ -342,11 +343,13 @@ vte_action_dispatch(TTY *tty, StateCode state, ActionCode action, uchar c)
 	default:
 		break;
 	}
-#undef arg
+#undef c1_params__
+#undef csi_params__
+#undef osc_params__
 }
 
 void
-vte_exec_write(TTY *tty, uint32 ucs4)
+vte_write(TTY *tty, uint32 ucs4)
 {
 	tty->parser.cell.ucs4 = ucs4;
 	tty->parser.cell.width = 1;
@@ -355,57 +358,57 @@ vte_exec_write(TTY *tty, uint32 ucs4)
 }
 
 void
-vte_exec_ri(TTY *tty)
+vte_c1_ri(TTY *tty)
 {
 	FUNC_DEBUG(RI);
 	cmd_move_cursor_y(tty, -1);
 }
 
 void
-vte_exec_ich(TTY *tty, int arg)
+vte_csi_ich(TTY *tty, const int *argv, int argc)
 {
 	FUNC_DEBUG(ICH);
-	cmd_insert_cells(tty, &g_celltempl, DEFAULT(arg, 1));
+	cmd_insert_cells(tty, &g_celltempl, DEFAULT(argv[0], 1));
 }
 
 void
-vte_exec_cuu(TTY *tty, int arg)
+vte_csi_cuu(TTY *tty, const int *argv, int argc)
 {
 	FUNC_DEBUG(CUU);
-	cmd_move_cursor_y(tty, -DEFAULT(arg, 1));
+	cmd_move_cursor_y(tty, -DEFAULT(argv[0], 1));
 }
 
 void
-vte_exec_cud(TTY *tty, int arg)
+vte_csi_cud(TTY *tty, const int *argv, int argc)
 {
 	FUNC_DEBUG(CUD);
-	cmd_move_cursor_y(tty, +DEFAULT(arg, 1));
+	cmd_move_cursor_y(tty, +DEFAULT(argv[0], 1));
 }
 
 void
-vte_exec_cuf(TTY *tty, int arg)
+vte_csi_cuf(TTY *tty, const int *argv, int argc)
 {
 	FUNC_DEBUG(CUF);
-	cmd_move_cursor_x(tty, +DEFAULT(arg, 1));
+	cmd_move_cursor_x(tty, +DEFAULT(argv[0], 1));
 }
 
 void
-vte_exec_cub(TTY *tty, int arg)
+vte_csi_cub(TTY *tty, const int *argv, int argc)
 {
 	FUNC_DEBUG(CUB);
-	cmd_move_cursor_x(tty, -DEFAULT(arg, 1));
+	cmd_move_cursor_x(tty, -DEFAULT(argv[0], 1));
 }
 
 void
-vte_exec_cup(TTY *tty, int arg1, int arg2)
+vte_csi_cup(TTY *tty, const int *argv, int argc)
 {
 	FUNC_DEBUG(CUP);
-	cmd_set_cursor_x(tty, arg2);
-	cmd_set_cursor_y(tty, arg1);
+	cmd_set_cursor_x(tty, argv[1]);
+	cmd_set_cursor_y(tty, argv[0]);
 }
 
 void
-vte_exec_cht(TTY *tty, int arg)
+vte_csi_cht(TTY *tty, const int *argv, int argc)
 {
 	FUNC_DEBUG(CHT);
 
@@ -413,7 +416,7 @@ vte_exec_cht(TTY *tty, int arg)
 	cell.ucs4 = '\t';
 	cell.width = 1;
 
-	for (int n = DEFAULT(arg, 1); n > 0; n--) {
+	for (int n = DEFAULT(argv[0], 1); n > 0; n--) {
 		if (!stream_write(tty, &cell)) {
 			break;
 		}
@@ -421,19 +424,19 @@ vte_exec_cht(TTY *tty, int arg)
 }
 
 void
-vte_exec_dch(TTY *tty, int arg)
+vte_csi_dch(TTY *tty, const int *argv, int argc)
 {
 	FUNC_DEBUG(DCH);
-	int delta = DEFAULT(arg, 1);
+	int delta = DEFAULT(argv[0], 1);
 	cmd_shift_cells(tty, tty->pos.x + delta, tty->pos.y, -delta);
 }
 
 void
-vte_exec_ed(TTY *tty, int arg)
+vte_csi_ed(TTY *tty, const int *argv, int argc)
 {
 	FUNC_DEBUG(ED);
 
-	switch (arg) {
+	switch (argv[0]) {
 	case 0:
 		cmd_clear_rows(tty, tty->pos.y + 1, tty->rows);
 		cmd_set_cells(tty, &(Cell){ 0 }, tty->pos.x, tty->pos.y, tty->cols);
@@ -450,11 +453,11 @@ vte_exec_ed(TTY *tty, int arg)
 }
 
 void
-vte_exec_el(TTY *tty, int arg)
+vte_csi_el(TTY *tty, const int *argv, int argc)
 {
 	FUNC_DEBUG(EL);
 
-	switch (arg) {
+	switch (argv[0]) {
 	case 0:
 		cmd_set_cells(tty, &(Cell){ 0 }, tty->pos.x, tty->pos.y, tty->cols - tty->pos.x);
 		break;
@@ -469,7 +472,7 @@ vte_exec_el(TTY *tty, int arg)
 }
 
 void
-vte_exec_sgr(TTY *tty, int *argv, int argc)
+vte_csi_sgr(TTY *tty, const int *argv, int argc)
 {
 	FUNC_DEBUG(SGR);
 
@@ -571,36 +574,51 @@ vte_exec_sgr(TTY *tty, int *argv, int argc)
 	} while (++i < argc);
 }
 
-void
-vte_exec_decset(TTY *tty, int arg, bool enable)
+static void
+vte__csi_decprv(TTY *tty, int mode, bool enable)
 {
-	FUNC_DEBUG(DECSET);
-
-	switch (arg) {
+	switch (mode) {
 	case 25: tty->cursor.hide = !enable; break; // DECTCEM
 	}
 }
 
+// NOTE(ben): Wrapper
 void
-vte_exec_decscusr(TTY *tty, int arg)
+vte_csi_decset(TTY *tty, const int *argv, int argc)
 {
-	FUNC_DEBUG(DECSCUSR);
-	if (arg <= 7) tty->cursor.style = arg;
+	FUNC_DEBUG(DECSET);
+	vte__csi_decprv(tty, argv[0], true);
+}
+
+// NOTE(ben): Wrapper
+void
+vte_csi_decrst(TTY *tty, const int *argv, int argc)
+{
+	FUNC_DEBUG(DECRST);
+	vte__csi_decprv(tty, argv[0], false);
 }
 
 void
-vte_exec_osc(TTY *tty, const uchar *mem, const int *argv, int argc)
+vte_csi_decscusr(TTY *tty, const int *argv, int argc)
+{
+	FUNC_DEBUG(DECSCUSR);
+	if (argv[0] <= 7) tty->cursor.style = argv[0];
+}
+
+void
+vte_osc(TTY *tty, const char *mem, const int *argv, int argc)
 {
 	FUNC_DEBUG(OSC);
 
 	if (argc < 2 || !*mem) return;
 
-	const char *const base = (const char *)mem + argv[0];
-	const char *str = base;
+	const char *str = NULL;
 
-	int64 opcode = strtol(base + argv[0], (char **)&str, 10);
+	int64 opcode = strtol(mem + argv[0], (char **)&str, 10);
 
-	if (*str != ';' || !*(++str)) return;
+	if (!str || *str != ';' || !*(++str)) {
+		return;
+	}
 
 	// TODO(ben): Implement the actual OSC handlers
 #define dbgmsg__(msg_) dbgprintf("OSC(%s): \"%s\"\n", msg_, str)

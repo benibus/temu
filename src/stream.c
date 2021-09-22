@@ -25,12 +25,6 @@ typedef struct Line_ {
 	Cell cells[];
 } Line;
 
-typedef struct {
-	Cell *cells;
-	int len;
-	int off;
-} CellSeg;
-
 #define HDROFF offsetof(Line, cells)
 
 #define LINEOFF(x) (HDROFF + ((x) * sizeof(Cell)))
@@ -426,56 +420,6 @@ linelen(Cell *cells, uint lim)
 	}
 
 	return 0;
-}
-
-int
-line_retab(CellSeg dst, CellSeg src, const uint8 *tabstops, int *dstdist, int *srcdist)
-{
-#define ISTAB(cell) (cell.type == CellTypeTab || cell.type == CellTypeDummyTab)
-
-	Cell cell = { 0 };
-	bool intab = false;
-	int i = 0;
-	int j = 0;
-
-	for (; src.off + i < src.len && j < dst.len; ) {
-		if (!ISTAB(src.cells[i])) {
-			if (intab && !tabstops[j]) {
-				dst.cells[j] = cell;
-			} else {
-				dst.cells[j] = src.cells[i];
-				intab = false;
-				i++;
-			}
-			j++;
-		} else if (src.cells[i].type == CellTypeTab) {
-			if (j + 1 < dst.len) {
-				cell = src.cells[i];
-				dst.cells[j] = cell;
-				intab = true;
-				j++;
-			} else {
-				intab = false;
-			}
-			i++;
-		} else if (src.cells[i].type == CellTypeDummyTab) {
-			if (intab) {
-				if (j + 1 < dst.len && !tabstops[j]) {
-					dst.cells[j] = cell;
-					j++;
-				} else {
-					intab = false;
-				}
-			}
-			i++;
-		}
-	}
-
-#undef ISTAB
-	*srcdist = i;
-	*dstdist = j;
-
-	return *dstdist - *srcdist;
 }
 
 void
