@@ -529,7 +529,6 @@ vte_exec_sgr(TTY *tty, int *argv, int argc)
 					cell->color.fg = termcolor(ColorTag256, argv[i] & 0xff);
 				}
 			} else if (i - start == 4) {
-				// TODO(ben): set RGB values
 				if (argv[start] == 48) {
 					cell->color.bg = termcolor(
 						ColorTagRGB,
