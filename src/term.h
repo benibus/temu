@@ -39,28 +39,48 @@ enum {
 	CellTypeCount
 };
 
-#define CELLSPEC(...) ((Cell){ __VA_ARGS__ })
-#define CELLDFL(c) CELLSPEC( \
-  .ucs4  = (c),              \
-  .type  = CellTypeNormal,   \
-  .width = 1,                \
-  .color.bg = COLOR_BG,      \
-  .color.fg = COLOR_FG       \
-)
-#define CELLCLEAR CELLSPEC(0)
-#define CELLSPACE CELLDFL(' ')
+typedef struct {
+	enum ColorTag {
+		ColorTagNone, // (use index) default background (0) or foreground (1)
+		ColorTag256,  // (use index) one of the standard colors (0-16,17-256)
+		ColorTagRGB   // (use r/g/b) not indexed, specified as a raw RGB value
+	} tag:8;
+
+	union {
+		uint8 arr[3];
+		uint8 index;
+		struct {
+			uint8 r;
+			uint8 g;
+			uint8 b;
+		};
+	};
+} TermColor;
+
+#define TCOLOR_BG      0x0
+#define TCOLOR_FG      0x1
+#define TCOLOR_BLACK   0x0
+#define TCOLOR_RED     0x1
+#define TCOLOR_GREEN   0x2
+#define TCOLOR_YELLOW  0x3
+#define TCOLOR_BLUE    0x4
+#define TCOLOR_MAGENTA 0x5
+#define TCOLOR_CYAN    0x6
+#define TCOLOR_WHITE   0x7
+
+#define termcolor(tag_,...) (TermColor){ .tag = (tag_), .arr = { __VA_ARGS__ } }
 
 typedef struct {
-	uint16 fg; // foreground color index
-	uint16 bg; // background color index
+	TermColor bg;
+	TermColor fg;
 } ColorSet;
 
 typedef struct {
 	uint32 ucs4;    // UCS4 character code
-	ColorSet color; // color context
-	uint16 attr;    // visual attribute flags
 	uint8 type;     // cell type ID
 	uint8 width;    // glyph width in columns
+	uint16 attr;    // visual attribute flags
+	ColorSet color; // color context
 } Cell;
 
 typedef struct PTY_ PTY;
@@ -157,8 +177,5 @@ size_t key_get_sequence(uint, uint, char *, size_t);
 void dummy__(TTY *);
 void dbg_print_history(TTY *);
 void dbg_print_tty(const TTY *, uint);
-
-#define COLOR_BG 0x0
-#define COLOR_FG 0x7
 
 #endif

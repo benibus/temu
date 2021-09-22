@@ -842,7 +842,7 @@ font_create_derived_face(FontFace *font, uint style)
 }
 
 void
-draw_rect_solid(const RC *rc, const Color *color_, int x_, int y_, int w_, int h_)
+draw_rect_solid(const RC *rc, Color color, int x_, int y_, int w_, int h_)
 {
 	WinData *win = (WinData *)rc->win;
 
@@ -851,13 +851,10 @@ draw_rect_solid(const RC *rc, const Color *color_, int x_, int y_, int w_, int h
 	int w = CLAMP(x + w_, x, (int)win->pub.w) - x;
 	int h = CLAMP(y + h_, y, (int)win->pub.h) - y;
 
-	const Color *color = (color_) ? color_ : rc->color.fg;
-	if (!color) return;
-
 	XRenderFillRectangle(win->x11->dpy,
 	                     PictOpOver,
 	                     win->pic,
-	                     &XCOLOR(color),
+	                     &XR_ARGB(color.argb),
 	                     x, y, w, h);
 }
 
@@ -871,8 +868,8 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 
 	struct {
 		FontFace *font;
-		Color *foreground;
-		Color *background;
+		Color bg;
+		Color fg;
 	} brush = { 0 };
 	struct {
 		int x0, y0, x1, y1; // current region (in pixels)
@@ -882,8 +879,8 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 	struct { uint32 buf[2048]; uint n; } text = { 0 };
 	struct { XGlyphElt32 buf[32]; uint n; } elts = { 0 };
 
-	brush.foreground = glyphs[0].foreground;
-	brush.background = glyphs[0].background;
+	brush.bg = glyphs[0].bg;
+	brush.fg = glyphs[0].fg;
 	brush.font = glyphs[0].font;
 
 	pos.x1 = pos.x0 = x;
@@ -935,24 +932,32 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 		// If none of the local buffers are at capacity, keep going.
 		// Otherwise, just draw now and reset everything at the new orgin
 		if (i + 1 < max && elts.n < LEN(elts.buf) && text.n < LEN(text.buf)) {
-			if (glyphs[i+1].foreground == brush.foreground &&
-			    glyphs[i+1].background == brush.background &&
+			if (glyphs[i+1].fg.argb == brush.fg.argb &&
+			    glyphs[i+1].bg.argb == brush.bg.argb &&
 			    glyphs[i+1].font == glyph.font)
 			{
 				continue;
 			}
 		}
 
-		if (brush.background && brush.background != rc->color.bg) {
-			draw_rect_solid(rc, brush.background,
+		if (brush.bg.argb != rc->color.bg.argb) {
+			draw_rect_solid(rc, brush.bg,
 			                    pos.x0, pos.y0,
 			                    pos.x1 - pos.x0,
 			                    glyph.font->ascent + glyph.font->descent);
 		}
+
+		ColorID handle = brush.fg.id;
+
+		// if there's no allocated fill, create it
+		if (!handle) {
+			handle = win_alloc_color(rc, brush.fg.argb);
+		}
+
 		// render elt buffer
 		XRenderCompositeText32(win->x11->dpy,
 			               PictOpOver,
-			               brush.foreground->id,
+			               handle,
 			               win->pic,
 			               glyph.font->picfmt,
 			               0, 0,
@@ -960,12 +965,19 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 			               elts.buf[0].yOff,
 			               elts.buf, elts.n + 1);
 
+		// TODO(ben): We immediately free any new handles and don't cache anything.
+		// Not really optimal, but RGB literals are an uncommon case here.
+		// ...still might be worth another look.
+		if (handle != brush.fg.id && handle) {
+			win_free_color(rc, handle);
+		}
+
 		// finalize draw, reset buffers
 		if (i + 1 < max) {
 			memset(elts.buf, 0, sizeof(*elts.buf) * (elts.n + 1));
 			text.n = elts.n = 0, flushed = true;
-			brush.foreground = glyphs[i+1].foreground;
-			brush.background = glyphs[i+1].background;
+			brush.fg = glyphs[i+1].fg;
+			brush.bg = glyphs[i+1].bg;
 			brush.font = glyphs[i+1].font;
 		}
 	}

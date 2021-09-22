@@ -493,10 +493,10 @@ put_tab(TTY *tty, ColorSet color, uint16 attr)
 {
 	Cell templ = {
 		.ucs4  = ' ',
+		.type  = CellTypeTab,
 		.width = 1,
-		.color = color,
 		.attr  = attr,
-		.type  = CellTypeTab
+		.color = color
 	};
 
 	for (int n = 0; tty->pos.x + 1 < tty->cols; n++) {
@@ -617,8 +617,8 @@ cmd_update_cursor(TTY *tty)
 
 	*cell = line->cells[tty->pos.x];
 	cell->ucs4 = DEFAULT(tty->cursor.cell.ucs4, ' ');
-	cell->color.fg = COLOR_BG;
-	cell->color.bg = COLOR_FG;
+	cell->color.fg = termcolor(ColorTagNone, 0); // background color
+	cell->color.bg = termcolor(ColorTagNone, 1); // foreground color
 }
 
 void
@@ -650,8 +650,8 @@ dbg_print_tty(const TTY *tty, uint flags)
 			out_("ucs4", "%u", tty->cursor.cell.ucs4);
 			out_("attr", "%u", tty->cursor.cell.attr);
 			out_("type", "%u", tty->cursor.cell.type);
-			out_("color", "[ %u, %u ]", tty->cursor.cell.color.fg,
-			                            tty->cursor.cell.color.bg);
+			out_("color", "[ %u, %u ]", tty->cursor.cell.color.fg.index,
+			                            tty->cursor.cell.color.bg.index);
 			out_("style", "%u", tty->cursor.style);
 			out_("wrap", "%d", tty->cursor.wrap);
 			out_("hide", "%d", tty->cursor.hide);

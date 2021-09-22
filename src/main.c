@@ -6,9 +6,8 @@
 #include "utils.h"
 #include "term.h"
 #include "window.h"
-#include "color.h"
 
-#define MAX_COLORS 16
+#define MAX_CFG_COLORS (2+16)
 
 typedef struct Config {
 	char *wm_class;
@@ -16,7 +15,7 @@ typedef struct Config {
 	char *wm_title;
 	char *geometry;
 	char *font;
-	char *colors[MAX_COLORS];
+	char *colors[MAX_CFG_COLORS];
 	char *shell;
 	uint tablen;
 	uint border_px;
@@ -43,12 +42,11 @@ typedef struct Client_ {
 static Client client_;
 
 static FontFace *fonts[4];
-static Color colors[256];
-/* static Color colors[256]; */
-/* static ColorSpec colors[256]; */
+static Color colors[2+256];
 static bool toggle_render = true;
 
 static void run(Client *);
+static Color fetch_color(TermColor);
 static void render_frame(Client *);
 static void event_key_press(void *, int, int, char *, int);
 static void event_resize(void *, int, int);
@@ -138,50 +136,53 @@ error_invalid:
 	// load the user colors (or any fallbacks, if necessary) + the 240 standard colors.
 	// there should be no surprises here - if anything fails, we terminate
 	for (uint i = 0; i < LEN(colors); i++) {
-		RGBA rgba = { 0 };
+		uint32 argb = 0;
 
-		// TODO(ben): default background/foreground should probably occupy two additional
-		// slots starting from the beginning.
-
-		// 16 user/programmer-configured colors
+		// 2+16 user/programmer-configured colors (0 and 1 are foreground/background)
 		if (i < LEN(config.colors)) {
 			// All default strings MUST exist at compile-time
-			ASSERT(i < 16 && config.colors[i]);
-			if (!win_parse_color_string(&rc, config.colors[i], &rgba)) {
+			ASSERT(config.colors[i]);
+			if (!win_parse_color_string(&rc, config.colors[i], &argb)) {
 				dbgprintf("failed to parse RGB string: %s\n", config.colors[i]);
 				exit(EXIT_FAILURE);
 			}
-		// the classic 6^3 color cube
-		} else if (i < 232) {
-			uint8 n = i - 16;
-			rgba.r = (((n / 36) % 6) ? (((n / 36) % 6) * 40 + 55) : 0);
-			rgba.g = (((n /  6) % 6) ? (((n /  6) % 6) * 40 + 55) : 0);
-			rgba.b = (((n /  1) % 6) ? (((n /  1) % 6) * 40 + 55) : 0);
-			rgba.a = 0xff;
-		// dark -> light grayscale till the end
-		} else {
-			ASSERT(i < 256);
-			uint8 n = i - 232;
-			rgba.r = (n * 10 + 8);
-			rgba.g = (n * 10 + 8);
-			rgba.b = (n * 10 + 8);
-			rgba.a = 0xff;
+			for (uint j = 0; j < i; j++) {
+				if (argb == colors[j].argb) {
+					dbgprintf("Mapping color[%03u] to color[%03u]\n", i, j);
+					colors[i] = colors[j];
+					break;
+				}
+			}
+			if (colors[i].id) continue;
+		} else if (i < 232 + 2) { // the classic 6^3 color cube
+			uint8 n = i - 16 - 2;
+			argb = pack_argb(
+				((n / 36) % 6) ? (((n / 36) % 6) * 40 + 55) : 0,
+				((n /  6) % 6) ? (((n /  6) % 6) * 40 + 55) : 0,
+				((n /  1) % 6) ? (((n /  1) % 6) * 40 + 55) : 0,
+				0xff
+			);
+		} else { // dark -> light grayscale till the end
+			ASSERT(i < 256 + 2);
+			uint8 n = i - 232 - 2;
+			argb = pack_argb(
+				n * 10 + 8,
+				n * 10 + 8,
+				n * 10 + 8,
+				0xff
+			);
 		}
 
-		ColorID handle = win_alloc_color(&rc, rgba);
+		ColorID handle = win_alloc_color(&rc, argb);
 		if (!handle) {
 			dbgprintf("failed to create RGBA fill: [%03u]\n", i);
 			exit(EXIT_FAILURE);
 		}
 
-		dbgprintf("Mapping color[%03u] to RGBA(%03u, %03u, %03u, %03u)\n",
-		  i, rgba.r, rgba.g, rgba.b, rgba.a);
+		dbgprintf("Mapping color[%03u] to RGBA(%.08X)\n", i, argb);
 
 		colors[i].id = handle;
-		colors[i].r = rgba.r;
-		colors[i].g = rgba.g;
-		colors[i].b = rgba.b;
-		colors[i].a = rgba.a;
+		colors[i].argb = argb;
 	}
 
 	fonts[0] = font_create_face(&rc, config.font);
@@ -239,8 +240,8 @@ error_invalid:
 	win_show_client(win);
 
 	rc.font = fonts[0];
-	rc.color.fg = &colors[COLOR_FG];
-	rc.color.bg = &colors[COLOR_BG];
+	rc.color.bg = colors[TCOLOR_BG];
+	rc.color.fg = colors[TCOLOR_FG];
 
 	client_.win = win;
 	client_.rc  = rc;
@@ -324,6 +325,31 @@ run(Client *client)
 	}
 }
 
+Color
+fetch_color(TermColor tcolor)
+{
+	Color result;
+
+	switch (tcolor.tag) {
+	case ColorTagNone:
+		result = colors[!!tcolor.index];
+		break;
+	case ColorTag256:
+		result = colors[tcolor.index + 2];
+		break;
+	case ColorTagRGB:
+		result.id = 0;
+		result.argb = pack_argb(tcolor.r, tcolor.g, tcolor.b, 0xff);
+		break;
+	default:
+		result = (Color){ 0 };
+		errprint("invalid color tag");
+		break;
+	}
+
+	return result;
+}
+
 void
 render_frame(Client *client)
 {
@@ -331,8 +357,8 @@ render_frame(Client *client)
 	RC *rc   = &client->rc;
 	TTY *tty = &client->tty;
 
-	rc->color.fg = &colors[COLOR_FG];
-	rc->color.bg = &colors[COLOR_BG];
+	rc->color.bg = colors[TCOLOR_BG];
+	rc->color.fg = colors[TCOLOR_FG];
 	draw_rect_solid(rc, rc->color.bg, 0, 0, win->w, win->h);
 
 	int i = 0;
@@ -350,8 +376,6 @@ render_frame(Client *client)
 
 			if (!cell.ucs4) break;
 
-			ColorSet color = { 0 };
-
 			if (cell.attr & ATTR_ITALIC) {
 				font = fonts[1];
 				if (cell.attr & ATTR_BOLD) {
@@ -363,21 +387,14 @@ render_frame(Client *client)
 				font = fonts[0];
 			}
 
-			// TODO(ben): impliment ansi colors 16 -> 255
-#define COLOR_FALLBACK(color,val) (((color) < 16) ? (color) : (val))
-			if (cell.attr & ATTR_INVERT) {
-				color.fg = COLOR_FALLBACK(cell.color.bg, COLOR_FG);
-				color.bg = COLOR_FALLBACK(cell.color.fg, COLOR_BG);
-			} else {
-				color.fg = COLOR_FALLBACK(cell.color.fg, COLOR_FG);
-				color.bg = COLOR_FALLBACK(cell.color.bg, COLOR_BG);
-			}
-#undef COLOR_FALLBACK
-
 			glyphs[x].ucs4 = cell.ucs4;
 			glyphs[x].font = font;
-			glyphs[x].foreground = &colors[color.fg];
-			glyphs[x].background = &colors[color.bg];
+			glyphs[x].bg = fetch_color(cell.color.bg);
+			glyphs[x].fg = fetch_color(cell.color.fg);
+
+			if (cell.attr & ATTR_INVERT) {
+				SWAP(Color, glyphs[x].bg, glyphs[x].fg);
+			}
 		}
 
 		draw_text_utf8(rc, glyphs, x, 0, i * tty->rowpx);
@@ -388,21 +405,11 @@ render_frame(Client *client)
 		int sx = tty->pos.x;
 		int sy = tty->pos.y - (tty->top + tty->scroll);
 		if (sy < tty->rows) {
-			int width = (tty->cursor.style != CursorStyleBlock) ? 2 : tty->colpx;
-			draw_rect_solid(rc, &colors[tty->cursor.cell.color.bg],
-			                    sx * tty->colpx,
-			                    sy * tty->rowpx,
-			                    width,
-			                    tty->rowpx);
 			GlyphRender glyph = {
 				.ucs4 = tty->cursor.cell.ucs4,
-				.foreground = &colors[(tty->cursor.style != 2)
-				                  ? tty->cursor.cell.color.bg
-				                  : tty->cursor.cell.color.fg],
-				.background = NULL,
-				.font = (tty->cursor.cell.attr & ATTR_BOLD)
-				      ? fonts[3]
-				      : fonts[0]
+				.bg   = fetch_color(tty->cursor.cell.color.bg),
+				.fg   = fetch_color(tty->cursor.cell.color.fg),
+				.font = (tty->cursor.cell.attr & ATTR_BOLD) ? fonts[3] : fonts[0]
 			};
 			draw_text_utf8(rc, &glyph, 1, sx * tty->colpx, sy * tty->rowpx);
 		}

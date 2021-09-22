@@ -39,13 +39,13 @@ typedef struct {
 	GC gc;
 } WinData;
 
-#define XCOLOR(color) (       \
-  (XRenderColor){             \
-    .red   = (color)->r << 8, \
-    .green = (color)->g << 8, \
-    .blue  = (color)->b << 8, \
-    .alpha = (color)->a << 8  \
-  }                           \
+#define XR_ARGB(argb) ( \
+  (XRenderColor){                       \
+    .alpha = (argb & 0xff000000) >> 16, \
+    .red   = (argb & 0x00ff0000) >>  8, \
+    .green = (argb & 0x0000ff00) >>  0, \
+    .blue  = (argb & 0x000000ff) <<  8  \
+  }                                     \
 )
 
 #endif

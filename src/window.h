@@ -45,7 +45,7 @@ typedef struct {
 	int width, height;
 	int ascent, descent;
 	int max_advance;
-	struct { long  x, y; } size_px;
+	struct { int64 x, y; } size_px;
 	struct { float x, y; } size_pt;
 } FontMetrics;
 
@@ -56,25 +56,24 @@ typedef struct { uint8 r, g, b, a; } RGBA;
 
 typedef uint32 RGB32;
 typedef uint32 RGBA32;
+typedef uint32 ARGB32;
 
-#define PACK_RGB(r,g,b)    (((r)<<16)|((g)<<8)|((b)<<0))
-#define PACK_RGBA(r,g,b,a) (((r)<<24)|((g)<<16)|((b)<<8)|((a)<<0))
+#define pack_rgb(r,g,b)    ((((r)&0xff)<<16)|(((g)&0xff)<<8)|((b)&0xff))
+#define pack_bgr(r,g,b)    ((((b)&0xff)<<16)|(((g)&0xff)<<8)|((r)&0xff))
+#define pack_argb(r,g,b,a) ((((a)&0xff)<<24)|(((r)&0xff)<<16)|(((g)&0xff)<<8)|((b)&0xff))
+#define pack_rgba(r,g,b,a) ((((r)&0xff)<<24)|(((g)&0xff)<<16)|(((b)&0xff)<<8)|((a)&0xff))
+#define pack_abgr(r,g,b,a) ((((a)&0xff)<<24)|(((b)&0xff)<<16)|(((g)&0xff)<<8)|((r)&0xff))
 
 typedef struct {
 	ColorID id;
-	struct {
-		uint8 r;
-		uint8 g;
-		uint8 b;
-		uint8 a;
-	};
+	uint32 argb;
 } Color;
 
 typedef struct {
 	uint32 ucs4;
 	FontFace *font;
-	Color *foreground;
-	Color *background;
+	Color fg;
+	Color bg;
 	uint32 flags;
 } GlyphRender;
 
@@ -83,8 +82,8 @@ typedef struct {
 	uint16 mode;
 	FontFace *font;
 	struct {
-		Color *fg;
-		Color *bg;
+		Color fg;
+		Color bg;
 	} color;
 } RC;
 
@@ -98,9 +97,9 @@ void win_get_coords(Win *, int *, int *);
 void win_render_frame(Win *);
 bool win_init_render_context(Win *, RC *);
 int win_events_pending(Win *);
-ColorID win_alloc_color(const RC *, RGBA);
+ColorID win_alloc_color(const RC *, uint32);
 void win_free_color(const RC *, ColorID);
-bool win_parse_color_string(const RC *, const char *, RGBA *rgba);
+bool win_parse_color_string(const RC *, const char *, uint32 *);
 
 u64 timer_current_ns(void);
 double timer_elapsed_s(u64, u64 *);
@@ -110,7 +109,7 @@ FontFace *font_create_derived_face(FontFace *, uint);
 bool font_get_face_metrics(FontFace *, FontMetrics *);
 bool font_init_face(FontFace *);
 void font_destroy_face(FontFace *);
-void draw_rect_solid(const RC *, const Color *, int, int, int, int);
+void draw_rect_solid(const RC *, Color, int, int, int, int);
 void draw_text_utf8(const RC *, const GlyphRender *, uint, int, int);
 
 #endif

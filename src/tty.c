@@ -24,6 +24,21 @@ static void vte_exec_decset(TTY *, int, bool);
 static void vte_exec_decscusr(TTY *, int);
 static void vte_exec_osc(TTY *, const uchar *, const int *, int);
 
+static const Cell g_celltempl = {
+	.ucs4  = ' ',
+	.type  = CellTypeNormal,
+	.width = 1,
+	.attr  = 0,
+	.color.bg = {
+		.tag = ColorTagNone,
+		.index = 0
+	},
+	.color.fg = {
+		.tag = ColorTagNone,
+		.index = 1
+	}
+};
+
 // Debug only
 #define FUNC_ENTRIES \
   X_(PRINT,    "*"               ) \
@@ -350,7 +365,7 @@ void
 vte_exec_ich(TTY *tty, int arg)
 {
 	FUNC_DEBUG(ICH);
-	cmd_insert_cells(tty, &CELLSPACE, DEFAULT(arg, 1));
+	cmd_insert_cells(tty, &g_celltempl, DEFAULT(arg, 1));
 }
 
 void
@@ -421,11 +436,11 @@ vte_exec_ed(TTY *tty, int arg)
 	switch (arg) {
 	case 0:
 		cmd_clear_rows(tty, tty->pos.y + 1, tty->rows);
-		cmd_set_cells(tty, &CELLCLEAR, tty->pos.x, tty->pos.y, tty->cols);
+		cmd_set_cells(tty, &(Cell){ 0 }, tty->pos.x, tty->pos.y, tty->cols);
 		break;
 	case 1:
 		cmd_clear_rows(tty, tty->top, tty->pos.y - tty->top);
-		cmd_set_cells(tty, &CELLSPACE, 0, tty->pos.y, tty->pos.x);
+		cmd_set_cells(tty, &g_celltempl, 0, tty->pos.y, tty->pos.x);
 		break;
 	case 2:
 		cmd_clear_rows(tty, tty->top, tty->rows);
@@ -441,13 +456,13 @@ vte_exec_el(TTY *tty, int arg)
 
 	switch (arg) {
 	case 0:
-		cmd_set_cells(tty, &CELLCLEAR, tty->pos.x, tty->pos.y, tty->cols - tty->pos.x);
+		cmd_set_cells(tty, &(Cell){ 0 }, tty->pos.x, tty->pos.y, tty->cols - tty->pos.x);
 		break;
 	case 1:
-		cmd_set_cells(tty, &CELLSPACE, 0, tty->pos.y, tty->pos.x);
+		cmd_set_cells(tty, &g_celltempl, 0, tty->pos.y, tty->pos.x);
 		break;
 	case 2:
-		cmd_set_cells(tty, &CELLCLEAR, 0, tty->pos.y, tty->cols);
+		cmd_set_cells(tty, &(Cell){ 0 }, 0, tty->pos.y, tty->cols);
 		cmd_set_cursor_x(tty, 0);
 		break;
 	}
@@ -467,8 +482,8 @@ vte_exec_sgr(TTY *tty, int *argv, int argc)
 		switch (argv[i]) {
 		case 0:
 			cell->attr &= ~ATTR_MASK;
-			cell->color.bg = 0;
-			cell->color.fg = 7;
+			cell->color.bg = termcolor(ColorTagNone, 0);
+			cell->color.fg = termcolor(ColorTagNone, 1);
 			break;
 
 		case 1:  cell->attr |=  ATTR_BOLD;      break;
@@ -486,17 +501,17 @@ vte_exec_sgr(TTY *tty, int *argv, int argc)
 		case 32: case 33:
 		case 34: case 35:
 		case 36: case 37:
-			cell->color.fg = argv[i] - 30;
+			cell->color.fg = termcolor(ColorTag256, argv[i] - 30, 0);
 			break;
-		case 39: cell->color.fg = 7; break;
+		case 39: cell->color.fg = termcolor(ColorTagNone, 1); break;
 
 		case 40: case 41:
 		case 42: case 43:
 		case 44: case 45:
 		case 46: case 47:
-			cell->color.bg = argv[i] - 40;
+			cell->color.bg = termcolor(ColorTag256, argv[i] - 40, 0);
 			break;
-		case 49: cell->color.fg = 0; break;
+		case 49: cell->color.fg = termcolor(ColorTagNone, 0); break;
 
 		case 38:
 		case 48:
@@ -509,15 +524,34 @@ vte_exec_sgr(TTY *tty, int *argv, int argc)
 			}
 			if (i - start == 2) {
 				if (argv[start] == 48) {
-					cell->color.bg = argv[i];
+					cell->color.bg = termcolor(ColorTag256, argv[i] & 0xff);
 				} else if (argv[start] == 38) {
-					cell->color.fg = argv[i];
+					cell->color.fg = termcolor(ColorTag256, argv[i] & 0xff);
 				}
 			} else if (i - start == 4) {
 				// TODO(ben): set RGB values
+				if (argv[start] == 48) {
+					cell->color.bg = termcolor(
+						ColorTagRGB,
+						argv[i-2] & 0xff,
+						argv[i-1] & 0xff,
+						argv[i-0] & 0xff
+					);
+				} else if (argv[start] == 38) {
+					cell->color.fg = termcolor(
+						ColorTagRGB,
+						argv[i-2] & 0xff,
+						argv[i-1] & 0xff,
+						argv[i-0] & 0xff
+					);
+				}
 			} else {
 				// TODO(ben): confirm whether errors reset the defaults
 				dbgprint("skiping invalid CSI:SGR sequence");
+				cell->attr &= ~ATTR_MASK;
+				cell->color.bg = termcolor(ColorTagNone, 0);
+				cell->color.fg = termcolor(ColorTagNone, 1);
+				return;
 			}
 			break;
 
@@ -525,14 +559,14 @@ vte_exec_sgr(TTY *tty, int *argv, int argc)
 		case 92: case 93:
 		case 94: case 95:
 		case 96: case 97:
-			cell->color.fg = argv[i] + 8 - 90;
+			cell->color.fg = termcolor(ColorTag256, argv[i] - 90 + 8);
 			break;
 
 		case 100: case 101:
 		case 102: case 103:
 		case 104: case 105:
 		case 106: case 107:
-			cell->color.bg = argv[i] + 8 - 90;
+			cell->color.bg = termcolor(ColorTag256, argv[i] - 100 + 8);
 			break;
 		}
 	} while (++i < argc);
@@ -648,7 +682,16 @@ tty_init(TTY *tty, struct TTYConfig config)
 	}
 
 	arr_reserve(tty->parser.data, 4);
-	tty->parser.cell = CELLDFL(' ');
+	/* tty->parser.cell = CELLDFL(' '); */
+	tty->parser.cell = (Cell){
+		.ucs4 = ' ',
+		.type = CellTypeNormal,
+		.width = 1,
+		.color = {
+			.bg = termcolor(ColorTagNone, 0),
+			.fg = termcolor(ColorTagNone, 1)
+		}
+	};
 
 	tty->ref = config.ref;
 	tty->colpx = config.colpx;

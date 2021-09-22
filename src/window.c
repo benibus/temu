@@ -757,19 +757,11 @@ win_render_frame(Win *pub)
 }
 
 ColorID
-win_alloc_color(const RC *rc, RGBA rgba)
+win_alloc_color(const RC *rc, uint32 argb)
 {
 	const WinData *win = (const WinData *)rc->win;
 
-	uint64 handle = XRenderCreateSolidFill(
-		win->x11->dpy,
-		&(XRenderColor){
-			.red   = rgba.r << 8,
-			.green = rgba.g << 8,
-			.blue  = rgba.b << 8,
-			.alpha = rgba.a << 8
-		}
-	);
+	uint64 handle = XRenderCreateSolidFill(win->x11->dpy, &XR_ARGB(argb));
 
 	return handle;
 }
@@ -785,7 +777,7 @@ win_free_color(const RC *rc, ColorID handle)
 }
 
 bool
-win_parse_color_string(const RC *rc, const char *name, RGBA *rgba)
+win_parse_color_string(const RC *rc, const char *name, uint32 *result)
 {
 	const WinData *win = (const WinData *)rc->win;
 	XColor xcolor = { 0 };
@@ -794,10 +786,13 @@ win_parse_color_string(const RC *rc, const char *name, RGBA *rgba)
 		return false;
 	}
 
-	rgba->r = xcolor.red >> 8;
-	rgba->g = xcolor.green >> 8;
-	rgba->b = xcolor.blue >> 8;
-	rgba->a = 0xff;
+	if (result) {
+		uint32 argb = 0xff000000;
+		argb |= (xcolor.red & 0xff00)   << 8;
+		argb |= (xcolor.green & 0xff00) << 0;
+		argb |= (xcolor.blue & 0xff00)  >> 8;
+		*result = argb;
+	}
 
 	return true;
 }
