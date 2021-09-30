@@ -31,7 +31,7 @@ typedef struct Config {
 typedef struct Client_ {
 	Win *win;
 	RC rc;
-	TTY tty;
+	Term *term;
 	struct {
 		double min;
 		double max;
@@ -46,18 +46,10 @@ static Color colors[2+256];
 static bool toggle_render = true;
 
 static void run(Client *);
-static Color fetch_color(TermColor);
+static Color fetch_color(CellColor);
 static void render_frame(Client *);
 static void event_key_press(void *, int, int, char *, int);
 static void event_resize(void *, int, int);
-
-static void *
-passbuf(void *raw)
-{
-	struct Buf_ *buf = raw;
-	PRINTBUF(buf);
-	return buf;
-}
 
 int
 main(int argc, char **argv)
@@ -124,7 +116,7 @@ error_invalid:
 		exit(1);
 	}
 
-	struct TTYConfig tc = { 0 };
+	struct TermConfig tc = { 0 };
 	Win *win;
 	RC rc = { 0 };
 
@@ -201,16 +193,16 @@ error_invalid:
 	{
 		FontMetrics metrics = { 0 };
 		font_get_face_metrics(fonts[0], &metrics);
-		tc.colpx = metrics.width;
-		tc.rowpx = metrics.ascent + metrics.descent;
+		tc.colsize = metrics.width;
+		tc.rowsize = metrics.ascent + metrics.descent;
 	}
 
 	{
 		win->title = config.wm_title;
 		win->instance = config.wm_instance;
 		win->class = config.wm_class;
-		win->w = tc.colpx * config.columns;
-		win->h = tc.rowpx * config.rows;
+		win->w = tc.colsize * config.columns;
+		win->h = tc.rowsize * config.rows;
 		win->bw = config.border_px;
 		win->flags = WINATTR_RESIZABLE;
 	}
@@ -219,18 +211,18 @@ error_invalid:
 		return 4;
 	}
 
-	tc.cols = (win->w / tc.colpx) - (2 * win->bw);
-	tc.rows = (win->h / tc.rowpx) - (2 * win->bw);
+	tc.cols = (win->w / tc.colsize) - (2 * win->bw);
+	tc.rows = (win->h / tc.rowsize) - (2 * win->bw);
 
 	ASSERT(tc.cols == (int)config.columns);
 	ASSERT(tc.rows == (int)config.rows);
 
-	tc.ref = &client_;
+	tc.generic = &client_;
 	tc.shell = config.shell;
-	tc.histsize = MAX(config.histsize, tc.rows);
-	tc.tablen = DEFAULT(config.tablen, 8);
+	tc.histlines = MAX(config.histsize, tc.rows);
+	tc.tabcols = DEFAULT(config.tablen, 8);
 
-	if (!tty_init(&client_.tty, tc)) {
+	if (!(client_.term = term_create(tc))) {
 		return 6;
 	}
 
@@ -240,8 +232,8 @@ error_invalid:
 	win_show_client(win);
 
 	rc.font = fonts[0];
-	rc.color.bg = colors[TCOLOR_BG];
-	rc.color.fg = colors[TCOLOR_FG];
+	rc.color.bg = colors[VT_COLOR_BG];
+	rc.color.fg = colors[VT_COLOR_FG];
 
 	client_.win = win;
 	client_.rc  = rc;
@@ -258,7 +250,7 @@ void
 run(Client *client)
 {
 	Win *win = client->win;
-	TTY *tty = &client->tty;
+	Term *term = client->term;
 
 	double timeout = -1.0;
 	double minlat = client->latency.min;
@@ -267,21 +259,13 @@ run(Client *client)
 	TimeVal t0 = { 0 };
 	TimeVal t1 = { 0 };
 
-	tty_exec(tty, config.shell);
-#if 1
-	fprintf(stderr, "App(%s) TTY PID: %d\n"
-	                "App(%s) PTY PID: %d\n",
-	  __FILE__, win->pid,
-	  __FILE__, tty->pty.pid
-	);
-#endif
-
-	fd_set rset;
-	int maxfd = MAX(win->fd, tty->pty.mfd);
+	int ptyfd = term_exec(term, config.shell);
+	int maxfd = MAX(win->fd, ptyfd);
 
 	while (win->state) {
+		static fd_set rset;
 		FD_ZERO(&rset);
-		FD_SET(tty->pty.mfd, &rset);
+		FD_SET(ptyfd, &rset);
 		FD_SET(win->fd, &rset);
 
 		if (win_events_pending(win)) {
@@ -298,13 +282,13 @@ run(Client *client)
 		}
 		time_get_mono(&t1);
 
-		if (FD_ISSET(tty->pty.mfd, &rset)) {
-			tty_read(tty);
+		if (FD_ISSET(ptyfd, &rset)) {
+			term_pull(term);
 		}
 
 		int num_events = win_process_events(win, 0.0);
 
-		if (FD_ISSET(tty->pty.mfd, &rset) || num_events) {
+		if (FD_ISSET(ptyfd, &rset) || num_events) {
 			if (!busy) {
 				busy = true;
 				t0 = t1;
@@ -326,7 +310,7 @@ run(Client *client)
 }
 
 Color
-fetch_color(TermColor tcolor)
+fetch_color(CellColor tcolor)
 {
 	Color result;
 
@@ -335,7 +319,7 @@ fetch_color(TermColor tcolor)
 		result = colors[!!tcolor.index];
 		break;
 	case ColorTag256:
-		result = colors[tcolor.index + 2];
+		result = colors[tcolor.index+2];
 		break;
 	case ColorTagRGB:
 		result.id = 0;
@@ -355,23 +339,21 @@ render_frame(Client *client)
 {
 	Win *win = client->win;
 	RC *rc   = &client->rc;
-	TTY *tty = &client->tty;
+	Term *term = client->term;
 
-	rc->color.bg = colors[TCOLOR_BG];
-	rc->color.fg = colors[TCOLOR_FG];
+	rc->color.bg = colors[VT_COLOR_BG];
+	rc->color.fg = colors[VT_COLOR_FG];
 	draw_rect_solid(rc, rc->color.bg, 0, 0, win->w, win->h);
 
 	int i = 0;
-	int x = 0;
-	int y = tty->top + tty->scroll;
-
-	for (; i < tty->rows && y <= tty->bot; i++, y++) {
+	for (; i < term->rows; i++) {
 		GlyphRender glyphs[256] = { 0 };
 
 		FontFace *font = rc->font;
-		Cell *cells = stream_get_line(tty, y, NULL);
+		const Cell *cells = term_get_row(term, i);
+		int x = 0;
 
-		for (x = 0; cells && x < tty->cols && x < (int)LEN(glyphs); x++) {
+		for (; cells && x < term->cols && x < (int)LEN(glyphs); x++) {
 			Cell cell = cells[x];
 
 			if (!cell.ucs4) break;
@@ -389,30 +371,27 @@ render_frame(Client *client)
 
 			glyphs[x].ucs4 = cell.ucs4;
 			glyphs[x].font = font;
-			glyphs[x].bg = fetch_color(cell.color.bg);
-			glyphs[x].fg = fetch_color(cell.color.fg);
+			glyphs[x].bg = fetch_color(cell.bg);
+			glyphs[x].fg = fetch_color(cell.fg);
 
 			if (cell.attr & ATTR_INVERT) {
 				SWAP(Color, glyphs[x].bg, glyphs[x].fg);
 			}
 		}
 
-		draw_text_utf8(rc, glyphs, x, 0, i * tty->rowpx);
+		draw_text_utf8(rc, glyphs, x, 0, i * term->rowsize);
 	}
 
 	// draw cursor last
-	if (!tty->cursor.hide) {
-		int sx = tty->pos.x;
-		int sy = tty->pos.y - (tty->top + tty->scroll);
-		if (sy < tty->rows) {
-			GlyphRender glyph = {
-				.ucs4 = tty->cursor.cell.ucs4,
-				.bg   = fetch_color(tty->cursor.cell.color.bg),
-				.fg   = fetch_color(tty->cursor.cell.color.fg),
-				.font = (tty->cursor.cell.attr & ATTR_BOLD) ? fonts[3] : fonts[0]
-			};
-			draw_text_utf8(rc, &glyph, 1, sx * tty->colpx, sy * tty->rowpx);
-		}
+	CursorDesc cursor = { 0 };
+	if (term_get_cursor_desc(term, &cursor)) {
+		GlyphRender glyph = {
+			.ucs4 = cursor.ucs4,
+			.bg   = fetch_color(cursor.bg),
+			.fg   = fetch_color(cursor.fg),
+			.font = (cursor.attr & ATTR_BOLD) ? fonts[3] : fonts[0]
+		};
+		draw_text_utf8(rc, &glyph, 1, cursor.col * term->colsize, cursor.row * term->rowsize);
 	}
 
 	win_render_frame(win);
@@ -422,7 +401,7 @@ void
 event_key_press(void *ref, int key, int mod, char *buf, int len)
 {
 	Client *client = ref;
-	TTY *tty = &client->tty;
+	Term *term = client->term;
 
 	char seq[64];
 	int seqlen = 0;
@@ -431,26 +410,26 @@ event_key_press(void *ref, int key, int mod, char *buf, int len)
 	if (mod == ModAlt) {
 		switch (key) {
 		case KeyF9:
-			dbg_print_history(tty);
+			term_print_history(term);
 			return;
 		case KeyF10:
-			dbg_print_tty(tty, ~0);
+			term_print_summary(term, ~0);
 			return;
 		case 'u':
-			tty_scroll(tty, -client->scrollinc);
+			term_scroll(term, -client->scrollinc);
 			return;
 		case 'd':
-			tty_scroll(tty, +client->scrollinc);
+			term_scroll(term, +client->scrollinc);
 			return;
 		}
 	}
 #endif
 
-	if ((seqlen = key_get_sequence(key, mod, seq, LEN(seq)))) {
-		tty_write(tty, seq, seqlen, INPUT_KEY);
+	if ((seqlen = term_make_key_string(term, key, mod, seq, LEN(seq)))) {
+		term_push(term, seq, seqlen);
 	} else if (len == 1) {
-		tty_scroll(tty, -tty->scroll);
-		tty_write(tty, buf, len, INPUT_CHAR);
+		term_reset_scroll(term);
+		term_push(term, buf, len);
 	}
 }
 
@@ -459,14 +438,14 @@ event_resize(void *ref, int width, int height)
 {
 	Client *client = ref;
 	Win *win = client->win;
-	TTY *tty = &client->tty;
+	Term *term = client->term;
 
-	int cols = (width / tty->colpx) - (2 * win->bw);
-	int rows = (height / tty->rowpx) - (2 * win->bw);
+	int cols = (width / term->colsize) - (2 * win->bw);
+	int rows = (height / term->rowsize) - (2 * win->bw);
 
 	win_resize_client(win, width, height);
-	if (cols != tty->cols || rows != tty->rows) {
-		tty_resize(tty, cols, rows);
+	if (cols != term->cols || rows != term->rows) {
+		term_resize(term, cols, rows);
 	}
 }
 

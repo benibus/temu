@@ -3,9 +3,6 @@
 
 #include "defs.h"
 
-#define INPUT_CHAR 1
-#define INPUT_KEY  2
-
 #define ATTR_NONE      (0)
 #define ATTR_BOLD      (1 << 0)
 #define ATTR_UNDERLINE (1 << 1)
@@ -22,22 +19,16 @@
 #define CURSOR_INVERT   (1 << 2)
 #define CURSOR_BLINKING (1 << 3)
 
-enum {
-	CursorStyleDefault,
-	CursorStyleBlock      = 2,
-	CursorStyleUnderscore = 4,
-	CursorStyleBar        = 6
-};
-
-enum {
-	CellTypeBlank,
-	CellTypeNormal,
-	CellTypeComplex,
-	CellTypeTab,
-	CellTypeDummyTab,
-	CellTypeDummyWide,
-	CellTypeCount
-};
+#define VT_COLOR_BG      0x0
+#define VT_COLOR_FG      0x1
+#define VT_COLOR_BLACK   0x0
+#define VT_COLOR_RED     0x1
+#define VT_COLOR_GREEN   0x2
+#define VT_COLOR_YELLOW  0x3
+#define VT_COLOR_BLUE    0x4
+#define VT_COLOR_MAGENTA 0x5
+#define VT_COLOR_CYAN    0x6
+#define VT_COLOR_WHITE   0x7
 
 typedef struct {
 	enum ColorTag {
@@ -55,127 +46,143 @@ typedef struct {
 			uint8 b;
 		};
 	};
-} TermColor;
+} CellColor;
 
-#define TCOLOR_BG      0x0
-#define TCOLOR_FG      0x1
-#define TCOLOR_BLACK   0x0
-#define TCOLOR_RED     0x1
-#define TCOLOR_GREEN   0x2
-#define TCOLOR_YELLOW  0x3
-#define TCOLOR_BLUE    0x4
-#define TCOLOR_MAGENTA 0x5
-#define TCOLOR_CYAN    0x6
-#define TCOLOR_WHITE   0x7
+#define cellcolor(tag_,...) (CellColor){ .tag = (tag_), .arr = { __VA_ARGS__ } }
 
-#define termcolor(tag_,...) (TermColor){ .tag = (tag_), .arr = { __VA_ARGS__ } }
+typedef enum {
+	CursorStyleDefault,
+	CursorStyleBlock      = 2,
+	CursorStyleUnderscore = 4,
+	CursorStyleBar        = 6
+} CursorStyle;
 
 typedef struct {
-	TermColor bg;
-	TermColor fg;
-} ColorSet;
+	uint32 ucs4;
+	int col, row;
+	CursorStyle style;
+	CellColor bg;
+	CellColor fg;
+	uint16 attr;
+} CursorDesc;
+
+typedef enum {
+	CellTypeBlank,
+	CellTypeNormal,
+	CellTypeComplex,
+	CellTypeTab,
+	CellTypeDummyTab,
+	CellTypeDummyWide,
+	CellTypeCount
+} CellType;
 
 typedef struct {
-	uint32 ucs4;    // UCS4 character code
-	uint8 type;     // cell type ID
-	uint8 width;    // glyph width in columns
-	uint16 attr;    // visual attribute flags
-	ColorSet color; // color context
+	uint32 ucs4;
+	CellColor bg;
+	CellColor fg;
+	CellType type:8;
+	uint8 width;
+	uint16 attr;
 } Cell;
 
-typedef struct PTY_ PTY;
-typedef struct Seq_ Seq;
-typedef struct Ring_ Ring;
-typedef struct Parser_ Parser;
-
-typedef uint LineID;
-
-struct TTYConfig {
-	void *ref;
+struct TermConfig {
+	void *generic;
 	char *shell;
 	uint16 cols, rows;
-	uint16 colpx, rowpx;
-	uint16 histsize;
-	uint16 tablen;
+	uint16 colsize, rowsize;
+	uint16 tabcols;
+	uint16 histlines;
 };
 
-typedef struct TTY_ {
-	void *ref;
+typedef struct PTY {
+	int pid;
+	int mfd, sfd;
+	uchar buf[4096];
+	uint size;
+} PTY;
+
+typedef struct Parser {
+	uint state;      // Current FSM state
+	uint32 ucs4;     // Current codepoint being decoded
+	uchar *data;     // Dynamic buffer for OSC/DCS/APC string sequences
+	uchar tokens[2]; // Stashed intermediate tokens
+	int depth;       // Intermediate token index
+	int argv[16];    // Numeric parameters
+	int argi;        // Numeric parameter index
+} Parser;
+
+typedef struct Ring Ring;
+
+typedef struct {
+	void *generic;
 
 	Ring *ring;
 	uint8 *tabstops;
 
-	int top, bot;
 	int cols, rows;
-	int scroll;
-	int colpx, rowpx;
-	int tablen;
-	int histsize;
+	int colsize, rowsize;
+	int histlines;
+	int scrollback;
+	int top, bot;
+	int tabcols;
+
+	bool wrapnext;
 
 	struct { int x, y; } pos;
 
 	struct {
-		Cell cell;
-		uint8 style;
-		bool wrap;
-		bool hide;
-	} cursor;
+		CellColor bg;
+		CellColor fg;
+		int width;
+		uint16 attr;
+		CursorStyle cursor_style;
+		bool cursor_hidden;
+	} current;
 
-	struct PTY_ {
-		int pid;
-		int mfd, sfd;
-		uchar buf[4096];
-		uint size;
-	} pty;
+	PTY pty;
 
-	struct Parser_ {
-		uint state;  // Current FSM state
-		Cell cell;   // Current template to write to stream
-		uint32 ucs4; // Current codepoint being decoded
+	Parser parser;
+} Term;
 
-		// Dynamic buffer for OSC/DCS/APC string sequences
-		uchar *data;
+Term *term_create(struct TermConfig);
+bool term_init(Term *, struct TermConfig);
+int term_exec(Term *, const char *);
+size_t term_pull(Term *);
+size_t term_push(Term *, const char *, size_t);
+size_t term_consume(Term *, const uchar *, size_t);
+void term_scroll(Term *, int);
+void term_reset_scroll(Term *);
+void term_resize(Term *, int, int);
+int term_get_fileno(const Term *);
+const Cell *term_get_row(const Term *, int);
+bool term_get_cursor_desc(const Term *, CursorDesc *);
+size_t term_make_key_string(const Term *, uint, uint, char *, size_t);
 
-		// Stashed intermediate tokens for lookback
-		uchar stash[2];
-		int stash_index;
-		// Offsets to OSC parameter strings within the byte buffer
-		int osc_offsets[16];
-		int osc_index;
-		// Numeric CSI parameters
-		int csi_params[16];
-		int csi_index;
-	} parser;
-} TTY;
+void term_print_summary(const Term *, uint);
+void term_print_history(const Term *);
 
-TTY *tty_create(struct TTYConfig);
-bool tty_init(TTY *, struct TTYConfig);
-int tty_exec(TTY *, const char *);
-size_t tty_read(TTY *);
-size_t tty_write(TTY *, const char *, size_t, uint);
-size_t tty_write_raw(TTY *, const uchar *, size_t, uint8);
-void tty_scroll(TTY *, int);
-void tty_resize(TTY *, int, int);
+void write_codepoint(Term *, uint32, CellType);
+void write_tab(Term *);
+void write_newline(Term *);
 
-TTY *stream_init(TTY *, uint, uint, uint);
-int stream_write(TTY *, const Cell *);
-void stream_resize(TTY *, int, int);
-Cell *stream_get_line(TTY *, LineID, uint *);
+void cursor_move_cols(Term *, int);
+void cursor_move_rows(Term *, int);
+void cursor_set_col(Term *, int);
+void cursor_set_row(Term *, int);
+void cursor_set_hidden(Term *, bool);
+void cursor_set_style(Term *, int);
 
-void cmd_set_cells(TTY *, const Cell *, uint, uint, uint);
-void cmd_shift_cells(TTY *, uint, uint, int);
-void cmd_insert_cells(TTY *, const Cell *, uint);
-void cmd_clear_rows(TTY *, uint, uint);
-void cmd_move_cursor_x(TTY *, int);
-void cmd_move_cursor_y(TTY *, int);
-void cmd_set_cursor_x(TTY *, uint);
-void cmd_set_cursor_y(TTY *, uint);
-void cmd_update_cursor(TTY *);
-
-size_t key_get_sequence(uint, uint, char *, size_t);
-
-void dummy__(TTY *);
-void dbg_print_history(TTY *);
-void dbg_print_tty(const TTY *, uint);
+void cells_init(Term *, int, int, int);
+void cells_clear(Term *, int, int, int);
+void cells_delete(Term *, int, int, int);
+void cells_insert(Term *, int, int, int);
+void cells_clear_lines(Term *, int, int);
+void cells_set_bg(Term *, CellColor);
+void cells_set_fg(Term *, CellColor);
+void cells_reset_bg(Term *);
+void cells_reset_fg(Term *);
+void cells_set_attrs(Term *, uint16);
+void cells_add_attrs(Term *, uint16);
+void cells_del_attrs(Term *, uint16);
 
 #endif

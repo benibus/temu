@@ -1,4 +1,5 @@
 #include "utils.h"
+#include "term.h"
 #include "keymap.h"
 
 // temporary
@@ -112,8 +113,10 @@ key_lookup(int key, KeyString *table)
 }
 
 size_t
-key_get_sequence(uint key, uint mod, char *buf, size_t size)
+term_make_key_string(const Term *term, uint key, uint mod, char *buf, size_t size)
 {
+	(void)term;
+
 	if (key > KeyCount - 1 || mod > ModCount - 1)
 		return 0;
 

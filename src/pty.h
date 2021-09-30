@@ -2,13 +2,12 @@
 #define PTY_H__
 
 #include "defs.h"
-
 #include "term.h"
 
-int pty_init(TTY *, const char *);
-size_t pty_read(TTY *, uint8);
-size_t pty_write(TTY *, const char *, size_t, uint8);
-void pty_resize(const TTY *, int, int);
+int pty_init(Term *, const char *);
+size_t pty_read(Term *);
+size_t pty_write(Term *, const char *, size_t);
+void pty_resize(const Term *, int, int);
 
 #endif
 

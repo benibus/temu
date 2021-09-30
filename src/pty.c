@@ -14,6 +14,7 @@
 #endif
 
 #include "utils.h"
+#include "term.h"
 #include "pty.h"
 
 #define WRITE_LIMIT 1024
@@ -21,9 +22,9 @@
 static void sys_sigchld(int);
 
 int
-pty_init(TTY *tty, const char *shell)
+pty_init(Term *term, const char *shell)
 {
-	PTY *pty = &tty->pty;
+	struct PTY *pty = &term->pty;
 	const char *cmd = (shell) ? shell : "/bin/dash";
 	char *args[] = { NULL };
 
@@ -74,38 +75,33 @@ pty_init(TTY *tty, const char *shell)
 }
 
 size_t
-pty_read(TTY *tty, uint8 type)
+pty_read(Term *term)
 {
-	PTY *pty = &tty->pty;
-	int nr, nw;
+	struct PTY *pty = &term->pty;
 
-	nr = read(pty->mfd, pty->buf + pty->size, LEN(pty->buf) - pty->size);
+	int count = read(
+		pty->mfd,
+		pty->buf + pty->size,
+		LEN(pty->buf) - pty->size
+	);
 
-	switch (nr) {
-		case  0:
-			exit(0);
-			break;
-		case -1:
-			error_fatal("pty_read()", 1);
-			break;
-		default:
-			pty->size += nr;
-			nw = tty_write_raw(tty, pty->buf, pty->size, type);
-			pty->size -= nw;
-			if (pty->size) {
-				ASSERT(pty->size + nw <= LEN(pty->buf));
-				memmove(pty->buf, pty->buf + nw, pty->size);
-			}
-			break;
+	switch (count) {
+	case  0: exit(0);
+	case -1: errfatal(EXIT_FAILURE, "pty_read()");
+	default:
+		pty->size += count;
+		pty->size -= term_consume(term, pty->buf, pty->size);
+		ASSERT(!pty->size);
+		break;
 	}
 
-	return nr;
+	return count;
 }
 
 size_t
-pty_write(TTY *tty, const char *str, size_t len, uint8 type)
+pty_write(Term *term, const char *str, size_t len)
 {
-	const PTY *pty = &tty->pty;
+	const struct PTY *pty = &term->pty;
 	fd_set fds_r, fds_w;
 	size_t i = 0, rem = WRITE_LIMIT;
 	ssize_t n; // write() return value
@@ -126,13 +122,13 @@ pty_write(TTY *tty, const char *str, size_t len, uint8 type)
 			}
 			if (i + n < len) {
 				if (len - i < rem) {
-					rem = pty_read(tty, type);
+					rem = pty_read(term);
 				}
 			}
 			i += n;
 		}
 		if (i < len && FD_ISSET(pty->mfd, &fds_r)) {
-			rem = pty_read(tty, type);
+			rem = pty_read(term);
 		}
 	}
 
@@ -140,16 +136,16 @@ pty_write(TTY *tty, const char *str, size_t len, uint8 type)
 }
 
 void
-pty_resize(const TTY *tty, int cols, int rows)
+pty_resize(const Term *term, int cols, int rows)
 {
 	struct winsize region = {
 		.ws_col = cols,
 		.ws_row = rows,
-		.ws_xpixel = cols * tty->colpx,
-		.ws_ypixel = rows * tty->rowpx
+		.ws_xpixel = cols * term->colsize,
+		.ws_ypixel = rows * term->rowsize
 	};
 
-	if (ioctl(tty->pty.mfd, TIOCSWINSZ, &region) < 0) {
+	if (ioctl(term->pty.mfd, TIOCSWINSZ, &region) < 0) {
 		fprintf(stderr, "ERROR: pty_resize() - ioctl() failure\n");
 	}
 }

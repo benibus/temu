@@ -152,5 +152,11 @@ typedef struct {
 #define vec3(x_,y_,z_)    vecx((x_), (y_), (z_))
 #define vec4(x_,y_,z_,w_) vecx((x_), (y_), (z_), (w_))
 
+#define pack_rgb(r,g,b)    ((((r)&0xff)<<16)|(((g)&0xff)<<8)|((b)&0xff))
+#define pack_bgr(r,g,b)    ((((b)&0xff)<<16)|(((g)&0xff)<<8)|((r)&0xff))
+#define pack_rgba(r,g,b,a) ((((r)&0xff)<<24)|(((g)&0xff)<<16)|(((b)&0xff)<<8)|((a)&0xff))
+#define pack_argb(r,g,b,a) ((((a)&0xff)<<24)|(((r)&0xff)<<16)|(((g)&0xff)<<8)|((b)&0xff))
+#define pack_abgr(r,g,b,a) ((((a)&0xff)<<24)|(((b)&0xff)<<16)|(((g)&0xff)<<8)|((r)&0xff))
+
 #endif
 

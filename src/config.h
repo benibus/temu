@@ -29,7 +29,7 @@ static Config config = {
 		"#537676",
 		"#A4A4A4"
 	},
-	.shell = "/bin/dash",
+	.shell = "/bin/bash",
 	.tablen = 8,
 	.border_px = 0,
 	.histsize = 120,
