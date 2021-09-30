@@ -21,6 +21,21 @@
 	.attr  = 0,                        \
 }
 
+// Translate row in screen-space to historical line index
+#define row2hidx(term,row) ((term)->top + (row) - (term)->scrollback)
+// Translate historical line index to row in screen-space
+#define hidx2row(term,idx) ((idx) - (term)->top + (term)->scrollback)
+
+// Point is visible in screen-space
+#define ISVISIBLE(t,x,y) ((x) < (t)->cols && (y) <= ((t)->bot - (t)->top - (t)->scrollback))
+
+// Ring buffer of lines of cells for scrollback history.
+//
+// Currently, the entire buffer is a single allocation of raw bytes. Each row of cells is preceded
+// by a line info header, followed by a row of cells.
+// Each row, including the header, occurs on an interval of ".pitch" bytes - which is effectively
+// (offsetof(Line, data) + term->cols * sizeof(Cell)), although the pitch member is used separately to
+// allow for future resizing optimizations.
 typedef struct Ring {
 	int read, write;
 	int count, limit;
@@ -28,6 +43,7 @@ typedef struct Ring {
 	uchar data[];
 } Ring;
 
+// Header embedded before each line of cells in history buffer
 typedef struct Line {
 	uint16 flags;
 	Cell cells[];
@@ -124,7 +140,7 @@ term_pull(Term *term)
 void
 term_scroll(Term *term, int dy)
 {
-	term->scrollback = CLAMP(term->scrollback + dy, -term->top, 0);
+	term->scrollback = CLAMP(term->scrollback - dy, 0, term->top);
 }
 
 void
@@ -144,15 +160,16 @@ term_resize(Term *term, int cols, int rows)
 
 		Ring *ring = term->ring;
 
-		int posx = term->pos.x;
-		int posy = term->pos.y;
+		// New cursor coordinates in scrollback buffer
+		int cx = term->pos.x;
+		int cy = row2hidx(term, term->pos.y);
 
 		if (cols != term->cols) {
 			term->tabstops = xrealloc(term->tabstops, cols, sizeof(*term->tabstops));
 			for (int i = term->cols; i < cols; i++) {
 				term->tabstops[i] = (i && i % term->tabcols == 0) ? 1 : 0;
 			}
-			ring = rewrap(term, cols, rows, &posx, &posy);
+			ring = rewrap(term, cols, rows, &cx, &cy);
 		}
 
 		if (ring != term->ring) {
@@ -164,8 +181,8 @@ term_resize(Term *term, int cols, int rows)
 		term->rows = rows;
 
 		set_screen(term);
-		cursor_set_col(term, posx);
-		cursor_set_row(term, posy);
+		cursor_set_col(term, cx);
+		cursor_set_row(term, hidx2row(term, cy));
 	}
 }
 
@@ -173,7 +190,7 @@ const Cell *
 term_get_row(const Term *term, int row)
 {
 	if (row >= 0 && row <= term->bot) {
-		const Line *hdr = ring_get_line(term->ring, term->top + row + term->scrollback);
+		const Line *hdr = ring_get_line(term->ring, row2hidx(term, row));
 		if (hdr->cells[0].ucs4) {
 			return hdr->cells;
 		}
@@ -185,18 +202,20 @@ term_get_row(const Term *term, int row)
 bool
 term_get_cursor_desc(const Term *term, CursorDesc *desc)
 {
-	if (term->current.cursor_hidden) {
+	int line = row2hidx(term, term->pos.y);
+
+	if (term->current.cursor_hidden || !ISVISIBLE(term, term->pos.x, term->pos.y)) {
 		return false;
 	}
 	if (desc) {
-		Cell cell = *ring_get_cell(term->ring, term->pos.y, term->pos.x);
+		Cell cell = *ring_get_cell(term->ring, line, term->pos.x);
 
 		desc->ucs4 = DEFAULT(cell.ucs4, ' ');
 		desc->attr = cell.attr;
 		desc->fg   = cellcolor(0, VT_COLOR_BG);
 		desc->bg   = cellcolor(0, VT_COLOR_FG);
 		desc->col  = term->pos.x;
-		desc->row  = term->pos.y - (term->top + term->scrollback);
+		desc->row  = term->pos.y;
 	}
 
 	return true;
@@ -212,6 +231,8 @@ term_consume(Term *term, const uchar *str, size_t len)
 
 	for (; str[i] && i < len; i++) {
 		parse_byte(term, str[i]);
+
+	// FIXME(ben): Debug output is completely broken now...
 #if 1
 #define DBGOPT_PRINT_INPUT 1
 		{
@@ -243,7 +264,7 @@ write_codepoint(Term *term, uint32 ucs4, CellType type)
 	pos.x1 = pos.x2 = term->pos.x;
 	pos.y1 = pos.y2 = term->pos.y;
 
-	Line *line = ring_get_line(term->ring, pos.y1);
+	Line *line = ring_get_line(term->ring, row2hidx(term, pos.y1));
 
 	if (pos.x1 + 1 < term->cols) {
 		term->wrapnext = false;
@@ -258,7 +279,7 @@ write_codepoint(Term *term, uint32 ucs4, CellType type)
 	if (pos.y2 > pos.y1) {
 		Line *tmp = line;
 		line->flags |= LINE_WRAPPED;
-		line = ring_prep_line(term->ring, pos.y2);
+		line = ring_prep_line(term->ring, row2hidx(term, pos.y2));
 		set_screen(term);
 		ASSERT(tmp->flags & LINE_WRAPPED);
 	}
@@ -288,7 +309,7 @@ write_codepoint(Term *term, uint32 ucs4, CellType type)
 void
 write_newline(Term *term)
 {
-	if (!ring_query_line(term->ring, term->pos.y + 1)) {
+	if (!ring_query_line(term->ring, row2hidx(term, term->pos.y + 1))) {
 		ring_append_line(term->ring);
 		set_screen(term);
 	}
@@ -352,34 +373,34 @@ ring_advance(Ring *ring)
 }
 
 int
-ring_get_mem_index(const Ring *ring, int line)
+ring_get_mem_index(const Ring *ring, int hidx)
 {
-	return (ring->read + line) % ring->limit;
+	return (ring->read + hidx) % ring->limit;
 }
 
 int
-ring_get_mem_offset(const Ring *ring, int line)
+ring_get_mem_offset(const Ring *ring, int hidx)
 {
-	return ring_get_mem_index(ring, line) * ring->pitch;
+	return ring_get_mem_index(ring, hidx) * ring->pitch;
 }
 
 Line *
-ring_get_line(const Ring *ring, int line)
+ring_get_line(const Ring *ring, int hidx)
 {
-	return (Line *)(ring->data + ring_get_mem_offset(ring, line));
+	return (Line *)(ring->data + ring_get_mem_offset(ring, hidx));
 }
 
 Cell *
-ring_get_cell(const Ring *ring, int line, int col)
+ring_get_cell(const Ring *ring, int hidx, int hoff)
 {
-	return ring_get_line(ring, line)->cells + col;
+	return ring_get_line(ring, hidx)->cells + hoff;
 }
 
 Line *
-ring_query_line(const Ring *ring, int line)
+ring_query_line(const Ring *ring, int hidx)
 {
-	if (line >= 0 && line < ring->count) {
-		return ring_get_line(ring, line);
+	if (hidx >= 0 && hidx < ring->count) {
+		return ring_get_line(ring, hidx);
 	}
 
 	return NULL;
@@ -409,12 +430,13 @@ ring_append_line(Ring *ring)
 void
 cursor_move_cols(Term *term, int cols)
 {
-	Line *line = ring_get_line(term->ring, term->pos.y);
+	Line *line = ring_get_line(term->ring, row2hidx(term, term->pos.y));
 
 	int x0 = term->pos.x;
 	int x1 = CLAMP(x0 + cols, 0, term->cols - 1);
 
 	for (int x = x0; x < x1; x++) {
+		// TODO(ben): Probably a better idea to wait till an insertion is made before initializing
 		if (!line->cells[x].ucs4) {
 			line->cells[x] = CELLINIT;
 		}
@@ -426,7 +448,7 @@ cursor_move_cols(Term *term, int cols)
 void
 cursor_move_rows(Term *term, int rows)
 {
-	term->pos.y = CLAMP(term->pos.y + rows, term->top, term->bot);
+	term->pos.y = CLAMP(term->pos.y + rows, 0, term->bot - term->top);
 }
 
 void
@@ -438,7 +460,7 @@ cursor_set_col(Term *term, int col)
 void
 cursor_set_row(Term *term, int row)
 {
-	term->pos.y = CLAMP(row, term->top, term->bot);
+	term->pos.y = CLAMP(row, 0, term->bot - term->top);
 }
 
 void
@@ -458,11 +480,11 @@ cursor_set_style(Term *term, int style)
 }
 
 void
-cells_init(Term *term, int line, int col, int n)
+cells_init(Term *term, int col, int row, int n)
 {
-	ASSERT(line >= 0 && col >= 0);
+	ASSERT(row >= 0 && col >= 0);
 
-	Cell *cells = ring_get_cell(term->ring, line, 0);
+	Cell *cells = ring_get_cell(term->ring, row2hidx(term, row), 0);
 
 	const int x1 = MIN(col, term->cols);
 	const int x2 = MIN(x1 + n, term->cols);
@@ -473,11 +495,11 @@ cells_init(Term *term, int line, int col, int n)
 }
 
 void
-cells_clear(Term *term, int line, int col, int n)
+cells_clear(Term *term, int col, int row, int n)
 {
-	ASSERT(line >= 0 && col >= 0);
+	ASSERT(row >= 0 && col >= 0);
 
-	Cell *cells = ring_get_cell(term->ring, line, 0);
+	Cell *cells = ring_get_cell(term->ring, row2hidx(term, row), 0);
 	const int x1 = MIN(col, term->cols);
 	const int x2 = MIN(x1 + n, term->cols);
 
@@ -485,39 +507,39 @@ cells_clear(Term *term, int line, int col, int n)
 }
 
 void
-cells_delete(Term *term, int line, int col, int n)
+cells_delete(Term *term, int col, int row, int n)
 {
-	ASSERT(line >= 0 && col >= 0);
+	ASSERT(row >= 0 && col >= 0);
 
-	Cell *cells = ring_get_cell(term->ring, line, 0);
+	Cell *cells = ring_get_cell(term->ring, row2hidx(term, row), 0);
 	const int x1 = MIN(col, term->cols);
 	const int x2 = MIN(x1 + n, term->cols);
 
 	memmove(&cells[x1], &cells[x2], (term->cols - x2) * sizeof(Cell));
-	cells_clear(term, line, x2, term->cols);
+	cells_clear(term, x2, row, term->cols);
 }
 
 void
-cells_insert(Term *term, int line, int col, int n)
+cells_insert(Term *term, int col, int row, int n)
 {
-	ASSERT(line >= 0 && col >= 0);
+	ASSERT(row >= 0 && col >= 0);
 
-	Cell *cells = ring_get_cell(term->ring, line, 0);
+	Cell *cells = ring_get_cell(term->ring, row2hidx(term, row), 0);
 	const int x1 = MIN(col, term->cols);
 	const int x2 = MIN(x1 + n, term->cols);
 
 	memmove(&cells[x2-x1], &cells[x1], (term->cols - x2) * sizeof(Cell));
-	cells_init(term, line, x1, x2 - x1);
+	cells_init(term, x1, row, x2 - x1);
 }
 
 void
 cells_clear_lines(Term *term, int beg, int n)
 {
-	const int end = MIN(beg + n, term->bot + 1);
+	const int end = MIN(beg + n, term->bot - term->top + 1);
 
-	for (int line = beg; line < end; line++) {
-		Line *hdr = ring_get_line(term->ring, line);
-		cells_clear(term, line, 0, term->cols);
+	for (int row = beg; row < end; row++) {
+		Line *hdr = ring_get_line(term->ring, row2hidx(term, row));
+		cells_clear(term, 0, row, term->cols);
 		hdr->flags = 0;
 	}
 }
@@ -589,6 +611,8 @@ cellslen(const Cell *cells, int lim)
 	return 0;
 }
 
+// TODO(ben): Calling this function in random places is kind of goofy... a more automatic way
+// of updating the screen would be better.
 void
 set_screen(Term *term)
 {
@@ -616,7 +640,7 @@ rewrap(Term *term, int cols, int rows, int *posx, int *posy)
 
 	int ocx, ocy, ncx, ncy;
 	ncx = ocx = term->pos.x;
-	ncy = ocy = term->pos.y;
+	ncy = ocy = row2hidx(term, term->pos.y);
 
 	const int maxhist = term->ring->count;
 	int len = 0;
@@ -797,20 +821,20 @@ term_print_history(const Term *term)
 	putchar('\n');
 
 	for (int y = 0; y < term->ring->count; n++, y++) {
-		Line *line = ring_get_line(term->ring, y);
+		Line *hdr = ring_get_line(term->ring, y);
 
-		size_t off = ring_memoff_(term->ring, line);
-		size_t idx = ring_memidx_(term->ring, line);
-		int len = cellslen(line->cells, term->cols);
+		size_t off = ring_memoff_(term->ring, hdr);
+		size_t idx = ring_memidx_(term->ring, hdr);
+		int len = cellslen(hdr->cells, term->cols);
 
 		printf("[%03zu|%03d] (%03d) $%-6zu 0x%.2x %c |",
-		       idx, y, len, off, line->flags,
+		       idx, y, len, off, hdr->flags,
 		       (y == term->top) ? '>' :
 		       ((y == term->bot) ? '<' : ' '));
 		for (int x = 0; x < term->cols; x++) {
 			char *esc = (x == len) ? "\033[97;41m" : "";
 			printf("%s%lc\033[0m", esc,
-			       (line->cells[x].ucs4) ? line->cells[x].ucs4 : L' ');
+			       (hdr->cells[x].ucs4) ? hdr->cells[x].ucs4 : L' ');
 		}
 		printf("|\n");
 	}
