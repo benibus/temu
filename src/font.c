@@ -842,7 +842,7 @@ font_create_derived_face(FontFace *font, uint style)
 }
 
 void
-draw_rect_solid(const RC *rc, Color color, int x_, int y_, int w_, int h_)
+draw_rect_solid(const RC *rc, uint32 argb, int x_, int y_, int w_, int h_)
 {
 	WinData *win = (WinData *)rc->win;
 
@@ -854,7 +854,7 @@ draw_rect_solid(const RC *rc, Color color, int x_, int y_, int w_, int h_)
 	XRenderFillRectangle(win->x11->dpy,
 	                     PictOpOver,
 	                     win->pic,
-	                     &XR_ARGB(color.argb),
+	                     &XR_ARGB(argb),
 	                     x, y, w, h);
 }
 
@@ -868,8 +868,8 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 
 	struct {
 		FontFace *font;
-		Color bg;
-		Color fg;
+		uint32 bg;
+		uint32 fg;
 	} brush = { 0 };
 	struct {
 		int x0, y0, x1, y1; // current region (in pixels)
@@ -932,45 +932,31 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 		// If none of the local buffers are at capacity, keep going.
 		// Otherwise, just draw now and reset everything at the new orgin
 		if (i + 1 < max && elts.n < LEN(elts.buf) && text.n < LEN(text.buf)) {
-			if (glyphs[i+1].fg.argb == brush.fg.argb &&
-			    glyphs[i+1].bg.argb == brush.bg.argb &&
+			if (glyphs[i+1].fg == brush.fg &&
+			    glyphs[i+1].bg == brush.bg &&
 			    glyphs[i+1].font == glyph.font)
 			{
 				continue;
 			}
 		}
 
-		if (brush.bg.argb != rc->color.bg.argb) {
+		if (brush.bg != rc->color.bg) {
 			draw_rect_solid(rc, brush.bg,
 			                    pos.x0, pos.y0,
 			                    pos.x1 - pos.x0,
 			                    glyph.font->ascent + glyph.font->descent);
 		}
 
-		ColorID handle = brush.fg.id;
-
-		// if there's no allocated fill, create it
-		if (!handle) {
-			handle = win_alloc_color(rc, brush.fg.argb);
-		}
-
 		// render elt buffer
 		XRenderCompositeText32(win->x11->dpy,
 			               PictOpOver,
-			               handle,
+			               win_get_color_handle(&win->pub, brush.fg),
 			               win->pic,
 			               glyph.font->picfmt,
 			               0, 0,
 			               elts.buf[0].xOff,
 			               elts.buf[0].yOff,
 			               elts.buf, elts.n + 1);
-
-		// TODO(ben): We immediately free any new handles and don't cache anything.
-		// Not really optimal, but RGB literals are an uncommon case here.
-		// ...still might be worth another look.
-		if (handle != brush.fg.id && handle) {
-			win_free_color(rc, handle);
-		}
 
 		// finalize draw, reset buffers
 		if (i + 1 < max) {

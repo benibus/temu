@@ -49,25 +49,14 @@ typedef struct {
 	struct { float x, y; } size_pt;
 } FontMetrics;
 
-typedef uint64 ColorID;
-
 typedef struct { uint8 r, g, b;    } RGB;
 typedef struct { uint8 r, g, b, a; } RGBA;
-
-typedef uint32 RGB32;
-typedef uint32 RGBA32;
-typedef uint32 ARGB32;
-
-typedef struct {
-	ColorID id;
-	uint32 argb;
-} Color;
 
 typedef struct {
 	uint32 ucs4;
 	FontFace *font;
-	Color fg;
-	Color bg;
+	uint32 fg;
+	uint32 bg;
 	uint32 flags;
 } GlyphRender;
 
@@ -76,8 +65,8 @@ typedef struct {
 	uint16 mode;
 	FontFace *font;
 	struct {
-		Color fg;
-		Color bg;
+		uint32 fg;
+		uint32 bg;
 	} color;
 } RC;
 
@@ -91,8 +80,7 @@ void win_get_coords(Win *, int *, int *);
 void win_render_frame(Win *);
 bool win_init_render_context(Win *, RC *);
 int win_events_pending(Win *);
-ColorID win_alloc_color(const RC *, uint32);
-void win_free_color(const RC *, ColorID);
+int64 win_get_color_handle(Win *, uint32);
 bool win_parse_color_string(const RC *, const char *, uint32 *);
 
 u64 timer_current_ns(void);
@@ -103,7 +91,7 @@ FontFace *font_create_derived_face(FontFace *, uint);
 bool font_get_face_metrics(FontFace *, FontMetrics *);
 bool font_init_face(FontFace *);
 void font_destroy_face(FontFace *);
-void draw_rect_solid(const RC *, Color, int, int, int, int);
+void draw_rect_solid(const RC *, uint32, int, int, int, int);
 void draw_text_utf8(const RC *, const GlyphRender *, uint, int, int);
 
 #endif

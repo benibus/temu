@@ -19,13 +19,6 @@ typedef struct {
 	XRenderPictFormat *fmt;
 	uint maxw, maxh;
 	double dpi;
-
-	// A more workable representation of the hardware's 16-bit RGB color format
-	struct RGBMask {
-		uint16 mask; // right-aligned mask
-		uint8 off;   // offset from right to start of mask
-		uint8 len;   // length of mask from start of mask
-	} red, green, blue;
 } X11;
 
 typedef struct {
@@ -37,6 +30,10 @@ typedef struct {
 	Picture pic;
 	XIC ic;
 	GC gc;
+	struct XRFillColor {
+		int64 xid;
+		uint32 argb;
+	} fillcache[16];
 } WinData;
 
 #define XR_ARGB(argb) ( \

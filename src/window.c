@@ -756,24 +756,28 @@ win_render_frame(Win *pub)
 	          0, 0);
 }
 
-ColorID
-win_alloc_color(const RC *rc, uint32 argb)
+int64
+win_get_color_handle(Win *pub, uint32 argb)
 {
-	const WinData *win = (const WinData *)rc->win;
+	if (!argb) return 0;
 
-	uint64 handle = XRenderCreateSolidFill(win->x11->dpy, &XR_ARGB(argb));
+	WinData *win = (WinData *)pub;
 
-	return handle;
-}
-
-void
-win_free_color(const RC *rc, ColorID handle)
-{
-	Display *dpy = ((const WinData *)rc->win)->x11->dpy;
-
-	if (handle) {
-		XRenderFreePicture(dpy, handle);
+	for (uint i = 0; i < LEN(win->fillcache); i++) {
+		if (win->fillcache[i].argb == argb) {
+			return win->fillcache[i].xid;
+		}
 	}
+
+	struct XRFillColor *fill = win->fillcache + rand() % LEN(win->fillcache);
+
+	if (fill->xid) {
+		XRenderFreePicture(win->x11->dpy, fill->xid);
+	}
+	fill->xid = XRenderCreateSolidFill(win->x11->dpy, &XR_ARGB(argb));
+	fill->argb = argb;
+
+	return fill->xid;
 }
 
 bool

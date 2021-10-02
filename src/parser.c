@@ -511,7 +511,7 @@ emu_csi_sgr(Term *term, const int *argv, int argc)
 		case 32: case 33:
 		case 34: case 35:
 		case 36: case 37:
-			cells_set_fg(term, cellcolor(ColorTag256, argv[i] - 30, 0));
+			cells_set_fg(term, argv[i] - 30);
 			break;
 		case 39:
 			cells_reset_fg(term);
@@ -521,7 +521,7 @@ emu_csi_sgr(Term *term, const int *argv, int argc)
 		case 42: case 43:
 		case 44: case 45:
 		case 46: case 47:
-			cells_set_bg(term, cellcolor(ColorTag256, argv[i] - 40, 0));
+			cells_set_bg(term, argv[i] - 40);
 			break;
 		case 49:
 			cells_reset_bg(term);
@@ -538,28 +538,22 @@ emu_csi_sgr(Term *term, const int *argv, int argc)
 			}
 			if (i - start == 2) {
 				if (argv[start] == 48) {
-					cells_set_bg(term, cellcolor(ColorTag256, argv[i] & 0xff));
+					cells_set_bg(term, argv[i] & 0xff);
 				} else if (argv[start] == 38) {
-					cells_set_fg(term, cellcolor(ColorTag256, argv[i] & 0xff));
+					cells_set_fg(term, argv[i] & 0xff);
 				}
 			} else if (i - start == 4) {
 				if (argv[start] == 48) {
-					cells_set_bg(term,
-						cellcolor(
-							ColorTagRGB,
-							argv[i-2] & 0xff,
-							argv[i-1] & 0xff,
-							argv[i-0] & 0xff
-						)
+					cells_set_bg_rgb(term,
+						argv[i-2] & 0xff,
+						argv[i-1] & 0xff,
+						argv[i-0] & 0xff
 					);
 				} else if (argv[start] == 38) {
-					cells_set_fg(term,
-						cellcolor(
-							ColorTagRGB,
-							argv[i-2] & 0xff,
-							argv[i-1] & 0xff,
-							argv[i-0] & 0xff
-						)
+					cells_set_fg_rgb(term,
+						argv[i-2] & 0xff,
+						argv[i-1] & 0xff,
+						argv[i-0] & 0xff
 					);
 				}
 			} else {
@@ -576,14 +570,14 @@ emu_csi_sgr(Term *term, const int *argv, int argc)
 		case 92: case 93:
 		case 94: case 95:
 		case 96: case 97:
-			cells_set_fg(term, cellcolor(ColorTag256, argv[i] - 90 + 8));
+			cells_set_fg(term, argv[i] - 90 + 8);
 			break;
 
 		case 100: case 101:
 		case 102: case 103:
 		case 104: case 105:
 		case 106: case 107:
-			cells_set_bg(term, cellcolor(ColorTag256, argv[i] - 100 + 8));
+			cells_set_bg(term, argv[i] - 100 + 8);
 			break;
 		}
 	} while (++i < argc);

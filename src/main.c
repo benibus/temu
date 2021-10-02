@@ -42,11 +42,9 @@ typedef struct Client_ {
 static Client client_;
 
 static FontFace *fonts[4];
-static Color colors[2+256];
 static bool toggle_render = true;
 
 static void run(Client *);
-static Color fetch_color(CellColor);
 static void render_frame(Client *);
 static void event_key_press(void *, int, int, char *, int);
 static void event_resize(void *, int, int);
@@ -120,62 +118,13 @@ error_invalid:
 	Win *win;
 	RC rc = { 0 };
 
+	// temporary
+	srand(time_get_mono_msec(NULL));
+
 	if (!(win = win_create_client()))
 		return 2;
 	if (!win_init_render_context(win, &rc))
 		return 3;
-
-	// load the user colors (or any fallbacks, if necessary) + the 240 standard colors.
-	// there should be no surprises here - if anything fails, we terminate
-	for (uint i = 0; i < LEN(colors); i++) {
-		uint32 argb = 0;
-
-		// 2+16 user/programmer-configured colors (0 and 1 are foreground/background)
-		if (i < LEN(config.colors)) {
-			// All default strings MUST exist at compile-time
-			ASSERT(config.colors[i]);
-			if (!win_parse_color_string(&rc, config.colors[i], &argb)) {
-				dbgprintf("failed to parse RGB string: %s\n", config.colors[i]);
-				exit(EXIT_FAILURE);
-			}
-			for (uint j = 0; j < i; j++) {
-				if (argb == colors[j].argb) {
-					dbgprintf("Mapping color[%03u] to color[%03u]\n", i, j);
-					colors[i] = colors[j];
-					break;
-				}
-			}
-			if (colors[i].id) continue;
-		} else if (i < 232 + 2) { // the classic 6^3 color cube
-			uint8 n = i - 16 - 2;
-			argb = pack_argb(
-				((n / 36) % 6) ? (((n / 36) % 6) * 40 + 55) : 0,
-				((n /  6) % 6) ? (((n /  6) % 6) * 40 + 55) : 0,
-				((n /  1) % 6) ? (((n /  1) % 6) * 40 + 55) : 0,
-				0xff
-			);
-		} else { // dark -> light grayscale till the end
-			ASSERT(i < 256 + 2);
-			uint8 n = i - 232 - 2;
-			argb = pack_argb(
-				n * 10 + 8,
-				n * 10 + 8,
-				n * 10 + 8,
-				0xff
-			);
-		}
-
-		ColorID handle = win_alloc_color(&rc, argb);
-		if (!handle) {
-			dbgprintf("failed to create RGBA fill: [%03u]\n", i);
-			exit(EXIT_FAILURE);
-		}
-
-		dbgprintf("Mapping color[%03u] to RGBA(%.08X)\n", i, argb);
-
-		colors[i].id = handle;
-		colors[i].argb = argb;
-	}
 
 	fonts[0] = font_create_face(&rc, config.font);
 	ASSERT(fonts[0]);
@@ -189,6 +138,22 @@ error_invalid:
 	ASSERT(font_init_face(fonts[1]));
 	ASSERT(font_init_face(fonts[2]));
 	ASSERT(font_init_face(fonts[3]));
+
+	for (uint i = 0; i < LEN(config.colors); i++) {
+		ASSERT(config.colors[i]);
+
+		uint32 *dst;
+
+		switch (i) {
+		case 0:  dst = &tc.default_bg;  break;
+		case 1:  dst = &tc.default_fg;  break;
+		default: dst = &tc.colors[i-2]; break;
+		}
+		if (!win_parse_color_string(&rc, config.colors[i], dst)) {
+			dbgprintf("failed to parse RGB string: %s\n", config.colors[i]);
+			exit(EXIT_FAILURE);
+		}
+	}
 
 	{
 		FontMetrics metrics = { 0 };
@@ -232,8 +197,8 @@ error_invalid:
 	win_show_client(win);
 
 	rc.font = fonts[0];
-	rc.color.bg = colors[VT_COLOR_BG];
-	rc.color.fg = colors[VT_COLOR_FG];
+	rc.color.bg = client_.term->default_bg;
+	rc.color.fg = client_.term->default_fg;
 
 	client_.win = win;
 	client_.rc  = rc;
@@ -309,31 +274,6 @@ run(Client *client)
 	}
 }
 
-Color
-fetch_color(CellColor tcolor)
-{
-	Color result;
-
-	switch (tcolor.tag) {
-	case ColorTagNone:
-		result = colors[!!tcolor.index];
-		break;
-	case ColorTag256:
-		result = colors[tcolor.index+2];
-		break;
-	case ColorTagRGB:
-		result.id = 0;
-		result.argb = pack_argb(tcolor.r, tcolor.g, tcolor.b, 0xff);
-		break;
-	default:
-		result = (Color){ 0 };
-		errprint("invalid color tag");
-		break;
-	}
-
-	return result;
-}
-
 void
 render_frame(Client *client)
 {
@@ -341,8 +281,8 @@ render_frame(Client *client)
 	RC *rc   = &client->rc;
 	Term *term = client->term;
 
-	rc->color.bg = colors[VT_COLOR_BG];
-	rc->color.fg = colors[VT_COLOR_FG];
+	rc->color.bg = term->default_bg;
+	rc->color.fg = term->default_fg;
 	draw_rect_solid(rc, rc->color.bg, 0, 0, win->w, win->h);
 
 	int i = 0;
@@ -371,11 +311,11 @@ render_frame(Client *client)
 
 			glyphs[x].ucs4 = cell.ucs4;
 			glyphs[x].font = font;
-			glyphs[x].bg = fetch_color(cell.bg);
-			glyphs[x].fg = fetch_color(cell.fg);
+			glyphs[x].bg = cell.bg;
+			glyphs[x].fg = cell.fg;
 
 			if (cell.attr & ATTR_INVERT) {
-				SWAP(Color, glyphs[x].bg, glyphs[x].fg);
+				SWAP(uint32, glyphs[x].bg, glyphs[x].fg);
 			}
 		}
 
@@ -387,8 +327,8 @@ render_frame(Client *client)
 	if (term_get_cursor_desc(term, &cursor)) {
 		GlyphRender glyph = {
 			.ucs4 = cursor.ucs4,
-			.bg   = fetch_color(cursor.bg),
-			.fg   = fetch_color(cursor.fg),
+			.bg   = cursor.bg,
+			.fg   = cursor.fg,
 			.font = (cursor.attr & ATTR_BOLD) ? fonts[3] : fonts[0]
 		};
 		draw_text_utf8(rc, &glyph, 1, cursor.col * term->colsize, cursor.row * term->rowsize);

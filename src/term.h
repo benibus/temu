@@ -19,37 +19,6 @@
 #define CURSOR_INVERT   (1 << 2)
 #define CURSOR_BLINKING (1 << 3)
 
-#define VT_COLOR_BG      0x0
-#define VT_COLOR_FG      0x1
-#define VT_COLOR_BLACK   0x0
-#define VT_COLOR_RED     0x1
-#define VT_COLOR_GREEN   0x2
-#define VT_COLOR_YELLOW  0x3
-#define VT_COLOR_BLUE    0x4
-#define VT_COLOR_MAGENTA 0x5
-#define VT_COLOR_CYAN    0x6
-#define VT_COLOR_WHITE   0x7
-
-typedef struct {
-	enum ColorTag {
-		ColorTagNone, // (use index) default background (0) or foreground (1)
-		ColorTag256,  // (use index) one of the standard colors (0-16,17-256)
-		ColorTagRGB   // (use r/g/b) not indexed, specified as a raw RGB value
-	} tag:8;
-
-	union {
-		uint8 arr[3];
-		uint8 index;
-		struct {
-			uint8 r;
-			uint8 g;
-			uint8 b;
-		};
-	};
-} CellColor;
-
-#define cellcolor(tag_,...) (CellColor){ .tag = (tag_), .arr = { __VA_ARGS__ } }
-
 typedef enum {
 	CursorStyleDefault,
 	CursorStyleBlock      = 2,
@@ -61,8 +30,8 @@ typedef struct {
 	uint32 ucs4;
 	int col, row;
 	CursorStyle style;
-	CellColor bg;
-	CellColor fg;
+	uint32 bg;
+	uint32 fg;
 	uint16 attr;
 } CursorDesc;
 
@@ -78,8 +47,8 @@ typedef enum {
 
 typedef struct {
 	uint32 ucs4;
-	CellColor bg;
-	CellColor fg;
+	uint32 bg;
+	uint32 fg;
 	CellType type:8;
 	uint8 width;
 	uint16 attr;
@@ -92,6 +61,9 @@ struct TermConfig {
 	uint16 colsize, rowsize;
 	uint16 tabcols;
 	uint16 histlines;
+	uint32 default_bg;
+	uint32 default_fg;
+	uint32 colors[16];
 };
 
 typedef struct PTY {
@@ -131,13 +103,17 @@ typedef struct {
 	struct { int x, y; } pos;
 
 	struct {
-		CellColor bg;
-		CellColor fg;
+		uint32 bg;
+		uint32 fg;
 		int width;
 		uint16 attr;
 		CursorStyle cursor_style;
 		bool cursor_hidden;
 	} current;
+
+	uint32 default_bg;
+	uint32 default_fg;
+	uint32 colormap[16];
 
 	PTY pty;
 
@@ -177,8 +153,10 @@ void cells_clear(Term *, int, int, int);
 void cells_delete(Term *, int, int, int);
 void cells_insert(Term *, int, int, int);
 void cells_clear_lines(Term *, int, int);
-void cells_set_bg(Term *, CellColor);
-void cells_set_fg(Term *, CellColor);
+void cells_set_bg(Term *, uint8);
+void cells_set_fg(Term *, uint8);
+void cells_set_bg_rgb(Term *, uint8, uint8, uint8);
+void cells_set_fg_rgb(Term *, uint8, uint8, uint8);
 void cells_reset_bg(Term *);
 void cells_reset_fg(Term *);
 void cells_set_attrs(Term *, uint16);
