@@ -842,7 +842,7 @@ font_create_derived_face(FontFace *font, uint style)
 }
 
 void
-draw_rect_solid(const RC *rc, uint32 argb, int x_, int y_, int w_, int h_)
+draw_rect_solid(const RC *rc, uint32 color, int x_, int y_, int w_, int h_)
 {
 	WinData *win = (WinData *)rc->win;
 
@@ -854,7 +854,7 @@ draw_rect_solid(const RC *rc, uint32 argb, int x_, int y_, int w_, int h_)
 	XRenderFillRectangle(win->x11->dpy,
 	                     PictOpOver,
 	                     win->pic,
-	                     &XR_ARGB(argb),
+	                     &XRENDER_COLOR(color),
 	                     x, y, w, h);
 }
 

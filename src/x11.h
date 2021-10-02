@@ -32,11 +32,11 @@ typedef struct {
 	GC gc;
 	struct XRFillColor {
 		int64 xid;
-		uint32 argb;
+		uint32 color;
 	} fillcache[16];
 } WinData;
 
-#define XR_ARGB(argb) ( \
+#define XRENDER_ARGB(argb) ( \
   (XRenderColor){                       \
     .alpha = (argb & 0xff000000) >> 16, \
     .red   = (argb & 0x00ff0000) >>  8, \
@@ -44,5 +44,7 @@ typedef struct {
     .blue  = (argb & 0x000000ff) <<  8  \
   }                                     \
 )
+
+#define XRENDER_COLOR(color) XRENDER_ARGB(color)
 
 #endif

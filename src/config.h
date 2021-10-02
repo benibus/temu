@@ -8,10 +8,10 @@ static Config config = {
 	.geometry = NULL,
 	.font = "DejaVu Sans Mono:size=12.0",
 	.colors = {
-		"#0F0F13", // default background
+		"#07070A", // default background
 		"#989898", // default foreground
 
-		"#07070A", // user colors (0-16)
+		"#27272A", // user colors (0-16)
 		"#803A41",
 		"#38574D",
 		"#785C46",

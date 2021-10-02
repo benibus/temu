@@ -49,9 +49,6 @@ typedef struct {
 	struct { float x, y; } size_pt;
 } FontMetrics;
 
-typedef struct { uint8 r, g, b;    } RGB;
-typedef struct { uint8 r, g, b, a; } RGBA;
-
 typedef struct {
 	uint32 ucs4;
 	FontFace *font;

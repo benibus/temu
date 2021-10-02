@@ -757,14 +757,14 @@ win_render_frame(Win *pub)
 }
 
 int64
-win_get_color_handle(Win *pub, uint32 argb)
+win_get_color_handle(Win *pub, uint32 color)
 {
-	if (!argb) return 0;
+	if (!color) return 0;
 
 	WinData *win = (WinData *)pub;
 
 	for (uint i = 0; i < LEN(win->fillcache); i++) {
-		if (win->fillcache[i].argb == argb) {
+		if (win->fillcache[i].color == color) {
 			return win->fillcache[i].xid;
 		}
 	}
@@ -774,8 +774,8 @@ win_get_color_handle(Win *pub, uint32 argb)
 	if (fill->xid) {
 		XRenderFreePicture(win->x11->dpy, fill->xid);
 	}
-	fill->xid = XRenderCreateSolidFill(win->x11->dpy, &XR_ARGB(argb));
-	fill->argb = argb;
+	fill->xid = XRenderCreateSolidFill(win->x11->dpy, &XRENDER_COLOR(color));
+	fill->color = color;
 
 	return fill->xid;
 }
@@ -791,11 +791,12 @@ win_parse_color_string(const RC *rc, const char *name, uint32 *result)
 	}
 
 	if (result) {
-		uint32 argb = 0xff000000;
-		argb |= (xcolor.red & 0xff00)   << 8;
-		argb |= (xcolor.green & 0xff00) << 0;
-		argb |= (xcolor.blue & 0xff00)  >> 8;
-		*result = argb;
+		*result = pack_argb(
+			xcolor.red   >> 8,
+			xcolor.green >> 8,
+			xcolor.blue  >> 8,
+			0xff
+		);
 	}
 
 	return true;
