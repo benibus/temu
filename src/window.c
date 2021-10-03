@@ -457,11 +457,13 @@ win_show_client(Win *pub)
 	win_get_coords(pub, &pub->x, &pub->y);
 }
 
+// TODO(ben): Replace these timer functions with our library versions
 u64
 timer_current_ns(void)
 {
 	struct timespec ts;
-	assert(clock_gettime(CLOCK_MONOTONIC, &ts) == 0);
+	int result = clock_gettime(CLOCK_MONOTONIC, &ts);
+	ASSERT(result == 0);
 
 	return (ts.tv_sec * (u64)1E9) + (u64)ts.tv_nsec;
 }

@@ -134,10 +134,11 @@ error_invalid:
 	fonts[3] = font_create_derived_face(fonts[0], STYLE_BOLD);
 	ASSERT(fonts[1] && fonts[2] && fonts[3]);
 
-	ASSERT(font_init_face(fonts[0]));
-	ASSERT(font_init_face(fonts[1]));
-	ASSERT(font_init_face(fonts[2]));
-	ASSERT(font_init_face(fonts[3]));
+	for (int i = 0; i < 4; i++) {
+		if (!font_init_face(fonts[i])) {
+			dbgprintl("Failed to initialize font %d", i);
+		}
+	}
 
 	for (uint i = 0; i < LEN(config.colors); i++) {
 		ASSERT(config.colors[i]);

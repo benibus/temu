@@ -236,7 +236,7 @@ font_init_face(FontFace *font)
 	int render_mode = FT_RENDER_MODE_NORMAL;
 	int pixel_fmt = PictStandardA8;
 
-#define font_extract_prop(...) ASSERT(font_extract_prop(__VA_ARGS__))
+#define font_extract_prop(...) if (!font_extract_prop(__VA_ARGS__)) { return false; }
 	font_extract_prop(font->pattern, FC_PIXEL_SIZE, &cfg.pixel_size);
 	font_extract_prop(font->pattern, FC_DPI,        &cfg.dpi);
 	font_extract_prop(font->pattern, FC_ASPECT,     &cfg.aspect);
@@ -256,7 +256,10 @@ font_init_face(FontFace *font)
 
 	if (!face) {
 		if (!shared.ft) {
-			ASSERT(!FT_Init_FreeType(&shared.ft));
+			if (!!FT_Init_FreeType(&shared.ft)) {
+				dbgputs("Failed to initialize FreeType");
+				return false;
+			}
 		}
 		FT_New_Face(shared.ft, root->file, root->index, &root->face);
 		face = root->face;
@@ -375,17 +378,13 @@ font_init_face(FontFace *font)
 		font->charset = FcFreeTypeCharSet(font->src->face, NULL);
 	}
 
-	ASSERT(font_init_cache(&font->cache, FcCharSetCount(font->charset), root->num_glyphs));
+	if (!font_init_cache(&font->cache, FcCharSetCount(font->charset), root->num_glyphs)) {
+		return false;
+	}
 	font->glyphset = XRenderCreateGlyphSet(font->src->dpy, font->picfmt);
 
 	// override everything and pre-render the "missing glyph" glyph
 	font_cache_glyph(font, 0);
-	// pre-cache the ASCII range
-#if 0
-	for (int c = 1; c < 128; c++) {
-		font_load_glyph(font, c);
-	};
-#endif
 
 	return true;
 }
@@ -422,7 +421,9 @@ font_cache_glyph(FontFace *font, uint32 index)
 	{
 		FT_Error err;
 		err = FT_Load_Glyph(face, index, font->loadflags);
-		ASSERT(!err);
+		if (!!err) {
+			return NULL;
+		}
 		if (!font->width) {
 			font->width = PIXELS(slot->metrics.horiAdvance);
 		}
@@ -431,7 +432,9 @@ font_cache_glyph(FontFace *font, uint32 index)
 		}
 		if (slot->format != FT_GLYPH_FORMAT_BITMAP) {
 			err = FT_Render_Glyph(slot, font->mode);
-			ASSERT(!err);
+			if (!!err) {
+				return NULL;
+			}
 			slot = face->glyph;
 		}
 	}
@@ -581,8 +584,7 @@ font_extract_prop(const FcPattern *pattern, const char *name, void *data)
 		}
 	};
 
-	ASSERT(FCRES_VALID(res));
-	return FCRES_FOUND(res);
+	return FCRES_VALID(res) && FCRES_FOUND(res);
 }
 
 uint32
