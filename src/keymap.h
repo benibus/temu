@@ -12,8 +12,8 @@
     X_(Left,        263) \
     X_(Down,        264) \
     X_(Up,          265) \
-    X_(PageUp,      66)  \
-    X_(PageDown,    67)  \
+    X_(PageUp,      266) \
+    X_(PageDown,    267) \
     X_(Home,        268) \
     X_(End,         269) \
     X_(F1,          290) \
