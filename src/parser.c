@@ -383,7 +383,7 @@ void
 emu_csi_ich(Term *term, const int *argv, int argc)
 {
 	FUNC_DEBUG(ICH);
-	cells_insert(term, term->pos.x, term->pos.y, DEFAULT(argv[0], 1));
+	cells_insert(term, term->x, term->y, DEFAULT(argv[0], 1));
 }
 
 void
@@ -436,7 +436,7 @@ void
 emu_csi_dch(Term *term, const int *argv, int argc)
 {
 	FUNC_DEBUG(DCH);
-	cells_delete(term, term->pos.x, term->pos.y, argv[0]);
+	cells_delete(term, term->x, term->y, argv[0]);
 }
 
 void
@@ -446,15 +446,15 @@ emu_csi_ed(Term *term, const int *argv, int argc)
 
 	switch (argv[0]) {
 	case 0:
-		cells_clear_lines(term, term->pos.y + 1, term->rows);
-		cells_clear(term, term->pos.x, term->pos.y, term->cols);
+		cells_clear_lines(term, term->y + 1, term->maxrows);
+		cells_clear(term, term->x, term->y, term->maxcols);
 		break;
 	case 1:
-		cells_clear_lines(term, 0, term->pos.y);
-		cells_init(term, 0, term->pos.y, term->pos.x);
+		cells_clear_lines(term, 0, term->y - term_top(term));
+		cells_init(term, 0, term->y, term->x);
 		break;
 	case 2:
-		cells_clear_lines(term, 0, term->rows);
+		cells_clear_lines(term, term_top(term), term->maxrows);
 		cursor_set_row(term, 0);
 		break;
 	}
@@ -467,13 +467,13 @@ emu_csi_el(Term *term, const int *argv, int argc)
 
 	switch (argv[0]) {
 	case 0:
-		cells_clear(term, term->pos.x, term->pos.y, term->cols);
+		cells_clear(term, term->x, term->y, term->maxcols);
 		break;
 	case 1:
-		cells_init(term, 0, term->pos.y, term->pos.x);
+		cells_init(term, 0, term->y, term->x);
 		break;
 	case 2:
-		cells_clear(term, 0, term->pos.y, term->cols);
+		cells_clear(term, 0, term->y, term->maxcols);
 		cursor_set_col(term, 0);
 		break;
 	}
@@ -611,7 +611,7 @@ void
 emu_csi_decscusr(Term *term, const int *argv, int argc)
 {
 	FUNC_DEBUG(DECSCUSR);
-	cursor_set_style(term, argv[0]);
+	cursor_set_shape(term, argv[0]);
 }
 
 void

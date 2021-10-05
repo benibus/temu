@@ -13,22 +13,16 @@
 #define ATTR_MAX       (1 << 6)
 #define ATTR_MASK      (ATTR_MAX-1)
 
-#define CURSOR_DEFAULT  (0)
-#define CURSOR_WRAPNEXT (1 << 0)
-#define CURSOR_HIDDEN   (1 << 1)
-#define CURSOR_INVERT   (1 << 2)
-#define CURSOR_BLINKING (1 << 3)
-
 typedef enum {
-	CursorStyleDefault,
-	CursorStyleBlock       = 2,
-	CursorStyleUnderscore  = 4,
-	CursorStyleBar         = 5
-} CursorStyle;
+	CursorShapeDefault,
+	CursorShapeBlock       = 2,
+	CursorShapeUnderscore  = 4,
+	CursorShapeBar         = 5
+} CursorShape;
 
 typedef struct {
 	int col, row;
-	CursorStyle style;
+	CursorShape shape;
 	uint32 color;
 	bool isvisible;
 } Cursor;
@@ -58,9 +52,9 @@ struct TermConfig {
 	uint16 cols, rows;
 	uint16 colsize, rowsize;
 	uint16 tabcols;
-	uint16 histlines;
-	uint32 default_bg;
-	uint32 default_fg;
+	uint16 maxhist;
+	uint32 color_bg;
+	uint32 color_fg;
 	uint32 colors[16];
 };
 
@@ -83,35 +77,41 @@ typedef struct Parser {
 
 typedef struct Ring Ring;
 
+#define CURSOR_WRAPNEXT (1 << 0)
+#define CURSOR_HIDDEN   (1 << 1)
+#define CURSOR_INVERT   (1 << 2)
+#define CURSOR_BLINKING (1 << 3)
+
 typedef struct {
 	void *generic;
 
 	Ring *ring;
 	uint8 *tabstops;
 
-	int cols, rows;
+	int x, y; // Absolute position in scrollback history
+	int maxcols, maxrows;
 	int colsize, rowsize;
-	int histlines;
+	int maxhist;
 	int scrollback;
-	int top, bot;
 	int tabcols;
-
-	bool wrapnext;
-
-	struct { int x, y; } pos;
 
 	struct {
 		uint32 bg;
 		uint32 fg;
-		int width;
-		uint16 attr;
-		CursorStyle cursor_style;
-		bool cursor_hidden;
-	} current;
+		uint16 attrs;
+		uint8 width;
+		uint32 flags;
+	} active;
 
-	uint32 default_bg;
-	uint32 default_fg;
-	uint32 colormap[16];
+	struct {
+		uint32 color;
+		CursorShape shape;
+		uint16 flags;
+	} cursor;
+
+	uint32 color_bg;
+	uint32 color_fg;
+	uint32 colors[16];
 
 	PTY pty;
 
@@ -127,11 +127,16 @@ size_t term_consume(Term *, const uchar *, size_t);
 void term_scroll(Term *, int);
 void term_reset_scroll(Term *);
 void term_resize(Term *, int, int);
-int term_get_fileno(const Term *);
-const Cell *term_get_row(const Term *, int);
+Cell *term_get_row(const Term *, int);
+Cell *term_get_line(const Term *, int);
+void term_reset_row(Term *, int);
+void term_reset_line(Term *, int);
 Cell term_get_cell(const Term *, int, int);
 Cursor term_get_cursor(const Term *);
 size_t term_make_key_string(const Term *, uint, uint, char *, size_t);
+int term_rows(const Term *);
+int term_top(const Term *);
+int term_bot(const Term *);
 
 void term_print_summary(const Term *, uint);
 void term_print_history(const Term *);
@@ -145,7 +150,7 @@ void cursor_move_rows(Term *, int);
 void cursor_set_col(Term *, int);
 void cursor_set_row(Term *, int);
 void cursor_set_hidden(Term *, bool);
-void cursor_set_style(Term *, int);
+void cursor_set_shape(Term *, int);
 
 void cells_init(Term *, int, int, int);
 void cells_clear(Term *, int, int, int);

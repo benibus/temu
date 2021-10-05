@@ -149,8 +149,8 @@ error_invalid:
 		uint32 *dst;
 
 		switch (i) {
-		case 0:  dst = &tc.default_bg;  break;
-		case 1:  dst = &tc.default_fg;  break;
+		case 0:  dst = &tc.color_bg;  break;
+		case 1:  dst = &tc.color_fg;  break;
 		default: dst = &tc.colors[i-2]; break;
 		}
 		if (!win_parse_color_string(&rc, config.colors[i], dst)) {
@@ -192,7 +192,7 @@ error_invalid:
 
 	tc.generic = &client_;
 	tc.shell = config.shell;
-	tc.histlines = MAX(config.histsize, tc.rows);
+	tc.maxhist = MAX(config.histsize, tc.rows);
 	tc.tabcols = DEFAULT(config.tablen, 8);
 
 	if (!(client_.term = term_create(tc))) {
@@ -205,8 +205,8 @@ error_invalid:
 	win_show_client(win);
 
 	rc.font = fonts[0];
-	rc.color.bg = client_.term->default_bg;
-	rc.color.fg = client_.term->default_fg;
+	rc.color.bg = client_.term->color_bg;
+	rc.color.fg = client_.term->color_fg;
 
 	client_.win = win;
 	client_.rc  = rc;
@@ -292,15 +292,15 @@ client_draw_screen(Client *client)
 #define ROWBUF_MAX 256
 	GlyphRender glyphs[ROWBUF_MAX] = { 0 };
 
-	draw_rect(rc, pack_xrgb(term->default_bg, 0xff), 0, 0, win->w, win->h);
+	draw_rect(rc, pack_xrgb(term->color_bg, 0xff), 0, 0, win->w, win->h);
 
-	for (int row = 0; row < term->rows; row++) {
+	for (int row = 0; row < term->maxrows; row++) {
 		const Cell *cells = term_get_row(term, row);
 		int len = 0;
 
 		if (!cells) { continue; }
 
-		for (int col = 0; col < term->cols && col < ROWBUF_MAX; len++, col++) {
+		for (int col = 0; col < term->maxcols && col < ROWBUF_MAX; len++, col++) {
 			Cell cell = cells[col];
 
 			if (!cell.ucs4) break;
@@ -311,7 +311,7 @@ client_draw_screen(Client *client)
 
 			glyphs[col].ucs4 = cell.ucs4;
 			glyphs[col].font = fonts[cell.attr & (ATTR_BOLD|ATTR_ITALIC)];
-			glyphs[col].bg = pack_xrgb(cell.bg, (cell.bg != term->default_bg) ? 0xff : 0);
+			glyphs[col].bg = pack_xrgb(cell.bg, (cell.bg != term->color_bg) ? 0xff : 0);
 			glyphs[col].fg = pack_xrgb(cell.fg, 0xff);
 		}
 
@@ -342,16 +342,16 @@ client_draw_cursor(const Client *client)
 		};
 
 		draw_rect(
-			&client->rc, pack_xrgb(term->default_bg, 0xff),
+			&client->rc, pack_xrgb(term->color_bg, 0xff),
 			win->bw + cursor.col * term->colsize,
 			win->bw + cursor.row * term->rowsize,
 			term->colsize,
 			term->rowsize
 		);
 
-		switch (cursor.style) {
-		case CursorStyleDefault:
-		case CursorStyleBar:
+		switch (cursor.shape) {
+		case CursorShapeDefault:
+		case CursorShapeBar:
 			glyph.bg = 0;
 			glyph.fg = pack_xrgb(cell.fg, 0xff);
 			draw_text_utf8(
@@ -366,16 +366,16 @@ client_draw_cursor(const Client *client)
 				2, term->rowsize
 			);
 			break;
-		case CursorStyleBlock:
-			glyph.bg = pack_xrgb(term->default_fg, 0xff);
-			glyph.fg = pack_xrgb(term->default_bg, 0xff);
+		case CursorShapeBlock:
+			glyph.bg = pack_xrgb(term->color_fg, 0xff);
+			glyph.fg = pack_xrgb(term->color_bg, 0xff);
 			draw_text_utf8(
 				&client->rc, &glyph, 1,
 				win->bw + cursor.col * term->colsize,
 				win->bw + cursor.row * term->rowsize
 			);
 			break;
-		case CursorStyleUnderscore:
+		case CursorShapeUnderscore:
 			glyph.bg = 0;
 			glyph.fg = pack_xrgb(cell.fg, 0xff);
 			draw_text_utf8(
@@ -384,7 +384,7 @@ client_draw_cursor(const Client *client)
 				win->bw + cursor.row * term->rowsize
 			);
 			draw_rect(
-				&client->rc, pack_xrgb(term->default_fg, 0xff),
+				&client->rc, pack_xrgb(term->color_fg, 0xff),
 				win->bw + cursor.col * term->colsize,
 				win->bw + (cursor.row + 1) * term->rowsize - 2,
 				term->colsize, 2
@@ -441,7 +441,7 @@ event_resize(void *ref, int width, int height)
 	int rows = (height - 2 * win->bw) / term->rowsize;
 
 	win_resize_client(win, width, height);
-	if (cols != term->cols || rows != term->rows) {
+	if (cols != term->maxcols || rows != term->maxrows) {
 		term_resize(term, cols, rows);
 	}
 }
