@@ -1,3 +1,7 @@
+#include "utils.h"
+#include "term.h"
+#include "pty.h"
+
 #include <fcntl.h>
 #include <pwd.h>
 #include <unistd.h>
@@ -8,14 +12,9 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <termios.h>
-
 #if defined(__linux)
 #include <pty.h>
 #endif
-
-#include "utils.h"
-#include "term.h"
-#include "pty.h"
 
 #define WRITE_LIMIT 1024
 
@@ -29,12 +28,12 @@ pty_init(Term *term, const char *shell)
 	char *args[] = { NULL };
 
 	if (openpty(&pty->mfd, &pty->sfd, NULL, NULL, NULL) < 0) {
-		error_fatal("openpty()", 1);
+		errfatal(1, "openpty()");
 	}
 
 	switch ((pty->pid = fork())) {
 	case -1: // fork failed
-		error_fatal("fork()", 1);
+		errfatal(1, "fork()");
 		break;
 	case 0: // child process
 		setsid();
@@ -44,7 +43,7 @@ pty_init(Term *term, const char *shell)
 		dup2(pty->sfd, 2);
 
 		if (ioctl(pty->sfd, TIOCSCTTY, NULL) < 0) {
-			error_fatal("ioctl()", 1);
+			errfatal(1, "ioctl()");
 		}
 		close(pty->sfd);
 		close(pty->mfd);
@@ -113,12 +112,12 @@ pty_write(Term *term, const char *str, size_t len)
 		FD_SET(pty->mfd, &fds_w);
 
 		if (pselect(pty->mfd + 1, &fds_r, &fds_w, NULL, NULL, NULL) < 0) {
-			error_fatal("pselect()", 1);
+			errfatal(1, "pselect()");
 		}
 		if (FD_ISSET(pty->mfd, &fds_w)) {
 			n = write(pty->mfd, &str[i], MIN(len-i, rem));
 			if (n < 0) {
-				error_fatal("write()", 1);
+				errfatal(1, "write()");
 			}
 			if (i + n < len) {
 				if (len - i < rem) {

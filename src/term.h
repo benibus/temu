@@ -5,9 +5,9 @@
 
 #define ATTR_NONE      (0)
 #define ATTR_BOLD      (1 << 0)
-#define ATTR_UNDERLINE (1 << 1)
-#define ATTR_BLINK     (1 << 2)
-#define ATTR_ITALIC    (1 << 3)
+#define ATTR_ITALIC    (1 << 1)
+#define ATTR_UNDERLINE (1 << 2)
+#define ATTR_BLINK     (1 << 3)
 #define ATTR_INVERT    (1 << 4)
 #define ATTR_INVISIBLE (1 << 5)
 #define ATTR_MAX       (1 << 6)
@@ -21,19 +21,17 @@
 
 typedef enum {
 	CursorStyleDefault,
-	CursorStyleBlock      = 2,
-	CursorStyleUnderscore = 4,
-	CursorStyleBar        = 6
+	CursorStyleBlock       = 2,
+	CursorStyleUnderscore  = 4,
+	CursorStyleBar         = 5
 } CursorStyle;
 
 typedef struct {
-	uint32 ucs4;
 	int col, row;
 	CursorStyle style;
-	uint32 bg;
-	uint32 fg;
-	uint16 attr;
-} CursorDesc;
+	uint32 color;
+	bool isvisible;
+} Cursor;
 
 typedef enum {
 	CellTypeBlank,
@@ -131,7 +129,8 @@ void term_reset_scroll(Term *);
 void term_resize(Term *, int, int);
 int term_get_fileno(const Term *);
 const Cell *term_get_row(const Term *, int);
-bool term_get_cursor_desc(const Term *, CursorDesc *);
+Cell term_get_cell(const Term *, int, int);
+Cursor term_get_cursor(const Term *);
 size_t term_make_key_string(const Term *, uint, uint, char *, size_t);
 
 void term_print_summary(const Term *, uint);

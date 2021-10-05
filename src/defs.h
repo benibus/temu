@@ -2,15 +2,15 @@
 #define CORE_DEFS_H__
 
 #if defined(__GNUC__)
-  #define CC_GCC 1
+  #define COMPILER_GCC 1
 #elif defined(__clang__)
-  #define CC_CLANG 1
+  #define COMPILER_CLANG 1
 #elif defined(__TINYC__)
-  #define CC_TCC 1
+  #define COMPILER_TCC 1
 #elif defined(_MSC_VER)
-  #define CC_MSVC 1
+  #define COMPILER_MSVC 1
 #elif defined(__MINGW32__) || defined(__MINGW64__)
-  #define CC_MINGW 1
+  #define COMPILER_MINGW 1
 #endif
 
 #if (__STDC_VERSION__ < 199901L)
@@ -157,6 +157,8 @@ typedef struct {
 #define pack_rgba(r,g,b,a) ((((r)&0xff)<<24)|(((g)&0xff)<<16)|(((b)&0xff)<<8)|((a)&0xff))
 #define pack_argb(r,g,b,a) ((((a)&0xff)<<24)|(((r)&0xff)<<16)|(((g)&0xff)<<8)|((b)&0xff))
 #define pack_abgr(r,g,b,a) ((((a)&0xff)<<24)|(((b)&0xff)<<16)|(((g)&0xff)<<8)|((r)&0xff))
+#define pack_rgbx(rgb,a)   ((((rgb)&0x00ffffff)<<8)|((a)&0xff))
+#define pack_xrgb(rgb,a)   (((rgb)&0x00ffffff)|(((a)&0xff)<<24))
 
 #endif
 

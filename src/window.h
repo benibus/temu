@@ -32,9 +32,9 @@ typedef struct {
 } Win;
 
 #define STYLE_REGULAR (0)
-#define STYLE_ITALIC  (1 << 0)
-#define STYLE_OBLIQUE (1 << 1)
-#define STYLE_BOLD    (1 << 2)
+#define STYLE_BOLD    (1 << 0)
+#define STYLE_ITALIC  (1 << 1)
+#define STYLE_OBLIQUE (1 << 2)
 #define STYLE_MAX     (1 << 3)
 
 typedef struct FontFace_ FontFace;
@@ -54,7 +54,6 @@ typedef struct {
 	FontFace *font;
 	uint32 fg;
 	uint32 bg;
-	uint32 flags;
 } GlyphRender;
 
 typedef struct {
@@ -88,7 +87,8 @@ FontFace *font_create_derived_face(FontFace *, uint);
 bool font_get_face_metrics(FontFace *, FontMetrics *);
 bool font_init_face(FontFace *);
 void font_destroy_face(FontFace *);
-void draw_rect_solid(const RC *, uint32, int, int, int, int);
+void font_print_debug(const FontFace *);
+void draw_rect(const RC *, uint32, int, int, int, int);
 void draw_text_utf8(const RC *, const GlyphRender *, uint, int, int);
 
 #endif

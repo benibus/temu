@@ -2,12 +2,11 @@
 #define X11_H__
 
 #include "defs.h"
+#include "window.h"
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/Xrender.h>
-
-#include "window.h"
 
 typedef struct {
 	Display *dpy;

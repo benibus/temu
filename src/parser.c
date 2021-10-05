@@ -1,9 +1,9 @@
-#include <limits.h>
-
 #include "utils.h"
 #include "term.h"
 #include "parser.h"
 #include "fsm.h"
+
+#include <limits.h>
 
 static void parser_dispatch(Term *, StateCode, ActionCode, uchar);
 
@@ -205,7 +205,7 @@ parser_dispatch(Term *term, StateCode state, ActionCode action, uchar c)
 		}
 		break;
 	case ActionOscEnd:
-#define osc_params__ term, (const char *)parser->data, parser->argv, parser->argi+1
+#define osc_params__ term, (const char *)parser->data, parser->argv, parser->argi + 1
 		arr_push(parser->data, 0);
 		emu_osc(osc_params__);
 		break;

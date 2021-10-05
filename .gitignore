@@ -7,5 +7,6 @@ lib/
 *.[oa]
 *.so
 *.pro*
+*.user
 temu
 utils.[ch]

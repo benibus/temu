@@ -797,7 +797,7 @@ win_parse_color_string(const RC *rc, const char *name, uint32 *result)
 			xcolor.red   >> 8,
 			xcolor.green >> 8,
 			xcolor.blue  >> 8,
-			0xff
+			0x00
 		);
 	}
 

@@ -29,8 +29,14 @@
 // Point is visible in screen-space
 #define ISVISIBLE(t,x,y) ((x) < (t)->cols && (y) <= ((t)->bot - (t)->top - (t)->scrollback))
 
-// The standard xterm color cube (ARGB format)
-static const uint32 color_table[256] = {
+// LUT for the standard terminal RGB values. 0-15 may be overridden by the user.
+// https://wikipedia.org/wiki/ANSI_escape_code#Colors
+//
+// [0x00...0x07] Normal colors
+// [0x08...0x0f] High-intensity colors
+// [0x10...0xe7] 6x6x6 color cube
+// [0xe8...0xff] Grayscale (dark -> light)
+static const uint32 rgb_presets[256] = {
 	0x000000, 0x800000, 0x008000, 0x808000, 0x000080, 0x800080, 0x008080, 0xc0c0c0,
 	0x808080, 0xff0000, 0x00ff00, 0xffff00, 0x0000ff, 0xff00ff, 0x00ffff, 0xffffff,
 	0x000000, 0x00005f, 0x000087, 0x0000af, 0x0000d7, 0x0000ff, 0x005f00, 0x005f5f,
@@ -65,7 +71,7 @@ static const uint32 color_table[256] = {
 	0xa8a8a8, 0xb2b2b2, 0xbcbcbc, 0xc6c6c6, 0xd0d0d0, 0xdadada, 0xe4e4e4, 0xeeeeee
 };
 
-#define VTCOLOR(idx) (color_table[(idx)]|0xff000000)
+#define VTCOLOR(idx) (rgb_presets[(idx)])
 
 // Ring buffer of lines of cells for scrollback history.
 //
@@ -143,6 +149,7 @@ term_init(Term *term, struct TermConfig config)
 	term->default_fg = config.default_fg;
 
 	static_assert(LEN(term->colormap) == LEN(config.colors));
+
 	for (uint i = 0; i < LEN(term->colormap); i++) {
 		if (config.colors[i]) {
 			term->colormap[i] = config.colors[i];
@@ -249,26 +256,31 @@ term_get_row(const Term *term, int row)
 	return NULL;
 }
 
-bool
-term_get_cursor_desc(const Term *term, CursorDesc *desc)
+Cell
+term_get_cell(const Term *term, int col, int row)
 {
-	int line = row2hidx(term, term->pos.y);
+	Cell cell = *ring_get_cell(term->ring, row2hidx(term, row), col);
 
-	if (term->current.cursor_hidden || !ISVISIBLE(term, term->pos.x, term->pos.y)) {
-		return false;
-	}
-	if (desc) {
-		Cell cell = *ring_get_cell(term->ring, line, term->pos.x);
+	return (Cell){
+		.ucs4 = DEFAULT(cell.ucs4, ' '),
+		.attr = cell.attr,
+		.bg = (cell.attr & ATTR_INVERT) ? cell.fg : cell.bg,
+		.fg = (cell.attr & ATTR_INVERT) ? cell.bg : cell.fg
+	};
+}
 
-		desc->ucs4 = DEFAULT(cell.ucs4, ' ');
-		desc->attr = cell.attr;
-		desc->bg   = term->default_fg; // inverted
-		desc->fg   = term->default_bg; // inverted
-		desc->col  = term->pos.x;
-		desc->row  = term->pos.y;
-	}
+Cursor
+term_get_cursor(const Term *term)
+{
+	Cursor cursor = { 0 };
 
-	return true;
+	cursor.col = term->pos.x;
+	cursor.row = term->pos.y;
+	cursor.style = term->current.cursor_style;
+	cursor.isvisible = !term->current.cursor_hidden && ISVISIBLE(term, cursor.col, cursor.row);
+	cursor.color = term->default_fg;
+
+	return cursor;
 }
 
 size_t
@@ -488,7 +500,6 @@ cursor_move_cols(Term *term, int cols)
 	int x1 = CLAMP(x0 + cols, 0, term->cols - 1);
 
 	for (int x = x0; x < x1; x++) {
-		// TODO(ben): Probably a better idea to wait till an insertion is made before initializing
 		if (!line->cells[x].ucs4) {
 			line->cells[x] = CELLINIT(term);
 		}
@@ -580,7 +591,7 @@ cells_insert(Term *term, int col, int row, int n)
 	const int x1 = MIN(col, term->cols);
 	const int x2 = MIN(x1 + n, term->cols);
 
-	memmove(&cells[x2-x1], &cells[x1], (term->cols - x2) * sizeof(Cell));
+	memmove(&cells[x2], &cells[x1], (term->cols - x2) * sizeof(Cell));
 	cells_init(term, x1, row, x2 - x1);
 }
 
@@ -676,8 +687,10 @@ cellslen(const Cell *cells, int lim)
 	return 0;
 }
 
-// TODO(ben): Calling this function in random places is kind of goofy... a more automatic way
-// of updating the screen would be better.
+/* TODO(ben):
+ * Calling this function in random places is kind of goofy... a more automatic way of
+ * updating the screen would be better.
+ */
 void
 set_screen(Term *term)
 {
@@ -688,6 +701,17 @@ set_screen(Term *term)
 #define ring_memoff_(r,p) ((uchar *)(p) - (r)->data)
 #define ring_memidx_(r,p) (ring_memoff_(r, p) / (r)->pitch)
 
+/* TODO(ben):
+ * Rewrapping works well enough for development purposes right now, but:
+ *   - Tabs are not properly wrapped, resized, or cleared.
+ *   - Multi-cell glyphs are not handled at all.
+ *   - Cells may be permanently dropped from scrollback history when the width
+ *     decreases and increases again.
+ *
+ * There is also a possibility that an atomic downsize request could cause the new ring to
+ * wrap multiple times while copying, meaning the new cursor position found on the first pass
+ * would become invalid again - although I haven't run the numbers yet.
+ */
 Ring *
 rewrap(Term *term, int cols, int rows, int *posx, int *posy)
 {
@@ -743,7 +767,7 @@ rewrap(Term *term, int cols, int rows, int *posx, int *posy)
 		int adv_a = MIN(rem_a, rem_b);
 		int adv_b = adv_a;
 
-#if 1
+#if 0
 #define PRINT_REWRAP 1
 		printf("Wrapping: <%c> { %03d, %03d }:%03d (%03d/%03d) to "
 		                 "<%c> { %03d, %03d } (---/%03d) "
@@ -832,17 +856,17 @@ term_print_summary(const Term *term, uint flags)
 	if (flags) {
 		print_("cursor", "%s", "");
 		{
-			CursorDesc desc = { 0 };
-			bool isvisible = term_get_cursor_desc(term, &desc);
+			Cursor cursor = term_get_cursor(term);
+			Cell cell = term_get_cell(term, cursor.col, cursor.row);
 
 			n++;
-			print_("ucs4", "{ %d, %d }", desc.col, desc.row);
-			print_("ucs4", "%u", desc.ucs4);
-			print_("attr", "%u", desc.attr);
-			print_("color", "[ #%8X, #%8X ]", desc.bg, desc.fg);
-			print_("style", "%u", desc.style);
+			print_("ucs4", "{ %d, %d }", cursor.col, cursor.row);
+			print_("ucs4", "%u", cell.ucs4);
+			print_("attr", "%u", cell.attr);
+			print_("color", "[ #%08X, #%08X ] | #%08X", cell.bg, cell.fg, cursor.color);
+			print_("style", "%u", cursor.style);
 			print_("wrap", "%d", term->wrapnext);
-			print_("visible", "%d", isvisible);
+			print_("visible", "%d", cursor.isvisible);
 			n--;
 		}
 	}

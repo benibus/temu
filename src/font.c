@@ -1,3 +1,6 @@
+#include "utils.h"
+#include "x11.h"
+
 #include <math.h>
 #include <locale.h>
 #include <unistd.h>
@@ -9,9 +12,6 @@
 #include FT_SYNTHESIS_H
 #include <fontconfig/fontconfig.h>
 #include <fontconfig/fcfreetype.h>
-
-#include "utils.h"
-#include "x11.h"
 
 #define SUBPX 64L
 #define SUBPX_MASK (~(SUBPX-1))
@@ -257,7 +257,7 @@ font_init_face(FontFace *font)
 	if (!face) {
 		if (!shared.ft) {
 			if (!!FT_Init_FreeType(&shared.ft)) {
-				dbgputs("Failed to initialize FreeType");
+				dbgprint("Failed to initialize FreeType");
 				return false;
 			}
 		}
@@ -389,6 +389,13 @@ font_init_face(FontFace *font)
 	return true;
 }
 
+void
+font_print_debug(const FontFace *font)
+{
+	dbgprintfl("FONT (%p)", (void *)font);
+	FcPatternPrint(font->pattern);
+}
+
 GlyphMeta
 font_load_glyph(FontFace *font, uint32 ucs4)
 {
@@ -420,6 +427,8 @@ font_cache_glyph(FontFace *font, uint32 index)
 	FT_Library_SetLcdFilter(shared.ft, font->lcd_filter);
 	{
 		FT_Error err;
+
+		FT_Set_Transform(face, &font->matrix, NULL);
 		err = FT_Load_Glyph(face, index, font->loadflags);
 		if (!!err) {
 			return NULL;
@@ -671,7 +680,6 @@ font_destroy_face(FontFace *target)
 
 		FcPatternDestroy(obj->pattern);
 		FcCharSetDestroy(obj->charset);
-		XRenderFreeGlyphSet(obj->src->dpy, obj->glyphset);
 		font_free_glyphs(obj);
 		if (!--obj->src->refcount) {
 			font_destroy_source(obj->src);
@@ -803,7 +811,6 @@ if (FcPatternGet((pat), (obj), 0, &dummy) == FcResultNoMatch) { \
 
 	FcPatternDestroy(pattern.base);
 	FcPatternDestroy(pattern.conf);
-	/* FcPatternPrint(pattern.match); */
 
 	FontFace *font = font_insert_face(pattern.match);
 	if (font && !font->src->dpy) {
@@ -836,7 +843,6 @@ font_create_derived_face(FontFace *font, uint style)
 	FcDefaultSubstitute(pattern.conf);
 	pattern.match = FcFontMatch(NULL, pattern.conf, &res);
 	FcPatternDestroy(pattern.conf);
-	/* FcPatternPrint(pattern.match); */
 
 	FontFace *new_font = font_insert_face(pattern.match);
 
@@ -844,7 +850,7 @@ font_create_derived_face(FontFace *font, uint style)
 }
 
 void
-draw_rect_solid(const RC *rc, uint32 color, int x_, int y_, int w_, int h_)
+draw_rect(const RC *rc, uint32 color, int x_, int y_, int w_, int h_)
 {
 	WinData *win = (WinData *)rc->win;
 
@@ -942,11 +948,11 @@ draw_text_utf8(const RC *rc, const GlyphRender *glyphs, uint max, int x, int y)
 			}
 		}
 
-		if (brush.bg != rc->color.bg) {
-			draw_rect_solid(rc, brush.bg,
-			                    pos.x0, pos.y0,
-			                    pos.x1 - pos.x0,
-			                    glyph.font->ascent + glyph.font->descent);
+		if (brush.bg >> 24) {
+			draw_rect(rc, brush.bg,
+			              pos.x0, pos.y0,
+			              pos.x1 - pos.x0,
+			              glyph.font->ascent + glyph.font->descent);
 		}
 
 		// render elt buffer

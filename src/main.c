@@ -45,7 +45,8 @@ static FontFace *fonts[4];
 static bool toggle_render = true;
 
 static void run(Client *);
-static void render_frame(Client *);
+static void client_draw_screen(Client *);
+static void client_draw_cursor(const Client *);
 static void event_key_press(void *, int, int, char *, int);
 static void event_resize(void *, int, int);
 
@@ -127,16 +128,18 @@ error_invalid:
 		return 3;
 
 	fonts[0] = font_create_face(&rc, config.font);
-	ASSERT(fonts[0]);
-
-	fonts[1] = font_create_derived_face(fonts[0], STYLE_ITALIC);
-	fonts[2] = font_create_derived_face(fonts[0], STYLE_ITALIC|STYLE_BOLD);
-	fonts[3] = font_create_derived_face(fonts[0], STYLE_BOLD);
-	ASSERT(fonts[1] && fonts[2] && fonts[3]);
+	if (!fonts[0]) {
+		errfatal(1, "Failed to create default font");
+	} else {
+		fonts[ATTR_BOLD] = font_create_derived_face(fonts[0], STYLE_BOLD);
+		fonts[ATTR_ITALIC] = font_create_derived_face(fonts[0], STYLE_ITALIC);
+		fonts[ATTR_BOLD|ATTR_ITALIC] = font_create_derived_face(fonts[0], STYLE_BOLD|STYLE_ITALIC);
+	}
 
 	for (int i = 0; i < 4; i++) {
+		ASSERT(fonts[i]);
 		if (!font_init_face(fonts[i])) {
-			dbgprintl("Failed to initialize font %d", i);
+			dbgprintfl("Failed to initialize font %d", i);
 		}
 	}
 
@@ -177,11 +180,15 @@ error_invalid:
 		return 4;
 	}
 
-	tc.cols = (win->w / tc.colsize) - (2 * win->bw);
-	tc.rows = (win->h / tc.rowsize) - (2 * win->bw);
-
+	/* FIXME(ben):
+	 * Border sizes aren't being factored into returned window dimensions.
+	 */
+	tc.cols = (win->w - 2 * win->bw) / tc.colsize;
+	tc.rows = (win->h - 2 * win->bw) / tc.rowsize;
+#if 0
 	ASSERT(tc.cols == (int)config.columns);
 	ASSERT(tc.rows == (int)config.rows);
+#endif
 
 	tc.generic = &client_;
 	tc.shell = config.shell;
@@ -246,7 +253,7 @@ run(Client *client)
 		if (pselect(maxfd + 1, &rset, NULL, NULL, ts, NULL) < 0) {
 			exit(2);
 		}
-		time_get_mono(&t1);
+		time_get_mono_msec(&t1);
 
 		if (FD_ISSET(ptyfd, &rset)) {
 			term_pull(term);
@@ -270,72 +277,121 @@ run(Client *client)
 		busy = false;
 
 		if (toggle_render) {
-			render_frame(client);
+			client_draw_screen(client);
 		}
 	}
 }
 
 void
-render_frame(Client *client)
+client_draw_screen(Client *client)
 {
 	Win *win = client->win;
-	RC *rc   = &client->rc;
+	RC *rc = &client->rc;
 	Term *term = client->term;
 
-	rc->color.bg = term->default_bg;
-	rc->color.fg = term->default_fg;
-	draw_rect_solid(rc, rc->color.bg, 0, 0, win->w, win->h);
+#define ROWBUF_MAX 256
+	GlyphRender glyphs[ROWBUF_MAX] = { 0 };
 
-	int i = 0;
-	for (; i < term->rows; i++) {
-		GlyphRender glyphs[256] = { 0 };
+	draw_rect(rc, pack_xrgb(term->default_bg, 0xff), 0, 0, win->w, win->h);
 
-		FontFace *font = rc->font;
-		const Cell *cells = term_get_row(term, i);
-		int x = 0;
+	for (int row = 0; row < term->rows; row++) {
+		const Cell *cells = term_get_row(term, row);
+		int len = 0;
 
-		for (; cells && x < term->cols && x < (int)LEN(glyphs); x++) {
-			Cell cell = cells[x];
+		if (!cells) { continue; }
+
+		for (int col = 0; col < term->cols && col < ROWBUF_MAX; len++, col++) {
+			Cell cell = cells[col];
 
 			if (!cell.ucs4) break;
 
-			if (cell.attr & ATTR_ITALIC) {
-				font = fonts[1];
-				if (cell.attr & ATTR_BOLD) {
-					font = fonts[2];
-				}
-			} else if (cell.attr & ATTR_BOLD) {
-				font = fonts[3];
-			} else {
-				font = fonts[0];
-			}
-
-			glyphs[x].ucs4 = cell.ucs4;
-			glyphs[x].font = font;
-			glyphs[x].bg = cell.bg;
-			glyphs[x].fg = cell.fg;
-
 			if (cell.attr & ATTR_INVERT) {
-				SWAP(uint32, glyphs[x].bg, glyphs[x].fg);
+				SWAP(uint32, cell.bg, cell.fg);
 			}
+
+			glyphs[col].ucs4 = cell.ucs4;
+			glyphs[col].font = fonts[cell.attr & (ATTR_BOLD|ATTR_ITALIC)];
+			glyphs[col].bg = pack_xrgb(cell.bg, (cell.bg != term->default_bg) ? 0xff : 0);
+			glyphs[col].fg = pack_xrgb(cell.fg, 0xff);
 		}
 
-		draw_text_utf8(rc, glyphs, x, 0, i * term->rowsize);
+		draw_text_utf8(rc, glyphs, len, win->bw, win->bw + row * term->rowsize);
 	}
+#undef ROWBUF_MAX
 
 	// draw cursor last
-	CursorDesc cursor = { 0 };
-	if (term_get_cursor_desc(term, &cursor)) {
-		GlyphRender glyph = {
-			.ucs4 = cursor.ucs4,
-			.bg   = cursor.bg,
-			.fg   = cursor.fg,
-			.font = (cursor.attr & ATTR_BOLD) ? fonts[3] : fonts[0]
-		};
-		draw_text_utf8(rc, &glyph, 1, cursor.col * term->colsize, cursor.row * term->rowsize);
-	}
+	client_draw_cursor(client);
 
 	win_render_frame(win);
+}
+
+void
+client_draw_cursor(const Client *client)
+{
+	const Win *win = client->win;
+	const Term *term = client->term;
+
+	Cursor cursor = term_get_cursor(term);
+
+	if (cursor.isvisible) {
+		Cell cell = term_get_cell(term, cursor.col, cursor.row);
+
+		GlyphRender glyph = {
+			.ucs4 = cell.ucs4,
+			.font = fonts[cell.attr & (ATTR_BOLD|ATTR_ITALIC)]
+		};
+
+		draw_rect(
+			&client->rc, pack_xrgb(term->default_bg, 0xff),
+			win->bw + cursor.col * term->colsize,
+			win->bw + cursor.row * term->rowsize,
+			term->colsize,
+			term->rowsize
+		);
+
+		switch (cursor.style) {
+		case CursorStyleDefault:
+		case CursorStyleBar:
+			glyph.bg = 0;
+			glyph.fg = pack_xrgb(cell.fg, 0xff);
+			draw_text_utf8(
+				&client->rc, &glyph, 1,
+				win->bw + cursor.col * term->colsize,
+				win->bw + cursor.row * term->rowsize
+			);
+			draw_rect(
+				&client->rc, pack_xrgb(cursor.color, 0xff),
+				win->bw + cursor.col * term->colsize,
+				win->bw + cursor.row * term->rowsize,
+				2, term->rowsize
+			);
+			break;
+		case CursorStyleBlock:
+			glyph.bg = pack_xrgb(term->default_fg, 0xff);
+			glyph.fg = pack_xrgb(term->default_bg, 0xff);
+			draw_text_utf8(
+				&client->rc, &glyph, 1,
+				win->bw + cursor.col * term->colsize,
+				win->bw + cursor.row * term->rowsize
+			);
+			break;
+		case CursorStyleUnderscore:
+			glyph.bg = 0;
+			glyph.fg = pack_xrgb(cell.fg, 0xff);
+			draw_text_utf8(
+				&client->rc, &glyph, 1,
+				win->bw + cursor.col * term->colsize,
+				win->bw + cursor.row * term->rowsize
+			);
+			draw_rect(
+				&client->rc, pack_xrgb(term->default_fg, 0xff),
+				win->bw + cursor.col * term->colsize,
+				win->bw + (cursor.row + 1) * term->rowsize - 2,
+				term->colsize, 2
+			);
+			break;
+		}
+	}
 }
 
 void
@@ -381,8 +437,8 @@ event_resize(void *ref, int width, int height)
 	Win *win = client->win;
 	Term *term = client->term;
 
-	int cols = (width / term->colsize) - (2 * win->bw);
-	int rows = (height / term->rowsize) - (2 * win->bw);
+	int cols = (width - 2 * win->bw) / term->colsize;
+	int rows = (height - 2 * win->bw) / term->rowsize;
 
 	win_resize_client(win, width, height);
 	if (cols != term->cols || rows != term->rows) {
