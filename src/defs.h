@@ -81,16 +81,16 @@ typedef struct {
 	char *data;
 } String;
 
-#define MIN(a,b)       (((a) < (b)) ? (a) : (b))
-#define MAX(a,b)       (((a) > (b)) ? (a) : (b))
-#define CLAMP(n,a,b)   (((n) < (a)) ? (a) : (((n) > (b)) ? (b) : (n)))
-#define BETWEEN(n,a,b) (((n) >= (a)) && ((n) <= (b)))
-#define ABS(n)         (((n) < 0) ? -(n) : (n))
-#define LEN(arr)       (sizeof((arr)) / sizeof((arr)[0]))
-#define DEFAULT(v1,v2) ((!!(v1)) ? (v1) : (v2))
-#define ALIGN(n,a)     ((n) & ~((a) - 1))
-#define ALIGNUP(n,a)   (((n) + ((a) - 1)) & ~((a) - 1))
-#define BSET(n,m,c)    ((!!(c)) ? ((n) |= (m)) : ((n) &= ~(m)))
+#define MIN(a,b)        (((a) < (b)) ? (a) : (b))
+#define MAX(a,b)        (((a) > (b)) ? (a) : (b))
+#define CLAMP(n,a,b)    (((n) < (a)) ? (a) : (((n) > (b)) ? (b) : (n)))
+#define BETWEEN(n,a,b)  (((n) >= (a)) && ((n) <= (b)))
+#define ABS(n)          (((n) < 0) ? -(n) : (n))
+#define LEN(arr)        (sizeof((arr)) / sizeof((arr)[0]))
+#define DEFAULT(v1,v2)  ((!!(v1)) ? (v1) : (v2))
+#define ALIGN_DOWN(n,a) ((n) & ~((a) - 1))
+#define ALIGN_UP(n,a)   (((n) + ((a) - 1)) & ~((a) - 1))
+#define BSET(n,m,c)     ((!!(c)) ? ((n) |= (m)) : ((n) &= ~(m)))
 #define RANGE(v1,o1,v2,o2,v3) (((v1) o1 (v2)) && ((v2) o2 (v3)))
 
 #if STD_C11

@@ -14,7 +14,8 @@ typedef struct {
 	Window root;
 	int fd;
 	XIM im;
-	XVisualInfo *vis;
+	Visual *visual;
+	int colordepth;
 	XRenderPictFormat *fmt;
 	uint maxw, maxh;
 	double dpi;

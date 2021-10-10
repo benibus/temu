@@ -17,14 +17,15 @@ typedef enum {
 	CursorShapeDefault,
 	CursorShapeBlock       = 2,
 	CursorShapeUnderscore  = 4,
-	CursorShapeBar         = 5
+	CursorShapeBar         = 5,
+	CursorShapeOutline     = 7
 } CursorShape;
 
 typedef struct {
 	int col, row;
 	CursorShape shape;
 	uint32 color;
-	bool isvisible;
+	bool visible;
 } Cursor;
 
 typedef enum {
@@ -140,6 +141,7 @@ int term_bot(const Term *);
 
 void term_print_summary(const Term *, uint);
 void term_print_history(const Term *);
+void term_print_stream(const Term *);
 
 void write_codepoint(Term *, uint32, CellType);
 void write_tab(Term *);

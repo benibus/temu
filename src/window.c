@@ -150,28 +150,60 @@ x11_set_visual_format(X11 *x11)
 {
 	if (!x11->dpy) return false;
 
-	XVisualInfo vistmp = { 0 };
+	XVisualInfo template = { 0 };
+	XVisualInfo *visinfo;
 	int count;
 
 #if 1
-	vistmp.visualid =
+	template.visualid =
 	    XVisualIDFromVisual(
 	        DefaultVisual(x11->dpy, x11->screen));
 #else
 	// OpenGL context initialization (eventually)
 	return false;
 #endif
-	if (x11->vis) {
-		XFree(x11->vis);
-		x11->vis = NULL;
+	visinfo = XGetVisualInfo(x11->dpy, VisualIDMask, &template, &count);
+	if (!visinfo) {
+		return false;
 	}
-	x11->vis = XGetVisualInfo(x11->dpy, VisualIDMask, &vistmp, &count);
-	if (!x11->vis) return false;
+	x11->visual = visinfo->visual;
+	x11->colordepth = visinfo->depth;
+	XFree(visinfo);
 
-	x11->fmt = XRenderFindVisualFormat(x11->dpy, x11->vis->visual);
+	x11->fmt = XRenderFindVisualFormat(x11->dpy, x11->visual);
 	ASSERT(x11->fmt);
 
 	return true;
+}
+
+PixelFormat
+x11_get_pixel_format(const X11 *x11)
+{
+	switch (XRenderQuerySubpixelOrder(x11->dpy, x11->screen)) {
+	case SubPixelHorizontalRGB:
+		return PixelFormatHRGB24;
+	case SubPixelHorizontalBGR:
+		return PixelFormatHBGR24;
+	case SubPixelVerticalRGB:
+		return PixelFormatVRGB24;
+	case SubPixelVerticalBGR:
+		return PixelFormatVBGR24;
+	case SubPixelNone:
+		return PixelFormatNone;
+	case SubPixelUnknown:
+		return PixelFormatUnknown;
+	}
+
+	return PixelFormatUnknown;
+}
+
+PixelFormat
+platform_get_pixel_format(const Win *pub)
+{
+	ASSERT(pub);
+	const X11 *x11 = ((const WinData *)pub)->x11;
+
+	return x11_get_pixel_format(x11);
 }
 
 Win *
@@ -189,7 +221,7 @@ win_create_client(void)
 			return NULL;
 		win->colormap = XCreateColormap(win->x11->dpy,
 		                                win->x11->root,
-		                                win->x11->vis->visual,
+		                                win->x11->visual,
 		                                AllocNone);
 	}
 
@@ -210,7 +242,7 @@ win_init_client(Win *pub)
 	}
 	win_validate_config(&win->pub);
 
-	if (!x11->vis) {
+	if (!x11->visual) {
 		if (!x11_set_visual_format(x11)) {
 			return false;
 		}
@@ -226,7 +258,7 @@ win_init_client(Win *pub)
 	win->parent = x11->root;
 	win->xid = XCreateWindow(x11->dpy, x11->root,
 	    0, 0, win->pub.w, win->pub.h, win->pub.bw,
-	    x11->vis->depth, InputOutput, x11->vis->visual,
+	    x11->colordepth, InputOutput, x11->visual,
 	    (CWBackPixel|CWBorderPixel|CWColormap|CWBitGravity|CWEventMask),
 	    &wa);
 
@@ -349,7 +381,7 @@ win_init_client(Win *pub)
 	}
 
 	win->buf = XCreatePixmap(x11->dpy,
-	    win->xid, win->pub.w, win->pub.h, x11->vis->depth);
+	    win->xid, win->pub.w, win->pub.h, win->x11->colordepth);
 
 	XRenderPictureAttributes picattr = { 0 };
 	win->pic = XRenderCreatePicture(x11->dpy, win->buf, x11->fmt, 0, &picattr);
@@ -367,7 +399,7 @@ win_resize_client(Win *pub, uint w, uint h)
 		XFreePixmap(win->x11->dpy, win->buf);
 		win->buf = XCreatePixmap(win->x11->dpy,
 		                         win->xid, w, h,
-		                         win->x11->vis->depth);
+		                         win->x11->colordepth);
 		ASSERT(win->buf);
 		XRenderPictureAttributes attr = { 0 };
 		win->pic = XRenderCreatePicture(win->x11->dpy,
@@ -727,22 +759,6 @@ done:
 	return count;
 }
 
-bool
-win_init_render_context(Win *pub, RC *rc)
-{
-	WinData *win = (WinData *)pub;
-	ASSERT(win);
-
-	if (!win->colormap)
-		return false;
-	if (!win->x11 || !win->x11->dpy || !win->x11->vis)
-		return false;
-	memset(rc, 0, sizeof(*rc));
-	rc->win = pub;
-
-	return true;
-}
-
 void
 win_render_frame(Win *pub)
 {
@@ -783,9 +799,9 @@ win_get_color_handle(Win *pub, uint32 color)
 }
 
 bool
-win_parse_color_string(const RC *rc, const char *name, uint32 *result)
+win_parse_color_string(const Win *pub, const char *name, uint32 *result)
 {
-	const WinData *win = (const WinData *)rc->win;
+	const WinData *win = (const WinData *)pub;
 	XColor xcolor = { 0 };
 
 	if (!XParseColor(win->x11->dpy, win->colormap, name, &xcolor)) {

@@ -276,7 +276,7 @@ term_get_cursor(const Term *term)
 	cursor.col = term->x;
 	cursor.row = toclip(term, term->y);
 	cursor.shape = term->cursor.shape;
-	cursor.isvisible = (
+	cursor.visible = (
 		(!(term->cursor.flags & CURSOR_HIDDEN)) &&
 		(cursor.col < term->maxcols) &&
 		(cursor.row < term->maxrows)
@@ -865,7 +865,7 @@ term_print_summary(const Term *term, uint flags)
 			print_("color", "[ #%08X, #%08X ] | #%08X", cell.bg, cell.fg, cursor.color);
 			print_("style", "%u", cursor.shape);
 			print_("wrap", "%d", !!(term->cursor.flags & CURSOR_WRAPNEXT));
-			print_("visible", "%d", cursor.isvisible);
+			print_("visible", "%d", cursor.visible);
 			n--;
 		}
 	}

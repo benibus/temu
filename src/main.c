@@ -6,6 +6,7 @@
 #include "utils.h"
 #include "term.h"
 #include "window.h"
+#include "fonts.h"
 
 #define MAX_CFG_COLORS (2+16)
 
@@ -30,7 +31,6 @@ typedef struct Config {
 
 typedef struct Client_ {
 	Win *win;
-	RC rc;
 	Term *term;
 	struct {
 		double min;
@@ -41,7 +41,7 @@ typedef struct Client_ {
 
 static Client client_;
 
-static FontFace *fonts[4];
+static FontID fonts[4];
 static bool toggle_render = true;
 
 static void run(Client *);
@@ -117,28 +117,26 @@ error_invalid:
 
 	struct TermConfig tc = { 0 };
 	Win *win;
-	RC rc = { 0 };
 
 	// temporary
 	srand(time_get_mono_msec(NULL));
 
 	if (!(win = win_create_client()))
 		return 2;
-	if (!win_init_render_context(win, &rc))
-		return 3;
 
-	fonts[0] = font_create_face(&rc, config.font);
+	fonts[0] = font_create(win, config.font);
 	if (!fonts[0]) {
 		errfatal(1, "Failed to create default font");
 	} else {
-		fonts[ATTR_BOLD] = font_create_derived_face(fonts[0], STYLE_BOLD);
-		fonts[ATTR_ITALIC] = font_create_derived_face(fonts[0], STYLE_ITALIC);
-		fonts[ATTR_BOLD|ATTR_ITALIC] = font_create_derived_face(fonts[0], STYLE_BOLD|STYLE_ITALIC);
+		fonts[ATTR_BOLD] = font_create_derivative(fonts[0], STYLE_BOLD);
+		fonts[ATTR_ITALIC] = font_create_derivative(fonts[0], STYLE_ITALIC);
+		fonts[ATTR_BOLD|ATTR_ITALIC] = font_create_derivative(fonts[0], STYLE_BOLD|STYLE_ITALIC);
 	}
 
 	for (int i = 0; i < 4; i++) {
 		ASSERT(fonts[i]);
-		if (!font_init_face(fonts[i])) {
+		dbgprintf("Initializing font[%d] = %#.08x\n", i, fonts[i]);
+		if (!font_init(fonts[i])) {
 			dbgprintfl("Failed to initialize font %d", i);
 		}
 	}
@@ -153,17 +151,18 @@ error_invalid:
 		case 1:  dst = &tc.color_fg;  break;
 		default: dst = &tc.colors[i-2]; break;
 		}
-		if (!win_parse_color_string(&rc, config.colors[i], dst)) {
+		if (!win_parse_color_string(win, config.colors[i], dst)) {
 			dbgprintf("failed to parse RGB string: %s\n", config.colors[i]);
 			exit(EXIT_FAILURE);
 		}
 	}
 
 	{
-		FontMetrics metrics = { 0 };
-		font_get_face_metrics(fonts[0], &metrics);
-		tc.colsize = metrics.width;
-		tc.rowsize = metrics.ascent + metrics.descent;
+		int width, height, ascent, descent;
+
+		font_get_extents(fonts[0], &width, &height, &ascent, &descent);
+		tc.colsize = width;
+		tc.rowsize = height;
 	}
 
 	{
@@ -204,12 +203,7 @@ error_invalid:
 	win->events.resize = event_resize;
 	win_show_client(win);
 
-	rc.font = fonts[0];
-	rc.color.bg = client_.term->color_bg;
-	rc.color.fg = client_.term->color_fg;
-
 	client_.win = win;
-	client_.rc  = rc;
 	client_.latency.min = config.latency.min;
 	client_.latency.max = config.latency.max;
 	client_.scrollinc = DEFAULT(config.scrollinc, 1);
@@ -286,13 +280,12 @@ void
 client_draw_screen(Client *client)
 {
 	Win *win = client->win;
-	RC *rc = &client->rc;
 	Term *term = client->term;
 
 #define ROWBUF_MAX 256
 	GlyphRender glyphs[ROWBUF_MAX] = { 0 };
 
-	draw_rect(rc, pack_xrgb(term->color_bg, 0xff), 0, 0, win->w, win->h);
+	draw_rect(win, pack_xrgb(term->color_bg, 0xff), 0, 0, win->w, win->h);
 
 	for (int row = 0; row < term->maxrows; row++) {
 		const Cell *cells = term_get_row(term, row);
@@ -315,7 +308,7 @@ client_draw_screen(Client *client)
 			glyphs[col].fg = pack_xrgb(cell.fg, 0xff);
 		}
 
-		draw_text_utf8(rc, glyphs, len, win->bw, win->bw + row * term->rowsize);
+		draw_text_utf8(win, glyphs, len, win->bw, win->bw + row * term->rowsize);
 	}
 #undef ROWBUF_MAX
 
@@ -333,7 +326,7 @@ client_draw_cursor(const Client *client)
 
 	Cursor cursor = term_get_cursor(term);
 
-	if (cursor.isvisible) {
+	if (cursor.visible) {
 		Cell cell = term_get_cell(term, cursor.col, cursor.row);
 
 		GlyphRender glyph = {
@@ -342,7 +335,7 @@ client_draw_cursor(const Client *client)
 		};
 
 		draw_rect(
-			&client->rc, pack_xrgb(term->color_bg, 0xff),
+			client->win, pack_xrgb(term->color_bg, 0xff),
 			win->bw + cursor.col * term->colsize,
 			win->bw + cursor.row * term->rowsize,
 			term->colsize,
@@ -355,12 +348,12 @@ client_draw_cursor(const Client *client)
 			glyph.bg = 0;
 			glyph.fg = pack_xrgb(cell.fg, 0xff);
 			draw_text_utf8(
-				&client->rc, &glyph, 1,
+				client->win, &glyph, 1,
 				win->bw + cursor.col * term->colsize,
 				win->bw + cursor.row * term->rowsize
 			);
 			draw_rect(
-				&client->rc, pack_xrgb(cursor.color, 0xff),
+				client->win, pack_xrgb(cursor.color, 0xff),
 				win->bw + cursor.col * term->colsize,
 				win->bw + cursor.row * term->rowsize,
 				2, term->rowsize
@@ -370,7 +363,7 @@ client_draw_cursor(const Client *client)
 			glyph.bg = pack_xrgb(term->color_fg, 0xff);
 			glyph.fg = pack_xrgb(term->color_bg, 0xff);
 			draw_text_utf8(
-				&client->rc, &glyph, 1,
+				client->win, &glyph, 1,
 				win->bw + cursor.col * term->colsize,
 				win->bw + cursor.row * term->rowsize
 			);
@@ -379,16 +372,18 @@ client_draw_cursor(const Client *client)
 			glyph.bg = 0;
 			glyph.fg = pack_xrgb(cell.fg, 0xff);
 			draw_text_utf8(
-				&client->rc, &glyph, 1,
+				client->win, &glyph, 1,
 				win->bw + cursor.col * term->colsize,
 				win->bw + cursor.row * term->rowsize
 			);
 			draw_rect(
-				&client->rc, pack_xrgb(term->color_fg, 0xff),
+				client->win, pack_xrgb(term->color_fg, 0xff),
 				win->bw + cursor.col * term->colsize,
 				win->bw + (cursor.row + 1) * term->rowsize - 2,
 				term->colsize, 2
 			);
+			break;
+		default:
 			break;
 		}
 	}
