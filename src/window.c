@@ -181,13 +181,11 @@ x11_get_pixel_format(const X11 *x11)
 {
 	switch (XRenderQuerySubpixelOrder(x11->dpy, x11->screen)) {
 	case SubPixelHorizontalRGB:
-		return PixelFormatHRGB24;
 	case SubPixelHorizontalBGR:
-		return PixelFormatHBGR24;
+		return PixelFormatLCDH;
 	case SubPixelVerticalRGB:
-		return PixelFormatVRGB24;
 	case SubPixelVerticalBGR:
-		return PixelFormatVBGR24;
+		return PixelFormatLCDV;
 	case SubPixelNone:
 		return PixelFormatNone;
 	case SubPixelUnknown:
@@ -195,6 +193,12 @@ x11_get_pixel_format(const X11 *x11)
 	}
 
 	return PixelFormatUnknown;
+}
+
+void *
+platform_get_display(void)
+{
+	return g_x11.dpy;
 }
 
 PixelFormat

@@ -47,4 +47,6 @@ typedef struct {
 
 #define XRENDER_COLOR(color) XRENDER_ARGB(color)
 
+void *platform_get_display(void);
+
 #endif

@@ -7,18 +7,12 @@
 
 typedef enum {
 	PixelFormatNone,
-	PixelFormatA8,
-	PixelFormatA1,
-	PixelFormatRGB24,
-	PixelFormatBGR24,
-	PixelFormatRGBA32,
-	PixelFormatARGB32,
-	PixelFormatBGRA32,
-	PixelFormatABGR32,
-	PixelFormatHRGB24,
-	PixelFormatHBGR24,
-	PixelFormatVRGB24,
-	PixelFormatVBGR24,
+	PixelFormatMono,
+	PixelFormatAlpha,
+	PixelFormatRGB,
+	PixelFormatRGBA,
+	PixelFormatLCDH,
+	PixelFormatLCDV,
 	PixelFormatUnknown,
 	PixelFormatCount
 } PixelFormat;
@@ -52,8 +46,8 @@ typedef struct {
 #define SETPTR(p,v) do { if (p) { *(p) = (v); } } while (0)
 
 typedef struct {
-	uint32 ucs4;
 	uint32 font;
+	uint32 glyph;
 	uint32 fg;
 	uint32 bg;
 } GlyphRender;

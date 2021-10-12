@@ -162,7 +162,7 @@ error_invalid:
 
 		font_get_extents(fonts[0], &width, &height, &ascent, &descent);
 		tc.colsize = width;
-		tc.rowsize = height;
+		tc.rowsize = ascent + descent;
 	}
 
 	{
@@ -283,7 +283,7 @@ client_draw_screen(Client *client)
 	Term *term = client->term;
 
 #define ROWBUF_MAX 256
-	GlyphRender glyphs[ROWBUF_MAX] = { 0 };
+	GlyphRender cmds[ROWBUF_MAX] = { 0 };
 
 	draw_rect(win, pack_xrgb(term->color_bg, 0xff), 0, 0, win->w, win->h);
 
@@ -302,13 +302,17 @@ client_draw_screen(Client *client)
 				SWAP(uint32, cell.bg, cell.fg);
 			}
 
-			glyphs[col].ucs4 = cell.ucs4;
-			glyphs[col].font = fonts[cell.attr & (ATTR_BOLD|ATTR_ITALIC)];
-			glyphs[col].bg = pack_xrgb(cell.bg, (cell.bg != term->color_bg) ? 0xff : 0);
-			glyphs[col].fg = pack_xrgb(cell.fg, 0xff);
+			font_load_codepoint(
+				fonts[cell.attr & (ATTR_BOLD|ATTR_ITALIC)],
+				cell.ucs4,
+				&cmds[col].font,
+				&cmds[col].glyph
+			);
+			cmds[col].bg = pack_xrgb(cell.bg, (cell.bg != term->color_bg) ? 0xff : 0);
+			cmds[col].fg = pack_xrgb(cell.fg, 0xff);
 		}
 
-		draw_text_utf8(win, glyphs, len, win->bw, win->bw + row * term->rowsize);
+		draw_text_utf8(win, cmds, len, win->bw, win->bw + row * term->rowsize);
 	}
 #undef ROWBUF_MAX
 
@@ -329,10 +333,14 @@ client_draw_cursor(const Client *client)
 	if (cursor.visible) {
 		Cell cell = term_get_cell(term, cursor.col, cursor.row);
 
-		GlyphRender glyph = {
-			.ucs4 = cell.ucs4,
-			.font = fonts[cell.attr & (ATTR_BOLD|ATTR_ITALIC)]
-		};
+		GlyphRender cmd = { 0 };
+
+		font_load_codepoint(
+			fonts[cell.attr & (ATTR_BOLD|ATTR_ITALIC)],
+			cell.ucs4,
+			&cmd.font,
+			&cmd.glyph
+		);
 
 		draw_rect(
 			client->win, pack_xrgb(term->color_bg, 0xff),
@@ -345,10 +353,10 @@ client_draw_cursor(const Client *client)
 		switch (cursor.shape) {
 		case CursorShapeDefault:
 		case CursorShapeBar:
-			glyph.bg = 0;
-			glyph.fg = pack_xrgb(cell.fg, 0xff);
+			cmd.bg = 0;
+			cmd.fg = pack_xrgb(cell.fg, 0xff);
 			draw_text_utf8(
-				client->win, &glyph, 1,
+				client->win, &cmd, 1,
 				win->bw + cursor.col * term->colsize,
 				win->bw + cursor.row * term->rowsize
 			);
@@ -360,19 +368,19 @@ client_draw_cursor(const Client *client)
 			);
 			break;
 		case CursorShapeBlock:
-			glyph.bg = pack_xrgb(term->color_fg, 0xff);
-			glyph.fg = pack_xrgb(term->color_bg, 0xff);
+			cmd.bg = pack_xrgb(term->color_fg, 0xff);
+			cmd.fg = pack_xrgb(term->color_bg, 0xff);
 			draw_text_utf8(
-				client->win, &glyph, 1,
+				client->win, &cmd, 1,
 				win->bw + cursor.col * term->colsize,
 				win->bw + cursor.row * term->rowsize
 			);
 			break;
 		case CursorShapeUnderscore:
-			glyph.bg = 0;
-			glyph.fg = pack_xrgb(cell.fg, 0xff);
+			cmd.bg = 0;
+			cmd.fg = pack_xrgb(cell.fg, 0xff);
 			draw_text_utf8(
-				client->win, &glyph, 1,
+				client->win, &cmd, 1,
 				win->bw + cursor.col * term->colsize,
 				win->bw + cursor.row * term->rowsize
 			);

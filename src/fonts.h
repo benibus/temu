@@ -17,9 +17,10 @@ FontID font_create(const Win *, const char *);
 FontID font_create_derivative(FontID, uint);
 void font_destroy(FontID);
 bool font_get_extents(FontID, int *, int *, int *, int *);
+void *font_get_render_data(FontID);
 bool font_init(FontID);
 bool font_query_glyph(FontID, uint32, FontID *, uint32 *);
-bool font_load_glyph(FontID, uint32, FontID *, uint32 *);
+bool font_load_codepoint(FontID, uint32, FontID *, uint32 *);
 void font_print_debug(FontID);
 
 #endif

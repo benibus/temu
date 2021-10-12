@@ -1,6 +1,7 @@
 #include "utils.h"
-#include "x11.h"
+#include "window.h"
 #include "fonts.h"
+#include "render.h"
 
 #include <math.h>
 #include <locale.h>
@@ -30,16 +31,6 @@
 #define FONTATTR_ANTIALIAS (1 << 3)
 
 typedef struct {
-	uint16 width, height;
-	uint16 pitch;
-	PixelFormat format:16;
-	int16 x_advance, y_advance;
-	int16 x_bearing, y_bearing;
-	void *data;
-} BitmapInfo;
-
-typedef struct {
-	Display *dpy; // TEMPORARY
 	char *filepath;
 	uint32 hashval;
 
@@ -55,20 +46,17 @@ typedef struct {
 	FontID parent;
 	FontID *children;
 
-	GlyphSet glyphset;
-	XRenderPictFormat *picformat;
+	GlyphCache *cache;
 
 	uint64 *glyphmap;
 	uint32 basehash;
-
-	BitmapInfo *bitmaps;
 
 	uint num_codepoints;
 	uint num_glyphs;
 	uint num_entries;
 
 	uint16 attrs;
-	int pixelformat;
+	PixelFormat pixelformat;
 
 	float pixelsize;
 	float scale;
@@ -100,7 +88,7 @@ struct FontConfig {
 	double pixelsize;
 	double dpi;
 	double aspect;
-	int pixelformat;
+	int rgba;
 	int spacing_style;
 	int char_width;
 	int hint_style;
@@ -251,14 +239,13 @@ font_init(FontID font)
 	if (!self) {
 		return false;
 	}
-	ASSERT(self->dpy);
 
 	struct FontConfig cfg = { 0 };
 
 	extract_property(self->pattern, FC_PIXEL_SIZE, &cfg.pixelsize);
 	extract_property(self->pattern, FC_DPI,        &cfg.dpi);
 	extract_property(self->pattern, FC_ASPECT,     &cfg.aspect);
-	extract_property(self->pattern, FC_RGBA,       &cfg.pixelformat);
+	extract_property(self->pattern, FC_RGBA,       &cfg.rgba);
 	extract_property(self->pattern, FC_LCD_FILTER, &cfg.lcdfilter);
 	extract_property(self->pattern, FC_MATRIX,     &cfg.matrix);
 	extract_property(self->pattern, FC_EMBOLDEN,   &cfg.use_embolden);
@@ -312,7 +299,7 @@ font_init(FontID font)
 
 	FT_Render_Mode rendermode;
 
-	switch (cfg.pixelformat) {
+	switch (cfg.rgba) {
 	case FC_RGBA_RGB:
 	case FC_RGBA_BGR:
 		rendermode = FT_RENDER_MODE_LCD;
@@ -328,14 +315,14 @@ font_init(FontID font)
 
 	int target = FT_LOAD_TARGET_NORMAL;
 	int loadflags = 0;
-	int picformat = PictStandardA8;
+	PixelFormat pixelformat = PixelFormatAlpha;
 
 	if (hintstyle == FontHintingLight) {
 		if (rendermode == FT_RENDER_MODE_LCD) {
-			picformat = PictStandardARGB32;
+			pixelformat = PixelFormatLCDH;
 			target = FT_LOAD_TARGET_LCD;
 		} else if (rendermode == FT_RENDER_MODE_LCD_V) {
-			picformat = PictStandardARGB32;
+			pixelformat = PixelFormatLCDV;
 			target = FT_LOAD_TARGET_LCD_V;
 		} else {
 			target = FT_LOAD_TARGET_LIGHT;
@@ -346,39 +333,39 @@ font_init(FontID font)
 		loadflags |= FT_LOAD_NO_HINTING;
 	}
 	if (FT_HAS_COLOR(self->face)) {
-		picformat = PictStandardARGB32;
+		pixelformat = PixelFormatRGBA;
 		loadflags |= FT_LOAD_COLOR;
 	} else if (!hintstyle) {
 		loadflags |= FT_LOAD_NO_BITMAP|FT_LOAD_MONOCHROME;
-		picformat = PictStandardA1;
+		pixelformat = PixelFormatMono;
 		target = FT_LOAD_TARGET_MONO;
 		rendermode = FT_RENDER_MODE_MONO;
 	}
 
-	FT_Size_Metrics mtx = self->face->size->metrics;
+	FT_Size_Metrics metrics = self->face->size->metrics;
 	if (memequal(&cfg.matrix, &FTMATRIX_DFL, sizeof(FT_Matrix))) {
-		self->ascent  = +(mtx.ascender >> 6);
-		self->descent = -(mtx.descender >> 6);
-		self->height  = +(mtx.height >> 6);
-		self->max_advance = DEFAULT(cfg.char_width, mtx.max_advance >> 6);
+		self->ascent  = +(metrics.ascender >> 6);
+		self->descent = -(metrics.descender >> 6);
+		self->height  = +(metrics.height >> 6);
+		self->max_advance = DEFAULT(cfg.char_width, metrics.max_advance >> 6);
 
 		BSET(self->attrs, FONTATTR_TRANSFORM, false);
 	} else { // Transform the default metrics
 		FT_Vector v = { 0 };
 
-		v.x = 0, v.y = mtx.ascender;
+		v.x = 0, v.y = metrics.ascender;
 		FT_Vector_Transform(&v, &cfg.matrix);
 		self->ascent = +(v.y >> 6);
 
-		v.x = 0, v.y = mtx.descender;
+		v.x = 0, v.y = metrics.descender;
 		FT_Vector_Transform(&v, &cfg.matrix);
 		self->descent = -(v.y >> 6);
 
-		v.x = 0, v.y = mtx.height;
+		v.x = 0, v.y = metrics.height;
 		FT_Vector_Transform(&v, &cfg.matrix);
 		self->height = +(v.y >> 6);
 
-		v.x = mtx.max_advance, v.y = 0;
+		v.x = metrics.max_advance, v.y = 0;
 		FT_Vector_Transform(&v, &cfg.matrix);
 		self->max_advance = +(v.x >> 6);
 
@@ -396,11 +383,9 @@ font_init(FontID font)
 
 	self->loadflags = loadflags|target;
 	self->rendermode = rendermode;
-	self->pixelformat = cfg.pixelformat;
+	self->pixelformat = pixelformat;
 	self->lcdfilter = cfg.lcdfilter;
 	self->matrix = cfg.matrix;
-
-	self->picformat = XRenderFindStandardFormat(self->dpy, picformat);
 
 	if (!cfg.charset) {
 		cfg.charset = FcFreeTypeCharSet(self->face, NULL);
@@ -414,8 +399,7 @@ font_init(FontID font)
 	if (!font_init_glyphmap(self, self->num_codepoints)) {
 		return false;
 	}
-	self->glyphset = XRenderCreateGlyphSet(self->dpy, self->picformat);
-	self->bitmaps = xcalloc(self->num_glyphs, sizeof(*self->bitmaps));
+	self->cache = glyphcache_create(self->num_glyphs, pixelformat, self->ascent, self->descent);
 
 	// override everything and pre-render the "missing glyph" glyph
 	font_cache_glyph(self, 0);
@@ -424,7 +408,7 @@ font_init(FontID font)
 }
 
 bool
-font_load_glyph(FontID font, uint32 ucs4, FontID *out_font, uint32 *out_glyph)
+font_load_codepoint(FontID font, uint32 ucs4, FontID *out_font, uint32 *out_glyph)
 {
 	FontData *self = font_object(font);
 	ASSERT(self);
@@ -456,9 +440,6 @@ font_cache_glyph(FontData *self, uint32 index)
 	FT_FaceRec *face = self->face;
 	FT_GlyphSlotRec *active = face->glyph;
 
-	static uchar local[4096];
-	uchar *data = local;
-
 	FT_Library_SetLcdFilter(instance.library, self->lcdfilter);
 	{
 		FT_Error err;
@@ -484,78 +465,29 @@ font_cache_glyph(FontData *self, uint32 index)
 
 	ASSERT(face->glyph->format == FT_GLYPH_FORMAT_BITMAP);
 
-	BitmapInfo bitmap = { 0 };
-
-	bitmap.x_advance = self->width; // NOTE(ben): Monospace dependent
-	bitmap.y_advance = 0; // NOTE(ben): Monospace dependent
-	bitmap.x_bearing = -active->bitmap_left;
-	bitmap.y_bearing = +active->bitmap_top;
-	bitmap.width = active->bitmap.width;
-	bitmap.height = active->bitmap.rows;
-	bitmap.pitch = active->bitmap.pitch;
-
-	switch (active->bitmap.pixel_mode) {
-	case FT_PIXEL_MODE_MONO:
-		bitmap.format = PixelFormatA1;
-		bitmap.pitch = ALIGN_UP(bitmap.width, 32) >> 3;
-		break;
-	case FT_PIXEL_MODE_GRAY:
-		bitmap.format = PixelFormatA8;
-		bitmap.pitch = ALIGN_UP(bitmap.width, 4);
-		break;
-	case FT_PIXEL_MODE_BGRA:
-		bitmap.format = PixelFormatBGRA32;
-		bitmap.pitch = bitmap.width;
-	}
-
-	const size_t size = bitmap.pitch * bitmap.height;
-
-	if (size) {
-		if (size > sizeof(local)) {
-			data = xmalloc(size, 1);
-		}
-
-		const uchar *src = active->bitmap.buffer;
-		uchar *dst = data;
-
-		switch (bitmap.format) {
-		case PixelFormatA8:
-			for (int y = 0; y < bitmap.height; y++) {
-				memcpy(dst, src, bitmap.width);
-				src += active->bitmap.pitch;
-				dst += bitmap.pitch;
-			}
-			break;
-		default:
-			// TODO(ben): Figure out endianness and buffer formats for multi/fractional-byte bitmaps
-			if (data != local) {
-				free(data);
-			}
-			return NULL;
-		}
-	}
-
 #if DEBUG_PRINT_GLYPHS
 	dbg_print_freetype_bitmap(face);
 #endif
 
-	XGlyphInfo info = {
-		.width  = bitmap.width,
-		.height = bitmap.height,
-		.x      = bitmap.x_bearing,
-		.y      = bitmap.y_bearing,
-		.xOff   = bitmap.x_advance,
-		.yOff   = bitmap.y_advance
-	};
-	XRenderAddGlyphs(self->dpy, self->glyphset, (Glyph *)&index, &info, 1, (char *)data, size);
+	GlyphInfo info = { 0 };
+	info.x_advance = self->width; // NOTE(ben): Monospace dependent
+	info.y_advance = 0; // NOTE(ben): Monospace dependent
+	info.x_bearing = -active->bitmap_left;
+	info.y_bearing = +active->bitmap_top;
+	info.width = active->bitmap.width;
+	info.height = active->bitmap.rows;
+	info.pitch = active->bitmap.pitch;
 
-	if (data != local) {
-		free(data);
+	switch (active->bitmap.pixel_mode) {
+	case FT_PIXEL_MODE_MONO: info.format = PixelFormatMono;  break;
+	case FT_PIXEL_MODE_BGRA: info.format = PixelFormatRGBA;  break;
+	case FT_PIXEL_MODE_GRAY: info.format = PixelFormatAlpha; break;
+	default: info.format = PixelFormatAlpha; break;
 	}
 
-	memcpy(self->bitmaps + index, &bitmap, sizeof(*self->bitmaps));
+	void *result = glyphcache_submit_bitmap(self->cache, index, active->bitmap.buffer, info);
 
-	return self->bitmaps + index;
+	return result;
 }
 
 bool
@@ -705,17 +637,15 @@ void
 font_free_glyphs(FontData *target)
 {
 	if (target) {
-		XRenderFreeGlyphSet(target->dpy, target->glyphset);
 		FcCharSetDestroy(target->charset);
 		FREE(target->glyphmap);
-		FREE(target->bitmaps);
+		glyphcache_destroy(target->cache);
 	}
 }
 
 FontID
-font_create(const Win *pub, const char *name)
+font_create(const Win *win, const char *name)
 {
-	const WinData *win = (const WinData *)pub;
 	ASSERT(win);
 
 	struct { FcPattern *base, *conf, *match; } pattern;
@@ -737,15 +667,14 @@ if (FcPatternGet((pat), (obj), 0, &dummy) == FcResultNoMatch) { \
 	FcPatternAdd##T_((pat), (obj), (val));                      \
 }
 	// Set the our overrides if the user didn't specify them
-	SETDFL(pattern.conf, Double,  FC_DPI, win->x11->dpi);
+	// TODO(ben): Get DPI from the platform
+	SETDFL(pattern.conf, Double,  FC_DPI, 96.f);
 	if (FcPatternGet(pattern.conf, FC_RGBA, 0, &dummy) == FcResultNoMatch) {
 		int order;
-		switch (platform_get_pixel_format(&win->pub)) {
-			case PixelFormatNone:   order = FC_RGBA_NONE; break;
-			case PixelFormatHRGB24: order = FC_RGBA_RGB;  break;
-			case PixelFormatHBGR24: order = FC_RGBA_BGR;  break;
-			case PixelFormatVRGB24: order = FC_RGBA_VRGB; break;
-			case PixelFormatVBGR24: order = FC_RGBA_VBGR; break;
+		switch (platform_get_pixel_format(win)) {
+			case PixelFormatNone: order = FC_RGBA_NONE; break;
+			case PixelFormatLCDH: order = FC_RGBA_RGB;  break;
+			case PixelFormatLCDV: order = FC_RGBA_VRGB; break;
 			default: order = FC_RGBA_UNKNOWN;
 		}
 		FcPatternAddInteger(pattern.conf, FC_RGBA, order);
@@ -778,11 +707,6 @@ if (FcPatternGet((pat), (obj), 0, &dummy) == FcResultNoMatch) { \
 
 	FontID font = font_insert(pattern.match);
 	FontData *self = font_object(font);
-
-	if (self && !self->dpy) {
-		ASSERT(font);
-		self->dpy = win->x11->dpy;
-	}
 
 #if DEBUG_PRINT_PATTERN
 	font_print_debug(font);
@@ -823,10 +747,6 @@ font_create_derivative(FontID basefont, uint style)
 	FontID font = font_insert(pattern.match);
 	FontData *self = font_object(font);
 
-	if (self && !self->dpy) {
-		self->dpy = data->dpy;
-	}
-
 #if DEBUG_PRINT_PATTERN
 	font_print_debug(font);
 #endif
@@ -834,141 +754,14 @@ font_create_derivative(FontID basefont, uint style)
 	return font;
 }
 
-void
-draw_rect(const Win *pub, uint32 color, int x_, int y_, int w_, int h_)
+void *
+font_get_render_data(FontID font)
 {
-	WinData *win = (WinData *)pub;
+	FontData *self = font_object(font);
 
-	int x = CLAMP(x_, 0, (int)win->pub.w);
-	int y = CLAMP(y_, 0, (int)win->pub.h);
-	int w = CLAMP(x + w_, x, (int)win->pub.w) - x;
-	int h = CLAMP(y + h_, y, (int)win->pub.h) - y;
+	if (!self) return NULL;
 
-	XRenderFillRectangle(win->x11->dpy,
-	                     PictOpOver,
-	                     win->pic,
-	                     &XRENDER_COLOR(color),
-	                     x, y, w, h);
-}
-
-void
-draw_text_utf8(const Win *pub, const GlyphRender *glyphs, uint max, int x, int y)
-{
-	ASSERT(pub);
-	WinData *win = (WinData *)pub;
-
-	if (!max || !glyphs) return;
-
-	struct {
-		FontID font;
-		uint32 bg;
-		uint32 fg;
-	} brush = { 0 };
-	struct {
-		int x0, y0, x1, y1; // current region (in pixels)
-		int dx, dy;         // advance of previous glyph
-		int kx, ky;         // constant offset from start of region
-	} pos = { 0 };
-	struct { uint32 buf[2048]; uint n; } text = { 0 };
-	struct { XGlyphElt32 buf[32]; uint n; } elts = { 0 };
-
-	brush.bg = glyphs[0].bg;
-	brush.fg = glyphs[0].fg;
-	brush.font = glyphs[0].font;
-
-	pos.x1 = pos.x0 = x;
-	pos.y1 = pos.y0 = y;
-	pos.dx = pos.x1 - pos.x0;
-	pos.dy = pos.y1 - pos.y0;
-
-	bool flushed = true;
-
-	for (uint i = 0; i < max; i++) {
-		FontID font, glyph;
-		font_load_glyph(brush.font, glyphs[i].ucs4, &font, &glyph);
-
-		const FontData *self = font_object(font);
-		ASSERT(self);
-
-		const BitmapInfo *bitmap = self->bitmaps + glyph;
-
-		int chdx = bitmap->x_advance;
-		int chdy = bitmap->y_advance;
-		int adjx = 0;
-		int adjy = 0;
-
-		// We keep accumulating elts until the brush changes, then "flush".
-		// Glyphs with different metrics can be drawn in bulk, but
-		// using a different font/color requires a separate draw call
-		if (flushed || pos.dx != chdx || pos.dy != chdy) {
-			// get next elt if new metrics
-			elts.n += !flushed;
-			elts.buf[elts.n].chars = &text.buf[text.n];
-			pos.x0 = pos.x1;
-			pos.y0 = pos.y1;
-			pos.kx = 0;
-			pos.ky = self->ascent;
-		}
-		// Elt positions must be specified relative to the previous elt in the array.
-		// This is why only the first elt (per draw call) receives the offset from
-		// the drawing orgin
-		if (pos.x1 != pos.x0 || pos.y1 != pos.y0) {
-			adjx = chdx - pos.dx;
-			adjy = chdy - pos.dy;
-		}
-
-		elts.buf[elts.n].xOff = pos.x0 + pos.kx + adjx;
-		elts.buf[elts.n].yOff = pos.y0 + pos.ky + adjy;
-		elts.buf[elts.n].glyphset = self->glyphset;
-		elts.buf[elts.n].nchars++;
-		text.buf[text.n++] = glyph;
-
-		flushed = false;
-		// accumulate position so we can set the new leading elt after drawing
-		pos.x1 += (pos.dx = chdx);
-		pos.y1 += (pos.dy = chdy);
-
-		// If none of the local buffers are at capacity, keep going.
-		// Otherwise, just draw now and reset everything at the new orgin
-		if (i + 1 < max && elts.n < LEN(elts.buf) && text.n < LEN(text.buf)) {
-			if (glyphs[i+1].fg == brush.fg &&
-			    glyphs[i+1].bg == brush.bg &&
-			    glyphs[i+1].font == font)
-			{
-				continue;
-			}
-		}
-
-		if (brush.bg >> 24) {
-			draw_rect(&win->pub,
-				brush.bg,
-				pos.x0,
-				pos.y0,
-				pos.x1 - pos.x0,
-				self->ascent + self->descent
-			);
-		}
-
-		// render elt buffer
-		XRenderCompositeText32(win->x11->dpy,
-			               PictOpOver,
-			               win_get_color_handle(&win->pub, brush.fg),
-			               win->pic,
-			               self->picformat,
-			               0, 0,
-			               elts.buf[0].xOff,
-			               elts.buf[0].yOff,
-			               elts.buf, elts.n + 1);
-
-		// finalize draw, reset buffers
-		if (i + 1 < max) {
-			memset(elts.buf, 0, sizeof(*elts.buf) * (elts.n + 1));
-			text.n = elts.n = 0, flushed = true;
-			brush.fg = glyphs[i+1].fg;
-			brush.bg = glyphs[i+1].bg;
-			brush.font = glyphs[i+1].font;
-		}
-	}
+	return self->cache;
 }
 
 void
