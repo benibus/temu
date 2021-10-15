@@ -202,7 +202,6 @@ term_init(Term *term, struct TermConfig config)
 	term->cell.fg = term->color_fg;
 	term->cell.attrs = 0;
 
-	term->generic = config.generic;
 	term->colsize = config.colsize;
 	term->rowsize = config.rowsize;
 
@@ -227,11 +226,12 @@ term_destroy(Term *term)
 int
 term_exec(Term *term, const char *shell)
 {
-	if (!term->pty.mfd && pty_init(term, shell) > 0) {
-		pty_resize(term, term->cols, term->rows);
+	if (!term->pid) {
+		term->pid = pty_init(shell, &term->mfd, &term->sfd);
+		pty_resize(term->mfd, term->cols, term->rows, term->colsize, term->rowsize);
 	}
 
-	return term->pty.mfd;
+	return term->mfd;
 }
 
 Cell *
@@ -245,13 +245,19 @@ term_get_framebuffer(Term *term)
 size_t
 term_push(Term *term, const char *str, size_t len)
 {
-	return pty_write(term, str, len);
+	return pty_write(term->mfd, (const uchar *)str, len);
 }
 
 size_t
 term_pull(Term *term)
 {
-	return pty_read(term);
+	size_t result = pty_read(term->mfd, term->input, LEN(term->input));
+
+	if (result) {
+		term_consume(term, term->input, result);
+	}
+
+	return result;
 }
 
 void
@@ -308,7 +314,7 @@ term_resize(Term *term, int cols, int rows)
 		term->cols = cols;
 		term->rows = rows;
 
-		pty_resize(term, cols, rows);
+		pty_resize(term->mfd, cols, rows, term->colsize, term->rowsize);
 	}
 }
 
@@ -341,11 +347,11 @@ term_get_cell(const Term *term, int col, int row)
 bool
 term_get_cursor(const Term *term, Cursor *cursor)
 {
-	if (!term->cursor.hidden && check_visible(term->ring, term->x, term->y)) {
+	if (!term->hidecursor && check_visible(term->ring, term->x, term->y)) {
 		if (cursor) {
 			cursor->col = term->x;
 			cursor->row = term->y;
-			cursor->style = term->cursor.style;
+			cursor->style = term->crs_style;
 			cursor->color = term->color_fg;
 		}
 
@@ -371,7 +377,7 @@ term_consume(Term *term, const uchar *str, size_t len)
 
 		term->parser.state = result.state;
 
-#if 1
+#if 0
 #define DBGOPT_PRINT_INPUT 1
 		{
 			const char *tmp = charstring(str[i]);
@@ -402,11 +408,11 @@ void
 write_codepoint(Term *term, uint32 ucs4, CellType type)
 {
 	if (term->x + 1 < term->cols) {
-		term->wrap_next = false;
-	} else if (!term->wrap_next) {
-		term->wrap_next = true;
+		term->wrapnext = false;
+	} else if (!term->wrapnext) {
+		term->wrapnext = true;
 	} else {
-		term->wrap_next = false;
+		term->wrapnext = false;
 		row_set_wrap(term->ring, term->y, true);
 		if (term->y + 1 == term->rows) {
 			ring_move_screen_head(term->ring, 1);
@@ -427,7 +433,7 @@ write_codepoint(Term *term, uint32 ucs4, CellType type)
 		.type  = type
 	};
 
-	if (!term->wrap_next) {
+	if (!term->wrapnext) {
 		ASSERT(term->x + 1 < term->cols);
 		term->x++;
 	}
@@ -497,7 +503,7 @@ set_cursor_row(Term *term, int row)
 void
 set_cursor_visibility(Term *term, bool ishidden)
 {
-	term->cursor.hidden = ishidden;
+	term->hidecursor = ishidden;
 }
 
 void
@@ -506,7 +512,7 @@ set_cursor_style(Term *term, int style)
 	ASSERT(style >= 0);
 
 	if (style <= 7) {
-		term->cursor.style = style;
+		term->crs_style = style;
 	}
 }
 

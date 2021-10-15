@@ -53,7 +53,7 @@ static void event_resize(void *, int, int);
 int
 main(int argc, char **argv)
 {
-	for (int opt; (opt = getopt(argc, argv, "T:N:C:f:c:r:x:y:b:m:s:")) != -1; ) {
+	for (int opt; (opt = getopt(argc, argv, "T:N:C:S:f:c:r:x:y:b:m:s:")) != -1; ) {
 		union {
 			char *s;
 			long n;
@@ -65,6 +65,7 @@ main(int argc, char **argv)
 		case 'T': config.wm_title = optarg; break;
 		case 'N': config.wm_instance = optarg; break;
 		case 'C': config.wm_class = optarg; break;
+		case 'S': config.shell = optarg; break;
 		case 'f': config.font = optarg; break;
 		case 'c':
 			arg.n = strtol(optarg, &errp, 10);
@@ -189,7 +190,6 @@ error_invalid:
 	ASSERT(tc.rows == (int)config.rows);
 #endif
 
-	tc.generic = &client_;
 	tc.shell = config.shell;
 	tc.histlines = MAX(config.histsize, tc.rows);
 	tc.tabcols = DEFAULT(config.tablen, 8);

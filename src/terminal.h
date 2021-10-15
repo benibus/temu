@@ -30,7 +30,6 @@ typedef struct {
 } Cursor;
 
 struct TermConfig {
-	void *generic;
 	char *shell;
 	uint16 cols, rows;
 	uint16 colsize, rowsize;
@@ -41,25 +40,13 @@ struct TermConfig {
 	uint32 colors[16];
 };
 
-typedef struct PTY {
-	int pid;
-	int mfd, sfd;
-	uchar buf[4096];
-	uint size;
-} PTY;
-
-typedef struct Parser {
-	uint state;      // Current FSM state
-	uint32 ucs4;     // Current codepoint being decoded
-	uchar *data;     // Dynamic buffer for OSC/DCS/APC string sequences
-	uchar tokens[2]; // Stashed intermediate tokens
-	int depth;       // Intermediate token index
-	int argv[16];    // Numeric parameters
-	int argi;        // Numeric parameter index
-} Parser;
+#define IOBUF_MAX 4096
 
 typedef struct {
-	void *generic;
+	int pid;                // PTY PID
+	int mfd;                // PTY master file descriptor
+	int sfd;                // PTY slave file descriptor
+	uchar input[IOBUF_MAX]; // PTY input buffer
 
 	Ring *ring;
 	uint8 *tabstops;
@@ -77,24 +64,33 @@ typedef struct {
 	int x;
 	int y;
 
-	bool wrap_next;
+	bool wrapnext;
+	bool hidecursor;
 
 	Cell *framebuf;
 	Cell cell;
+	CursorStyle crs_style;
+	uint32 crs_color;
 
-	struct {
-		uint32 color;
-		CursorStyle style;
-		bool hidden;
-	} cursor;
+	/* struct { */
+	/* 	uint32 color; */
+	/* 	CursorStyle style; */
+	/* 	bool hidden; */
+	/* } cursor; */
 
 	uint32 color_bg;
 	uint32 color_fg;
 	uint32 colors[16];
 
-	PTY pty;
-
-	Parser parser;
+	struct Parser {
+		uint state;      // Current FSM state
+		uint32 ucs4;     // Current codepoint being decoded
+		uchar *data;     // Dynamic buffer for OSC/DCS/APC string sequences
+		uchar tokens[2]; // Stashed intermediate tokens
+		int depth;       // Intermediate token index
+		int argv[16];    // Numeric parameters
+		int argi;        // Numeric parameter index
+	} parser;
 } Term;
 
 Term *term_create(struct TermConfig);

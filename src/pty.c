@@ -2,6 +2,7 @@
 #include "terminal.h"
 #include "pty.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <pwd.h>
 #include <unistd.h>
@@ -16,136 +17,146 @@
 #include <pty.h>
 #endif
 
-#define WRITE_LIMIT 1024
+#define fatal(s) (perror(s), exit((errno) ? errno : EXIT_FAILURE))
 
 static void sys_sigchld(int);
 
 int
-pty_init(Term *term, const char *shell)
+pty_init(const char *shell, int *mfd_, int *sfd_)
 {
-	struct PTY *pty = &term->pty;
-	const char *cmd = (shell) ? shell : "/bin/dash";
-	char *args[] = { NULL };
+	int pid = 0;
+	int mfd = 0;
+	int sfd = 0;
 
-	if (openpty(&pty->mfd, &pty->sfd, NULL, NULL, NULL) < 0) {
-		errfatal(1, "openpty()");
+	if (openpty(&mfd, &sfd, NULL, NULL, NULL) < 0) {
+		fatal("openpty()");
 	}
 
-	switch ((pty->pid = fork())) {
+	switch ((pid = fork())) {
 	case -1: // fork failed
-		errfatal(1, "fork()");
-		break;
-	case 0: // child process
+		fatal("fork()");
+	case 0: { // child process
 		setsid();
 
-		dup2(pty->sfd, 0);
-		dup2(pty->sfd, 1);
-		dup2(pty->sfd, 2);
+		dup2(sfd, 0);
+		dup2(sfd, 1);
+		dup2(sfd, 2);
 
-		if (ioctl(pty->sfd, TIOCSCTTY, NULL) < 0) {
-			errfatal(1, "ioctl()");
+		if (ioctl(sfd, TIOCSCTTY, NULL) < 0) {
+			fatal("ioctl");
 		}
-		close(pty->sfd);
-		close(pty->mfd);
-		{
-			// execute shell
-			setenv("SHELL", cmd, 1);
 
-			// TODO(ben): Move to non-deprecated sigaction API
-			signal(SIGCHLD, SIG_DFL);
-			signal(SIGHUP,  SIG_DFL);
-			signal(SIGINT,  SIG_DFL);
-			signal(SIGQUIT, SIG_DFL);
-			signal(SIGTERM, SIG_DFL);
-			signal(SIGALRM, SIG_DFL);
+		close(sfd);
+		close(mfd);
 
-			execvp(cmd, args);
-
-			_exit(1);
+		const struct passwd *pwd = getpwuid(getuid());
+		if (!pwd) {
+			fatal("getpwuid()");
 		}
+
+		if (!shell || !*shell) {
+			shell = getenv("SHELL");
+			if (!shell || !*shell) {
+				shell = pwd->pw_shell;
+				if (!shell || !*shell) {
+					shell = "/bin/sh";
+				}
+			}
+		}
+
+		// execute shell
+		setenv("SHELL",   shell, 1);
+		setenv("USER",    pwd->pw_name, 1);
+		setenv("LOGNAME", pwd->pw_name, 1);
+		setenv("HOME",    pwd->pw_dir, 1);
+
+		// TODO(ben): Move to non-deprecated sigaction API
+		signal(SIGCHLD, SIG_DFL);
+		signal(SIGHUP,  SIG_DFL);
+		signal(SIGINT,  SIG_DFL);
+		signal(SIGQUIT, SIG_DFL);
+		signal(SIGTERM, SIG_DFL);
+		signal(SIGALRM, SIG_DFL);
+
+		execlp(shell, shell, (char *)NULL);
+
+		_exit(1);
 		break;
+	}
 	default: // parent process
-		close(pty->sfd);
+		close(sfd);
 		signal(SIGCHLD, sys_sigchld);
 		break;
 	}
 
-	return pty->mfd;
+	*mfd_ = mfd;
+	*sfd_ = sfd;
+
+	return pid;
 }
 
 size_t
-pty_read(Term *term)
+pty_read(int mfd, uchar *buf, size_t len)
 {
-	struct PTY *pty = &term->pty;
+	ASSERT(mfd > 0);
 
-	int count = read(
-		pty->mfd,
-		pty->buf + pty->size,
-		LEN(pty->buf) - pty->size
-	);
+	ssize_t result = read(mfd, buf, len);
 
-	switch (count) {
-	case  0: exit(0);
-	case -1: errfatal(EXIT_FAILURE, "pty_read()");
+	switch (result) {
+	case  0:
+		exit(0);
+	case -1:
+		fatal("read()");
 	default:
-		pty->size += count;
-		pty->size -= term_consume(term, pty->buf, pty->size);
-		ASSERT(!pty->size);
 		break;
 	}
 
-	return count;
+	return result;
 }
 
 size_t
-pty_write(Term *term, const char *str, size_t len)
+pty_write(int mfd, const uchar *buf, size_t len)
 {
-	const struct PTY *pty = &term->pty;
-	fd_set fds_r, fds_w;
-	size_t i = 0, rem = WRITE_LIMIT;
-	ssize_t n; // write() return value
+	ASSERT(mfd > 0);
 
-	while (i < len) {
-		FD_ZERO(&fds_r);
-		FD_ZERO(&fds_w);
-		FD_SET(pty->mfd, &fds_r);
-		FD_SET(pty->mfd, &fds_w);
+	size_t idx = 0;
+	fd_set wset;
 
-		if (pselect(pty->mfd + 1, &fds_r, &fds_w, NULL, NULL, NULL) < 0) {
-			errfatal(1, "pselect()");
+	while (idx < len) {
+		FD_ZERO(&wset);
+		FD_SET(mfd, &wset);
+
+		if (pselect(mfd + 1, NULL, &wset, NULL, NULL, NULL) < 0) {
+			fatal("pselect()");
 		}
-		if (FD_ISSET(pty->mfd, &fds_w)) {
-			n = write(pty->mfd, &str[i], MIN(len-i, rem));
-			if (n < 0) {
-				errfatal(1, "write()");
+
+		if (FD_ISSET(mfd, &wset)) {
+			ssize_t result = write(mfd, buf + idx, len - idx);
+			if (result < 0) {
+				fatal("write()");
 			}
-			if (i + n < len) {
-				if (len - i < rem) {
-					rem = pty_read(term);
-				}
-			}
-			i += n;
-		}
-		if (i < len && FD_ISSET(pty->mfd, &fds_r)) {
-			rem = pty_read(term);
+
+			idx += result;
 		}
 	}
 
-	return i;
+	return idx;
 }
 
 void
-pty_resize(const Term *term, int cols, int rows)
+pty_resize(int mfd, int cols, int rows, int colsize, int rowsize)
 {
-	struct winsize region = {
+	ASSERT(mfd > 0);
+
+	struct winsize spec = {
 		.ws_col = cols,
 		.ws_row = rows,
-		.ws_xpixel = cols * term->colsize,
-		.ws_ypixel = rows * term->rowsize
+		.ws_xpixel = cols * colsize,
+		.ws_ypixel = rows * rowsize
 	};
 
-	if (ioctl(term->pty.mfd, TIOCSWINSZ, &region) < 0) {
-		fprintf(stderr, "ERROR: pty_resize() - ioctl() failure\n");
+	if (ioctl(mfd, TIOCSWINSZ, &spec) < 0) {
+		perror("ioctl()");
 	}
 }
 
