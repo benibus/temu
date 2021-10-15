@@ -2,7 +2,7 @@
 #define PTY_H__
 
 #include "defs.h"
-#include "term.h"
+#include "terminal.h"
 
 int pty_init(Term *, const char *);
 size_t pty_read(Term *);

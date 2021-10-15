@@ -4,7 +4,7 @@
 #include <time.h>
 
 #include "utils.h"
-#include "term.h"
+#include "terminal.h"
 #include "window.h"
 #include "fonts.h"
 
@@ -191,7 +191,7 @@ error_invalid:
 
 	tc.generic = &client_;
 	tc.shell = config.shell;
-	tc.maxhist = MAX(config.histsize, tc.rows);
+	tc.histlines = MAX(config.histsize, tc.rows);
 	tc.tabcols = DEFAULT(config.tablen, 8);
 
 	if (!(client_.term = term_create(tc))) {
@@ -209,6 +209,8 @@ error_invalid:
 	client_.scrollinc = DEFAULT(config.scrollinc, 1);
 
 	run(&client_);
+
+	term_destroy(client_.term);
 
 	return 0;
 }
@@ -287,23 +289,24 @@ client_draw_screen(Client *client)
 
 	draw_rect(win, pack_xrgb(term->color_bg, 0xff), 0, 0, win->w, win->h);
 
-	for (int row = 0; row < term->maxrows; row++) {
-		const Cell *cells = term_get_row(term, row);
+	const Cell *framebuf = term_get_framebuffer(term);
+	ASSERT(framebuf);
+
+	for (int row = 0; row < term->rows; row++) {
+		const Cell *cells = framebuf + row * term->cols;
 		int len = 0;
 
-		if (!cells) { continue; }
-
-		for (int col = 0; col < term->maxcols && col < ROWBUF_MAX; len++, col++) {
+		for (int col = 0; col < term->cols && col < ROWBUF_MAX; len++, col++) {
 			Cell cell = cells[col];
 
 			if (!cell.ucs4) break;
 
-			if (cell.attr & ATTR_INVERT) {
+			if (cell.attrs & ATTR_INVERT) {
 				SWAP(uint32, cell.bg, cell.fg);
 			}
 
 			font_load_codepoint(
-				fonts[cell.attr & (ATTR_BOLD|ATTR_ITALIC)],
+				fonts[cell.attrs & (ATTR_BOLD|ATTR_ITALIC)],
 				cell.ucs4,
 				&cmds[col].font,
 				&cmds[col].glyph
@@ -312,7 +315,9 @@ client_draw_screen(Client *client)
 			cmds[col].fg = pack_xrgb(cell.fg, 0xff);
 		}
 
-		draw_text_utf8(win, cmds, len, win->bw, win->bw + row * term->rowsize);
+		if (len) {
+			draw_text_utf8(win, cmds, len, win->bw, win->bw + row * term->rowsize);
+		}
 	}
 #undef ROWBUF_MAX
 
@@ -328,15 +333,15 @@ client_draw_cursor(const Client *client)
 	const Win *win = client->win;
 	const Term *term = client->term;
 
-	Cursor cursor = term_get_cursor(term);
+	Cursor cursor = { 0 };
 
-	if (cursor.visible) {
+	if (term_get_cursor(term, &cursor)) {
 		Cell cell = term_get_cell(term, cursor.col, cursor.row);
 
 		GlyphRender cmd = { 0 };
 
 		font_load_codepoint(
-			fonts[cell.attr & (ATTR_BOLD|ATTR_ITALIC)],
+			fonts[cell.attrs & (ATTR_BOLD|ATTR_ITALIC)],
 			cell.ucs4,
 			&cmd.font,
 			&cmd.glyph
@@ -350,9 +355,9 @@ client_draw_cursor(const Client *client)
 			term->rowsize
 		);
 
-		switch (cursor.shape) {
-		case CursorShapeDefault:
-		case CursorShapeBar:
+		switch (cursor.style) {
+		case CursorStyleDefault:
+		case CursorStyleBar:
 			cmd.bg = 0;
 			cmd.fg = pack_xrgb(cell.fg, 0xff);
 			draw_text_utf8(
@@ -367,7 +372,7 @@ client_draw_cursor(const Client *client)
 				2, term->rowsize
 			);
 			break;
-		case CursorShapeBlock:
+		case CursorStyleBlock:
 			cmd.bg = pack_xrgb(term->color_fg, 0xff);
 			cmd.fg = pack_xrgb(term->color_bg, 0xff);
 			draw_text_utf8(
@@ -376,7 +381,7 @@ client_draw_cursor(const Client *client)
 				win->bw + cursor.row * term->rowsize
 			);
 			break;
-		case CursorShapeUnderscore:
+		case CursorStyleUnderscore:
 			cmd.bg = 0;
 			cmd.fg = pack_xrgb(cell.fg, 0xff);
 			draw_text_utf8(
@@ -444,7 +449,7 @@ event_resize(void *ref, int width, int height)
 	int rows = (height - 2 * win->bw) / term->rowsize;
 
 	win_resize_client(win, width, height);
-	if (cols != term->maxcols || rows != term->maxrows) {
+	if (cols != term->cols || rows != term->rows) {
 		term_resize(term, cols, rows);
 	}
 }

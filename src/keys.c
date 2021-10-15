@@ -1,5 +1,5 @@
 #include "utils.h"
-#include "term.h"
+#include "terminal.h"
 #include "keymap.h"
 
 // temporary

@@ -1,5 +1,5 @@
 #include "utils.h"
-#include "term.h"
+#include "terminal.h"
 #include "pty.h"
 
 #include <fcntl.h>
