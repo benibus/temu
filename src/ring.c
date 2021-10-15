@@ -239,7 +239,7 @@ void
 cells_clear(Ring *ring, int col, int row, int count)
 {
 	const int beg = MIN(col, ring->cols);
-	const int end = MIN(beg + col, ring->cols);
+	const int end = MIN(beg + count, ring->cols);
 	const int idx = get_writeable_index(ring, row);
 	Cell *cells = LINE(ring, idx)->cells;
 

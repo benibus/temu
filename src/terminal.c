@@ -377,7 +377,7 @@ term_consume(Term *term, const uchar *str, size_t len)
 
 		term->parser.state = result.state;
 
-#if 0
+#if 1
 #define DBGOPT_PRINT_INPUT 1
 		{
 			const char *tmp = charstring(str[i]);
@@ -448,7 +448,6 @@ write_newline(Term *term)
 	} else {
 		term->y++;
 	}
-	term->x = 0;
 }
 
 void
@@ -634,7 +633,7 @@ parser_print_debug(const Term *term, FuncID id)
 		}
 	}
 
-	dbgprintf("[[%s]] %s%s\n", ent.symbol, buf, post);
+	dbgprintf("{ %03d, %03d } [[%s]] %s%s\n", term->x, term->y, ent.symbol, buf, post);
 }
 
 void
