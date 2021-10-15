@@ -72,12 +72,6 @@ typedef struct {
 	CursorStyle crs_style;
 	uint32 crs_color;
 
-	/* struct { */
-	/* 	uint32 color; */
-	/* 	CursorStyle style; */
-	/* 	bool hidden; */
-	/* } cursor; */
-
 	uint32 color_bg;
 	uint32 color_fg;
 	uint32 colors[16];
