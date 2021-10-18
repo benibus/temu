@@ -1,9 +1,35 @@
 #include "utils.h"
 #include "render.h"
-#include "x11.h"
 #include "fonts.h"
+#include "x11.h"
 
 #include <X11/extensions/Xrender.h>
+
+#define XRENDER_ARGB(argb) ( \
+  (XRenderColor){                       \
+    .alpha = (argb & 0xff000000) >> 16, \
+    .red   = (argb & 0x00ff0000) >>  8, \
+    .green = (argb & 0x0000ff00) >>  0, \
+    .blue  = (argb & 0x000000ff) <<  8  \
+  }                                     \
+)
+
+#define XRENDER_COLOR(color) XRENDER_ARGB(color)
+
+struct WinSurface {
+	WinClient *win;
+	Pixmap dstbuf;
+	Picture framebuf;
+	XRenderPictFormat *pictformat;
+	struct FillColor {
+		Picture xid;
+		uint32 color;
+	} solids[16];
+};
+
+static struct {
+	struct WinSurface surface;
+} globals;
 
 struct GlyphBitmap {
 	GlyphInfo info;
@@ -19,6 +45,58 @@ struct GlyphCache {
 	int ascent, descent;
 	struct GlyphBitmap bitmaps[];
 };
+
+static Picture get_color_handle(WinSurface *, uint32);
+
+WinSurface *
+surface_create(WinClient *win)
+{
+	ASSERT(win);
+
+	struct WinSurface *self = &globals.surface;
+
+	self->pictformat = XRenderFindVisualFormat(win->server->dpy, win->server->visual);
+	self->dstbuf = XCreatePixmap(
+		win->server->dpy,
+		win->xid,
+		win->width,
+		win->height,
+		win->server->depth
+	);
+	self->framebuf = XRenderCreatePicture(
+		win->server->dpy,
+		self->dstbuf,
+		self->pictformat,
+		0,
+		&(XRenderPictureAttributes){ 0 }
+	);
+	self->win = win;
+
+	return self;
+}
+
+void
+surface_resize(WinSurface *surface, int width, int height)
+{
+	WinServer *server = surface->win->server;
+
+	XRenderFreePicture(server->dpy, surface->framebuf);
+	XFreePixmap(server->dpy, surface->dstbuf);
+
+	surface->dstbuf = XCreatePixmap(
+		server->dpy,
+		surface->win->xid,
+		width, height,
+		server->depth
+	);
+	surface->framebuf = XRenderCreatePicture(
+		server->dpy,
+		surface->dstbuf,
+		surface->pictformat,
+		0,
+		&(XRenderPictureAttributes){ 0 }
+	);
+}
 
 struct GlyphCache *
 glyphcache_create(int count, PixelFormat format, int ascent, int descent)
@@ -36,7 +114,7 @@ glyphcache_create(int count, PixelFormat format, int ascent, int descent)
 
 	struct GlyphCache *cache = xcalloc(size, 1);
 
-	cache->dpy        = platform_get_display();
+	cache->dpy        = server_get_display();
 	cache->count      = count;
 	cache->format     = format;
 	cache->ascent     = ascent;
@@ -178,10 +256,11 @@ cleanup:
 }
 
 void
-draw_text_utf8(const Win *pub, const GlyphRender *cmds, uint max, int x, int y)
+draw_text_utf8(const WinClient *win, const GlyphRender *cmds, uint max, int x, int y)
 {
-	ASSERT(pub);
-	WinData *win = (WinData *)pub;
+	ASSERT(win);
+	/* WinData *win = (WinData *)pub; */
+	WinSurface *surface = window_get_surface(win);
 
 	if (!max || !cmds) return;
 
@@ -260,7 +339,8 @@ draw_text_utf8(const Win *pub, const GlyphRender *cmds, uint max, int x, int y)
 		}
 
 		if (brush.bg >> 24) {
-			draw_rect(&win->pub,
+			draw_rect(
+				win,
 				brush.bg,
 				pos.x0,
 				pos.y0,
@@ -273,8 +353,8 @@ draw_text_utf8(const Win *pub, const GlyphRender *cmds, uint max, int x, int y)
 		XRenderCompositeText32(
 			cache->dpy,
 			PictOpOver,
-			win_get_color_handle(&win->pub, brush.fg),
-			win->pic,
+			get_color_handle(surface, brush.fg),
+			surface->framebuf,
 			cache->pictformat,
 			0,
 			0,
@@ -296,21 +376,64 @@ draw_text_utf8(const Win *pub, const GlyphRender *cmds, uint max, int x, int y)
 }
 
 void
-draw_rect(const Win *pub, uint32 color, int x, int y, int w, int h)
+draw_rect(const WinClient *win, uint32 color, int x, int y, int w, int h)
 {
-	WinData *win = (WinData *)pub;
+	const WinSurface *surface = window_get_surface(win);
 
-	x = CLAMP(x, 0, (int)win->pub.w);
-	y = CLAMP(y, 0, (int)win->pub.h);
-	w = CLAMP(x + w, x, (int)win->pub.w) - x;
-	h = CLAMP(y + h, y, (int)win->pub.h) - y;
+	x = CLAMP(x, 0, win->width);
+	y = CLAMP(y, 0, win->height);
+	w = CLAMP(x + w, x, (int)win->width) - x;
+	h = CLAMP(y + h, y, (int)win->height) - y;
 
 	XRenderFillRectangle(
-		win->x11->dpy,
+		win->server->dpy,
 		PictOpOver,
-		win->pic,
+		surface->framebuf,
 		&XRENDER_COLOR(color),
 		x, y, w, h
 	);
+}
+
+void
+window_render(WinClient *win)
+{
+	ASSERT(win);
+
+	XCopyArea(
+		win->server->dpy,
+		win->surface->dstbuf,
+		win->xid,
+		win->gc,
+		0, 0,
+		win->width,
+		win->height,
+		0, 0
+	);
+}
+
+Picture
+get_color_handle(WinSurface *surface, uint32 color)
+{
+	ASSERT(surface);
+
+	if (!color) return 0;
+
+	WinClient *win = surface->win;
+
+	for (uint i = 0; i < LEN(surface->solids); i++) {
+		if (surface->solids[i].color == color) {
+			return surface->solids[i].xid;
+		}
+	}
+
+	struct FillColor *slot = surface->solids + rand() % LEN(surface->solids);
+
+	if (slot->xid) {
+		XRenderFreePicture(win->server->dpy, slot->xid);
+	}
+	slot->xid = XRenderCreateSolidFill(win->server->dpy, &XRENDER_COLOR(color));
+	slot->color = color;
+
+	return slot->xid;
 }
 

@@ -36,8 +36,7 @@ static Config config = {
 	.columns = 140,
 	.rows = 40,
 	.scrollinc = 1,
-	.position = { .x = 0, .y = 0 },
-	.latency = { .min = 8, .max = 33 }
+	.position = { .x = 0, .y = 0 }
 };
 
 #endif

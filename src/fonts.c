@@ -1,6 +1,6 @@
 #include "utils.h"
-#include "window.h"
 #include "fonts.h"
+#include "window.h"
 #include "render.h"
 
 #include <math.h>
@@ -14,6 +14,8 @@
 #include FT_SYNTHESIS_H
 #include <fontconfig/fontconfig.h>
 #include <fontconfig/fcfreetype.h>
+
+#define SETPTR(p,v) do { if (p) { *(p) = (v); } } while (0)
 
 #ifndef NDEBUG
   #define DEBUG_PRINT_GLYPHS  0
@@ -644,10 +646,8 @@ font_free_glyphs(FontData *target)
 }
 
 FontID
-font_create(const Win *win, const char *name)
+font_create(const char *name)
 {
-	ASSERT(win);
-
 	struct { FcPattern *base, *conf, *match; } pattern;
 	FcResult res;
 	FcValue dummy;
@@ -670,6 +670,7 @@ if (FcPatternGet((pat), (obj), 0, &dummy) == FcResultNoMatch) { \
 	// TODO(ben): Get DPI from the platform
 	SETDFL(pattern.conf, Double,  FC_DPI, 96.f);
 	if (FcPatternGet(pattern.conf, FC_RGBA, 0, &dummy) == FcResultNoMatch) {
+#if 0
 		int order;
 		switch (platform_get_pixel_format(win)) {
 			case PixelFormatNone: order = FC_RGBA_NONE; break;
@@ -678,6 +679,9 @@ if (FcPatternGet((pat), (obj), 0, &dummy) == FcResultNoMatch) { \
 			default: order = FC_RGBA_UNKNOWN;
 		}
 		FcPatternAddInteger(pattern.conf, FC_RGBA, order);
+#else
+		FcPatternAddInteger(pattern.conf, FC_RGBA, FC_RGBA_UNKNOWN);
+#endif
 	}
 
 	// Acquire the full pattern using the configuration pattern

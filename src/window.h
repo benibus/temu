@@ -17,59 +17,61 @@ typedef enum {
 	PixelFormatCount
 } PixelFormat;
 
-#define WINATTR_NONE      (0)
-#define WINATTR_FLOATING  (1 << 0)
-#define WINATTR_RESIZABLE (1 << 1)
-#define WINATTR_OPENGL    (1 << 2)
-#define WINATTR_DEFAULT   (1 << 3)
+typedef struct WinServer WinServer;
+typedef struct WinClient WinClient;
 
-typedef struct {
-	void *ref;
-	pid_t pid;
-	bool state;
-	char *title, *instance, *class;
-	int fd;
-	int x, y;
-	uint w, h;
-	uint iw, ih;
-	uint bw;
-	uint minw, minh;
-	uint maxw, maxh;
-	uint32 flags;
+typedef enum {
+	WinEventTypeNone,
+	WinEventTypeDestroy,
+	WinEventTypeResize,
+	WinEventTypeTextInput,
+	WinEventTypeKeyPress,
+	WinEventTypeKeyRelease,
+	WinEventTypeButtonPress,
+	WinEventTypeButtonRelease,
+	WinEventTypePointerMove,
+	WinEventTypeExpose,
+	WinEventTypeCount
+} WinEventType;
+
+typedef void (*WinCallbackResize)(void *, int, int);
+typedef void (*WinCallbackKeyPress)(void *, int, int, char *, int);
+typedef void (*WinCallbackExpose)(void *);
+
+struct WinConfig {
+	char *wm_title;
+	char *wm_instance;
+	char *wm_class;
+	uint16 cols;
+	uint16 rows;
+	uint16 colpx;
+	uint16 rowpx;
+	uint16 border;
+	bool smooth_resize;
 	struct {
-		void (*resize)(void *, int, int);
-		void (*key_press)(void *, int, int, char *, int);
-		void (*visible)(void *);
-	} events;
-} Win;
+		void *generic;
+		WinCallbackResize resize;
+		WinCallbackKeyPress keypress;
+		WinCallbackExpose expose;
+	} callbacks;
+};
 
-#define SETPTR(p,v) do { if (p) { *(p) = (v); } } while (0)
+bool server_setup(void);
+WinClient *server_create_window(struct WinConfig);
+float server_get_dpi(void);
+void *server_get_display(void);
+PixelFormat server_get_pixel_format(void);
+int server_get_fileno(void);
+bool server_parse_color_string(const char *, uint32 *);
+int server_events_pending(void);
+int server_get_fileno(void);
 
-typedef struct {
-	uint32 font;
-	uint32 glyph;
-	uint32 fg;
-	uint32 bg;
-} GlyphRender;
-
-Win *win_create_client(void);
-bool win_init_client(Win *);
-void win_show_client(Win *);
-void win_resize_client(Win *, uint, uint);
-int win_process_events(Win *, double);
-void win_get_size(Win *, uint *, uint *);
-void win_get_coords(Win *, int *, int *);
-void win_render_frame(Win *);
-int win_events_pending(Win *);
-int64 win_get_color_handle(Win *, uint32);
-bool win_parse_color_string(const Win *, const char *, uint32 *);
-
-PixelFormat platform_get_pixel_format(const Win *);
-
-u64 timer_current_ns(void);
-double timer_elapsed_s(u64, u64 *);
-
-void draw_rect(const Win *, uint32, int, int, int, int);
-void draw_text_utf8(const Win *, const GlyphRender *, uint, int, int);
+bool window_online(const WinClient *);
+void window_get_dimensions(const WinClient *, int *, int *, int *);
+int window_process_events(WinClient *, double);
+int window_poll_events(WinClient *);
+bool window_show(WinClient *);
+void *window_get_surface(const WinClient *);
+void window_render(WinClient *win);
 
 #endif

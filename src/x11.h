@@ -3,50 +3,47 @@
 
 #include "defs.h"
 #include "window.h"
+#include "surface.h"
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
-#include <X11/extensions/Xrender.h>
 
-typedef struct {
+struct WinServer {
 	Display *dpy;
 	int screen;
 	Window root;
-	int fd;
-	XIM im;
 	Visual *visual;
-	int colordepth;
-	XRenderPictFormat *fmt;
-	uint maxw, maxh;
-	double dpi;
-} X11;
-
-typedef struct {
-	Win pub;
-	X11 *x11;
-	Window xid, parent;
+	XIM im;
 	Colormap colormap;
-	Pixmap buf;
-	Picture pic;
+	int fd;
+	int dpy_width;
+	int dpy_height;
+	float dpi;
+	int depth;
+};
+
+struct WinClient {
+	WinSurface *surface;
+	WinServer *server;
+	Window xid;
 	XIC ic;
 	GC gc;
-	struct XRFillColor {
-		int64 xid;
-		uint32 color;
-	} fillcache[16];
-} WinData;
+	bool online;
+	int pid;
+	int xpos;
+	int ypos;
+	int width;
+	int height;
+	int border;
+	struct {
+		void *generic;
+		WinCallbackResize   resize;
+		WinCallbackKeyPress keypress;
+		WinCallbackExpose   expose;
+	} callbacks;
+};
 
-#define XRENDER_ARGB(argb) ( \
-  (XRenderColor){                       \
-    .alpha = (argb & 0xff000000) >> 16, \
-    .red   = (argb & 0x00ff0000) >>  8, \
-    .green = (argb & 0x0000ff00) >>  0, \
-    .blue  = (argb & 0x000000ff) <<  8  \
-  }                                     \
-)
-
-#define XRENDER_COLOR(color) XRENDER_ARGB(color)
-
-void *platform_get_display(void);
+void x11_query_dimensions(WinClient *win, int *width, int *height, int *border);
+void x11_query_coordinates(WinClient *win, int *xpos, int *ypos);
 
 #endif

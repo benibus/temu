@@ -2,7 +2,6 @@
 #define FONTS_H__
 
 #include "defs.h"
-#include "window.h"
 
 #define STYLE_REGULAR (0)
 #define STYLE_BOLD    (1 << 0)
@@ -13,7 +12,7 @@
 typedef uint32 FontID;
 typedef uint64 GlyphID;
 
-FontID font_create(const Win *, const char *);
+FontID font_create(const char *);
 FontID font_create_derivative(FontID, uint);
 void font_destroy(FontID);
 bool font_get_extents(FontID, int *, int *, int *, int *);

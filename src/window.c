@@ -1,13 +1,13 @@
-#include <time.h>
+#include "utils.h"
+#include "x11.h"
+
+#include <errno.h>
 #include <locale.h>
+#include <poll.h>
 #include <unistd.h>
-#include <sys/select.h>
 
 #include <X11/keysym.h>
 #include <X11/Xatom.h>
-
-#include "utils.h"
-#include "x11.h"
 
 #define XW_EVENT_MASK \
   (StructureNotifyMask|KeyPressMask|KeyReleaseMask|     \
@@ -41,232 +41,183 @@ enum {
 };
 
 static Atom wm_atoms[NUM_ATOM];
-static X11 g_x11;
 
-static X11 *x11_init(void);
-static bool x11_test_im_style(XIM);
-static bool x11_set_visual_format(X11 *);
-static bool x11_wait_sys(Display *, double *);
-static int x11_translate_key(uint, uint, int *, int *);
-static int win_poll_events(WinData *);
-static Win *win_validate_config(Win *);
-static size_t win_get_property(Display *, Window, Atom, Atom, uchar **);
+static struct WinServer server;
+static WinClient clients[4];
 
-X11 *
-x11_init(void)
+bool
+server_setup(void)
 {
-	if (g_x11.dpy) return NULL;
+	if (server.dpy) {
+		return true;
+	}
 
 	setlocale(LC_CTYPE, "");
 
-	if (!(g_x11.dpy = XOpenDisplay(NULL))) {
-		return NULL;
+	if (!(server.dpy = XOpenDisplay(NULL))) {
+		return false;
 	}
-	g_x11.screen = DefaultScreen(g_x11.dpy);
-	g_x11.root = RootWindow(g_x11.dpy, g_x11.screen);
-	g_x11.maxw = DisplayWidth(g_x11.dpy, g_x11.screen);
-	g_x11.maxh = DisplayHeight(g_x11.dpy, g_x11.screen);
-	g_x11.dpi = (((double)g_x11.maxh * 25.4) / // 1 inch == 25.4 mm
-	              (double)DisplayHeightMM(g_x11.dpy, g_x11.screen));
-	g_x11.fd = ConnectionNumber(g_x11.dpy);
+
+	server.screen = DefaultScreen(server.dpy);
+	server.dpy_width = DisplayWidth(server.dpy, server.screen);
+	server.dpy_height = DisplayHeight(server.dpy, server.screen);
+	server.root = RootWindow(server.dpy, server.screen);
+	server.dpi = ((server.dpy_height * 25.4f) / // 1 inch == 25.4 mm
+	                (float)DisplayHeightMM(server.dpy, server.screen));
 
 	if (XSupportsLocale()) {
 		XSetLocaleModifiers("");
-		g_x11.im = XOpenIM(g_x11.dpy, 0, NULL, NULL);
-		if (g_x11.im && !x11_test_im_style(g_x11.im)) {
-			XCloseIM(g_x11.im);
-			g_x11.im = NULL;
+		server.im = XOpenIM(server.dpy, 0, NULL, NULL);
+		if (server.im) {
+			XIMStyles *styles = NULL;
+			bool found = false;
+			if (!XGetIMValues(server.im, XNQueryInputStyle, &styles, NULL)) {
+				for (size_t i = 0; !found && i < styles->count_styles; i++) {
+					if (styles->supported_styles[i] ==
+					    (XIMPreeditNothing|XIMStatusNothing))
+					{
+						found = true;
+					}
+				}
+				XFree(styles);
+			}
+			if (!found) {
+				XCloseIM(server.im);
+				server.im = NULL;
+			}
 		}
 	}
 
-	uchar *supported;
-
-#define INTERN_ATOM(atom_) ATOM((atom_)) = XInternAtom(g_x11.dpy, #atom_, False)
-	INTERN_ATOM(_NET_SUPPORTED);
+#define INTERN_ATOM(atom_) ATOM((atom_)) = XInternAtom(server.dpy, #atom_, False)
 	{
-		win_get_property(g_x11.dpy, g_x11.root,
-		    ATOM(_NET_SUPPORTED), XA_ATOM, &supported);
+		INTERN_ATOM(_NET_SUPPORTED);
+
+		uchar *supported;
+		{
+			Atom type_;
+			int format_;
+			size_t offset_;
+			size_t count_;
+
+			XGetWindowProperty(
+				server.dpy,
+				server.root,
+				ATOM(_NET_SUPPORTED),
+				0, LONG_MAX, False,
+				XA_ATOM,
+				&type_, &format_, &count_, &offset_,
+				&supported
+			);
+		}
+
+		INTERN_ATOM(WM_PROTOCOLS);
+		INTERN_ATOM(WM_STATE);
+		INTERN_ATOM(WM_DELETE_WINDOW);
+		INTERN_ATOM(_NET_SUPPORTING_WM_CHECK);
+		INTERN_ATOM(_NET_WM_ICON);
+		INTERN_ATOM(_NET_WM_PING);
+		INTERN_ATOM(_NET_WM_PID);
+		INTERN_ATOM(_NET_WM_NAME);
+		INTERN_ATOM(_NET_WM_STATE);
+		INTERN_ATOM(_NET_WM_ICON_NAME);
+		INTERN_ATOM(_NET_WM_BYPASS_COMPOSITOR);
+		INTERN_ATOM(_NET_WM_WINDOW_OPACITY);
+		INTERN_ATOM(_MOTIF_WM_HINTS);
+		INTERN_ATOM(UTF8_STRING);
+		INTERN_ATOM(COMPOUND_STRING);
+		INTERN_ATOM(ATOM_PAIR);
+
+		if (supported) {
+			XFree(supported);
+		}
 	}
-	INTERN_ATOM(WM_PROTOCOLS);
-	INTERN_ATOM(WM_STATE);
-	INTERN_ATOM(WM_DELETE_WINDOW);
-	INTERN_ATOM(_NET_SUPPORTING_WM_CHECK);
-	INTERN_ATOM(_NET_WM_ICON);
-	INTERN_ATOM(_NET_WM_PING);
-	INTERN_ATOM(_NET_WM_PID);
-	INTERN_ATOM(_NET_WM_NAME);
-	INTERN_ATOM(_NET_WM_STATE);
-	INTERN_ATOM(_NET_WM_ICON_NAME);
-	INTERN_ATOM(_NET_WM_BYPASS_COMPOSITOR);
-	INTERN_ATOM(_NET_WM_WINDOW_OPACITY);
-	INTERN_ATOM(_MOTIF_WM_HINTS);
-	INTERN_ATOM(UTF8_STRING);
-	INTERN_ATOM(COMPOUND_STRING);
-	INTERN_ATOM(ATOM_PAIR);
 #undef INTERN_ATOM
 
-	if (supported) {
-		XFree(supported);
+	{
+		XVisualInfo template = { 0 };
+		XVisualInfo *visinfo;
+		int count_;
+
+		template.visualid = XVisualIDFromVisual(DefaultVisual(server.dpy, server.screen));
+		visinfo = XGetVisualInfo(server.dpy, VisualIDMask, &template, &count_);
+
+		if (!visinfo) {
+			return false;
+		}
+
+		server.visual   = visinfo->visual;
+		server.depth    = visinfo->depth;
+		server.colormap = XCreateColormap(server.dpy, server.root, server.visual, AllocNone);
+
+		XFree(visinfo);
 	}
 
-	return &g_x11;
-}
+	server.fd = ConnectionNumber(server.dpy);
 
-size_t
-win_get_property(Display *dpy, Window winid, Atom prop, Atom type, uchar **buf)
-{
-	Atom ret_type;
-	int ret_fmt;
-	size_t offset;
-	size_t count;
-
-	XGetWindowProperty(dpy, winid,
-	                   prop, 0, LONG_MAX, False, type,
-	                   &ret_type, &ret_fmt, &count, &offset,
-	                   buf);
-
-	return count;
-}
-
-bool
-x11_test_im_style(XIM im)
-{
-	XIMStyles *styles = NULL;
-	bool found = false;
-
-	if (XGetIMValues(im, XNQueryInputStyle, &styles, NULL)) {
+	if (!server.fd) {
 		return false;
 	}
-	for (size_t i = 0; !found && i < styles->count_styles; i++) {
-		found = (styles->supported_styles[i] == (XIMPreeditNothing|XIMStatusNothing));
-	}
-	XFree(styles);
-
-	return found;
-}
-
-bool
-x11_set_visual_format(X11 *x11)
-{
-	if (!x11->dpy) return false;
-
-	XVisualInfo template = { 0 };
-	XVisualInfo *visinfo;
-	int count;
-
-#if 1
-	template.visualid =
-	    XVisualIDFromVisual(
-	        DefaultVisual(x11->dpy, x11->screen));
-#else
-	// OpenGL context initialization (eventually)
-	return false;
-#endif
-	visinfo = XGetVisualInfo(x11->dpy, VisualIDMask, &template, &count);
-	if (!visinfo) {
-		return false;
-	}
-	x11->visual = visinfo->visual;
-	x11->colordepth = visinfo->depth;
-	XFree(visinfo);
-
-	x11->fmt = XRenderFindVisualFormat(x11->dpy, x11->visual);
-	ASSERT(x11->fmt);
 
 	return true;
 }
 
-PixelFormat
-x11_get_pixel_format(const X11 *x11)
+WinClient *
+server_create_window(struct WinConfig config)
 {
-	switch (XRenderQuerySubpixelOrder(x11->dpy, x11->screen)) {
-	case SubPixelHorizontalRGB:
-	case SubPixelHorizontalBGR:
-		return PixelFormatLCDH;
-	case SubPixelVerticalRGB:
-	case SubPixelVerticalBGR:
-		return PixelFormatLCDV;
-	case SubPixelNone:
-		return PixelFormatNone;
-	case SubPixelUnknown:
-		return PixelFormatUnknown;
-	}
-
-	return PixelFormatUnknown;
-}
-
-void *
-platform_get_display(void)
-{
-	return g_x11.dpy;
-}
-
-PixelFormat
-platform_get_pixel_format(const Win *pub)
-{
-	ASSERT(pub);
-	const X11 *x11 = ((const WinData *)pub)->x11;
-
-	return x11_get_pixel_format(x11);
-}
-
-Win *
-win_create_client(void)
-{
-	WinData *win = xcalloc(1, sizeof(*win));
-	assert(win);
-
-	if (g_x11.dpy) {
-		win->x11 = &g_x11;
-	} else {
-		if (!(win->x11 = x11_init()))
-			return NULL;
-		if (!x11_set_visual_format(win->x11))
-			return NULL;
-		win->colormap = XCreateColormap(win->x11->dpy,
-		                                win->x11->root,
-		                                win->x11->visual,
-		                                AllocNone);
-	}
-
-	win->pub.fd = win->x11->fd;
-
-	return &win->pub;
-}
-
-bool
-win_init_client(Win *pub)
-{
-	WinData *win = (WinData *)pub;
-	ASSERT(win);
-
-	X11 *x11 = win->x11;
-	if (!x11 || !x11->dpy) {
-		return false;
-	}
-	win_validate_config(&win->pub);
-
-	if (!x11->visual) {
-		if (!x11_set_visual_format(x11)) {
+	if (!server.dpy) {
+		if (!server_setup()) {
 			return false;
 		}
 	}
 
-	XSetWindowAttributes wa = {
-		.background_pixel = 0,
-		.colormap    = win->colormap,
-		.event_mask  = XW_EVENT_MASK,
-		.bit_gravity = NorthWestGravity,
-	};
+	config.wm_title    = DEFAULT(config.wm_title,    "WindowTitle");
+	config.wm_instance = DEFAULT(config.wm_instance, "WindowInstance");
+	config.wm_class    = DEFAULT(config.wm_class,    "WindowClass");
+	config.cols        = DEFAULT(config.cols,  1);
+	config.rows        = DEFAULT(config.rows,  1);
+	config.colpx       = DEFAULT(config.colpx, 1);
+	config.rowpx       = DEFAULT(config.rowpx, 1);
 
-	win->parent = x11->root;
-	win->xid = XCreateWindow(x11->dpy, x11->root,
-	    0, 0, win->pub.w, win->pub.h, win->pub.bw,
-	    x11->colordepth, InputOutput, x11->visual,
-	    (CWBackPixel|CWBorderPixel|CWColormap|CWBitGravity|CWEventMask),
-	    &wa);
+	const uint16 border     = config.border;
+	const uint16 inc_width  = config.colpx;
+	const uint16 inc_height = config.rowpx;
+	const uint16 width      = 2 * config.border + config.cols * config.colpx;
+	const uint16 height     = 2 * config.border + config.rows * config.rowpx;
 
-	if (!win->xid) return false;
+	WinClient *win = NULL;
+	for (uint i = 0; i < LEN(clients); i++) {
+		if (!clients[i].server) {
+			win = &clients[i];
+			win->server = &server;
+			break;
+		}
+	}
+
+	ASSERT(win);
+
+	win->xid = XCreateWindow(
+		server.dpy,
+		server.root,
+		0, 0,
+		width, height,
+		border,
+		server.depth,
+		InputOutput,
+		server.visual,
+		CWBackPixel|CWColormap|CWBitGravity|CWEventMask,
+		&(XSetWindowAttributes){
+#ifdef NDEBUG
+			.background_pixel = 0,
+#else
+			.background_pixel = 0xff00ff,
+#endif
+			.colormap    = server.colormap,
+			.event_mask  = XW_EVENT_MASK,
+			.bit_gravity = NorthWestGravity
+		}
+	);
+
+	if (!win->xid) return NULL;
 
 	// Set WM protocols
 	{
@@ -277,13 +228,19 @@ win_init_client(Win *pub)
 			ATOM(_NET_WM_STATE)
 		};
 
-		XSetWMProtocols(x11->dpy, win->xid, supported, LEN(supported));
+		XSetWMProtocols(server.dpy, win->xid, supported, LEN(supported));
 
 		// link window to pid
-		win->pub.pid = getpid();
-		XChangeProperty(x11->dpy, win->xid,
-		    ATOM(_NET_WM_PID), XA_CARDINAL,
-		    32, PropModeReplace, (uchar *)&win->pub.pid, 1);
+		win->pid = getpid();
+		XChangeProperty(
+			server.dpy,
+			win->xid,
+			ATOM(_NET_WM_PID),
+			XA_CARDINAL,
+			32,
+			PropModeReplace,
+			(uchar *)&win->pid, 1
+		);
 	}
 
 	// Set WM hints
@@ -296,17 +253,17 @@ win_init_client(Win *pub)
 		hintp->initial_state = NormalState;
 		hintp->input         = 1;
 
-		XSetWMHints(x11->dpy, win->xid, hintp);
+		XSetWMHints(server.dpy, win->xid, hintp);
 		XFree(hintp);
 	}
 
 	// Set WM_CLASS hints
 	{
 		XClassHint *hintp = XAllocClassHint();
-		hintp->res_name  = win->pub.instance;
-		hintp->res_class = win->pub.class;
+		hintp->res_name  = config.wm_instance;
+		hintp->res_class = config.wm_class;
 
-		XSetClassHint(x11->dpy, win->xid, hintp);
+		XSetClassHint(server.dpy, win->xid, hintp);
 		XFree(hintp);
 	}
 
@@ -314,235 +271,116 @@ win_init_client(Win *pub)
 	{
 		XSizeHints *hintp = XAllocSizeHints();
 
-		// we broadcast the starting size in all cases, for simplicity
-		hintp->width  = win->pub.w;
-		hintp->height = win->pub.h;
+		hintp->flags = PBaseSize|PMinSize|PResizeInc;
 
-		if (win->pub.bw) {
-			hintp->flags |= (PBaseSize);
-			hintp->base_width  = 2 * win->pub.bw;
-			hintp->base_height = 2 * win->pub.bw;
-		}
+		hintp->base_width  = width;
+		hintp->base_height = height;
+		hintp->min_width   = 2 * border + inc_width;
+		hintp->min_height  = 2 * border + inc_height;
 
-		if (win->pub.flags & WINATTR_RESIZABLE) {
-			hintp->flags |= (USSize);
-			if (win->pub.iw && win->pub.ih) {
-				hintp->flags |= PResizeInc;
-				hintp->width_inc  = win->pub.iw;
-				hintp->height_inc = win->pub.ih;
-			}
-			if (win->pub.minw && win->pub.minh) {
-				hintp->flags |= (PMinSize);
-				hintp->min_width  = win->pub.minw;
-				hintp->min_height = win->pub.minh;
-			}
-			if (win->pub.maxw && win->pub.maxh) {
-				hintp->flags |= (PMaxSize);
-				hintp->max_width  = win->pub.maxw;
-				hintp->max_height = win->pub.maxh;
-			}
+		if (config.smooth_resize) {
+			hintp->width_inc  = 1;
+			hintp->height_inc = 1;
 		} else {
-			hintp->flags |= (PSize|PMinSize|PMaxSize);
-			hintp->max_width = hintp->min_width = win->pub.w;
-			hintp->max_height = hintp->min_height = win->pub.h;
+			hintp->width_inc  = inc_width;
+			hintp->height_inc = inc_height;
 		}
 
-		XSetNormalHints(x11->dpy, win->xid, hintp);
-
-		// set title property
-		XSetStandardProperties(x11->dpy, win->xid,
-		    win->pub.title, NULL, None, NULL, 0, hintp);
-
+		XSetNormalHints(server.dpy, win->xid, hintp);
+		XSetStandardProperties(server.dpy, win->xid, config.wm_title, NULL, None, NULL, 0, hintp);
 		XFree(hintp);
 	}
 
-	XFlush(x11->dpy);
+	XFlush(server.dpy);
 
-	if (x11->im) {
-		win->ic = XCreateIC(x11->im,
-		    XNInputStyle, (XIMPreeditNothing|XIMStatusNothing),
-		    XNClientWindow, win->xid, XNFocusWindow, win->xid,
-		    NULL);
+	if (server.im) {
+		win->ic = XCreateIC(
+			server.im,
+			XNInputStyle,
+			XIMPreeditNothing|XIMStatusNothing,
+			XNClientWindow,
+			win->xid,
+			XNFocusWindow,
+			win->xid,
+			NULL
+		);
 		if (win->ic) {
-			ulong filter = 0;
+			uint64 filter = 0;
 			if (!XGetICValues(win->ic, XNFilterEvents, &filter, NULL)) {
-				XSelectInput(x11->dpy, win->xid,
-				    (XW_EVENT_MASK|filter));
+				XSelectInput(server.dpy, win->xid, XW_EVENT_MASK|filter);
 			}
 		}
 	}
 
-	win_get_size(&win->pub, &win->pub.w, &win->pub.h);
 	{
-		XGCValues gcvals;
-
-		memset(&gcvals, 0, sizeof(gcvals));
-		// magic boolean that stops the program from redrawing 1000+ times per second
+		XGCValues gcvals = { 0 };
 		gcvals.graphics_exposures = False;
-
-		win->gc = XCreateGC(x11->dpy, x11->root,
-		    GCGraphicsExposures, &gcvals);
+		win->gc = XCreateGC(server.dpy, server.root, GCGraphicsExposures, &gcvals);
 	}
 
-	win->buf = XCreatePixmap(x11->dpy,
-	    win->xid, win->pub.w, win->pub.h, win->x11->colordepth);
+	x11_query_dimensions(win, &win->width, &win->height, &win->border);
+	x11_query_coordinates(win, &win->xpos, &win->ypos);
 
-	XRenderPictureAttributes picattr = { 0 };
-	win->pic = XRenderCreatePicture(x11->dpy, win->buf, x11->fmt, 0, &picattr);
+	win->callbacks.generic  = config.callbacks.generic;
+	win->callbacks.resize   = config.callbacks.resize;
+	win->callbacks.keypress = config.callbacks.keypress;
+	win->callbacks.expose   = config.callbacks.expose;
 
-	return true;
+	win->surface = surface_create(win);
+
+	if (!win->surface) {
+		return NULL;
+	}
+
+	return win;
 }
 
 void
-win_resize_client(Win *pub, uint w, uint h)
+window_get_dimensions(const WinClient *win, int *width, int *height, int *border)
 {
-	WinData *win = (WinData *)pub;
+	ASSERT(win);
 
-	if (win && (win->pub.w != w || win->pub.h != h)) {
-		XRenderFreePicture(win->x11->dpy, win->pic);
-		XFreePixmap(win->x11->dpy, win->buf);
-		win->buf = XCreatePixmap(win->x11->dpy,
-		                         win->xid, w, h,
-		                         win->x11->colordepth);
-		ASSERT(win->buf);
-		XRenderPictureAttributes attr = { 0 };
-		win->pic = XRenderCreatePicture(win->x11->dpy,
-		                                win->buf,
-		                                win->x11->fmt,
-		                                0, &attr);
-		ASSERT(win->pic);
-		win_get_size(&win->pub, &win->pub.w, &win->pub.h);
-	}
+	if (width)  *width  = win->width;
+	if (height) *height = win->height;
+	if (border) *border = win->border;
 }
 
-Win *
-win_validate_config(Win *pub)
+void *
+window_get_surface(const WinClient *win)
 {
-	if (pub) {
-		pub->w    = DEFAULT(pub->w, 800);
-		pub->h    = DEFAULT(pub->h, 600);
-		pub->iw   = DEFAULT(pub->iw, 1);
-		pub->ih   = DEFAULT(pub->ih, 1);
-		pub->bw   = DEFAULT(pub->bw, 0);
-		pub->minw = DEFAULT(pub->minw, pub->iw + 2 * pub->bw);
-		pub->minh = DEFAULT(pub->minh, pub->ih + 2 * pub->bw);
-		pub->maxw = DEFAULT(pub->maxw, 0);
-		pub->maxh = DEFAULT(pub->maxh, 0);
-
-		if (pub->flags == WINATTR_DEFAULT) {
-			pub->flags = WINFLAGS_DEFAULT;
-		}
-	}
-
-	return pub;
-}
-
-void
-win_get_size(Win *pub, uint *w, uint *h)
-{
-	assert(pub);
-	WinData *win = (WinData *)pub;
-
-	XWindowAttributes attr;
-	XGetWindowAttributes(win->x11->dpy, win->xid, &attr);
-
-	if (w) *w = attr.width;
-	if (h) *h = attr.height;
-}
-
-void
-win_get_coords(Win *pub, int *x, int *y)
-{
-	assert(pub);
-	WinData *win = (WinData *)pub;
-
-	Window dummy;
-	int x_, y_;
-
-	XTranslateCoordinates(win->x11->dpy,
-	                      win->xid,
-	                      win->x11->root,
-	                      0, 0, &x_, &y_,
-	                      &dummy);
-
-	if (x) *x = x_;
-	if (y) *y = y_;
-}
-
-void
-win_show_client(Win *pub)
-{
-	if (!pub) return;
-
-	WinData *win = (WinData *)pub;
-	X11 x11 = *win->x11;
-
-	XMapWindow(x11.dpy, win->xid);
-	XSync(x11.dpy, False);
-	pub->state = true;
-
-	XEvent dummy;
-	double timeout = 0.1;
-
-	while (!XCheckTypedWindowEvent(x11.dpy, win->xid, VisibilityNotify, &dummy)) {
-		if (!x11_wait_sys(x11.dpy, &timeout)) {
-			break;
-		}
-	}
-
-	win_get_coords(pub, &pub->x, &pub->y);
-}
-
-// TODO(ben): Replace these timer functions with our library versions
-u64
-timer_current_ns(void)
-{
-	struct timespec ts;
-	int result = clock_gettime(CLOCK_MONOTONIC, &ts);
-	ASSERT(result == 0);
-
-	return (ts.tv_sec * (u64)1E9) + (u64)ts.tv_nsec;
-}
-
-double
-timer_elapsed_s(u64 base_ns, u64 *ret_ns)
-{
-	u64 curr_ns = timer_current_ns();
-	if (ret_ns) *ret_ns = curr_ns;
-
-	return (curr_ns - base_ns) / (double)1E9;
+	return win->surface;
 }
 
 bool
-x11_wait_sys(Display *dpy, double *timeout)
+window_show(WinClient *win)
 {
-	fd_set fdsr;
-	const int xwfd = ConnectionNumber(dpy);
-	int fd = xwfd + 1;
+	if (win->online) {
+		return true;
+	}
 
-	for (;;) {
-		FD_ZERO(&fdsr);
-		FD_SET(xwfd, &fdsr);
+	XMapWindow(server.dpy, win->xid);
+	XSync(server.dpy, False);
 
-		if (timeout) {
-			const long sec = (long)*timeout;
-			const long usec = (long)((*timeout - sec) * 1E6);
-			struct timeval tv = { sec, usec };
-			const u64 base = timer_current_ns();
+	struct pollfd pollset = { server.fd, POLLIN, 0 };
+	const int timeout = 100;
 
-			const int res = select(fd, &fdsr, NULL, NULL, &tv);
-			*timeout -= timer_elapsed_s(base, NULL);
-
-			if (res > 0) {
-				return true;
+	XEvent dummy_;
+	while (!XCheckTypedWindowEvent(server.dpy, win->xid, VisibilityNotify, &dummy_)) {
+		int result = 0;
+		if ((result = poll(&pollset, 1, timeout)) <= 0) {
+			if (result && errno) {
+				perror("poll()");
 			}
-			if (res == -1 || *timeout <= 0) {
-				return false;
-			}
-		} else if (select(fd, &fdsr, NULL, NULL, NULL) != -1) {
-			return true;
+			goto done;
+		} else if (pollset.revents & POLLHUP) {
+			goto done;
 		}
 	}
+
+	x11_query_coordinates(win, &win->xpos, &win->ypos);
+	win->online = true;
+done:
+	return win->online;
 }
 
 int
@@ -650,165 +488,119 @@ done:
 }
 
 int
-win_events_pending(Win *pub)
+window_poll_events(WinClient *win)
 {
-	return XPending(((WinData *)pub)->x11->dpy);
-}
+	ASSERT(win);
 
-int
-win_get_session_fd(Win *pub)
-{
-	return ConnectionNumber(((WinData *)pub)->x11->dpy);
-}
+	if (!win->online) {
+		return 0;
+	}
 
-int
-win_poll_events(WinData *win)
-{
 	int count = 0;
-	assert(win);
 
-#if 0
-	for (; XPending(win->x11->dpy); count++) {
-#else
-	XPending(win->x11->dpy);
-
-	for (; XQLength(win->x11->dpy); count++) {
-#endif
+	for (; XPending(server.dpy); count++) {
 		XEvent event = { 0 };
-		XNextEvent(win->x11->dpy, &event);
+		XNextEvent(server.dpy, &event);
 		if (XFilterEvent(&event, None)) {
 			continue;
 		}
 
 		switch (event.type) {
-			case ConfigureNotify: {
-				XConfigureEvent *e = (void *)&event;
-				if (win->pub.events.resize) {
-					win->pub.events.resize(win->pub.ref,
-					                       e->width, e->height);
-				}
-				win->pub.w = e->width;
-				win->pub.h = e->height;
-				break;
+		case ConfigureNotify: {
+			XConfigureEvent *e = (void *)&event;
+			if (win->callbacks.resize) {
+				win->callbacks.resize(win->callbacks.generic, e->width, e->height);
 			}
-			case KeyPress: {
-				XKeyEvent *e = (void *)&event;
-				KeySym ksym;
-				struct {
-					int id;
-					int mod;
-					char buf[128];
-					int len;
-				} k;
-				char *buf = k.buf;
+			if (e->width != win->width || e->height != win->height) {
+				surface_resize(win->surface, e->width, e->height);
+			}
+			win->width  = e->width;
+			win->height = e->height;
+			break;
+		}
+		case KeyPress: {
+			XKeyEvent *e = (void *)&event;
+			KeySym ksym;
+			struct {
+				int id;
+				int mod;
+				char buf[128];
+				int len;
+			} k;
+			char *buf = k.buf;
 
-				if (!win->ic) {
-					k.len = XLookupString(
-					    e, k.buf, LEN(k.buf) - 1, &ksym, NULL);
-				} else {
-					Status status;
-					for (int n = 0;; n++) {
-						k.len = XmbLookupString(
-						    win->ic, e, k.buf, LEN(k.buf) - 1,
-						    &ksym, &status);
-						if (status != XBufferOverflow) {
-							break;
-						}
-						assert(!n);
-						buf = xcalloc(k.len + 1, 1);
+			if (!win->ic) {
+				k.len = XLookupString(e, k.buf, LEN(k.buf) - 1, &ksym, NULL);
+			} else {
+				Status status;
+				for (int n = 0;; n++) {
+					k.len = XmbLookupString(win->ic, e, k.buf, LEN(k.buf) - 1, &ksym, &status);
+					if (status != XBufferOverflow) {
+						break;
 					}
+					assert(!n);
+					buf = xcalloc(k.len + 1, 1);
 				}
-
-				buf[k.len] = 0;
-				x11_translate_key(ksym, e->state, &k.id, &k.mod);
-
-				if (win->pub.events.key_press && k.id != KeyNone) {
-					win->pub.events.key_press(win->pub.ref,
-					                          k.id, k.mod, buf, k.len);
-				}
-
-				if (buf != k.buf) free(buf);
-				break;
 			}
-			case ClientMessage: {
-				XClientMessageEvent *e = (void *)&event;
-				if ((Atom)e->data.l[0] == ATOM(WM_DELETE_WINDOW)) {
-					XDestroyWindow(win->x11->dpy, win->xid);
-					win->pub.state = false;
-				}
-				break;
+
+			buf[k.len] = 0;
+			x11_translate_key(ksym, e->state, &k.id, &k.mod);
+
+			if (win->callbacks.keypress && k.id != KeyNone) {
+				win->callbacks.keypress(win->callbacks.generic, k.id, k.mod, buf, k.len);
 			}
+
+			if (buf != k.buf) free(buf);
+			break;
+		}
+		case ClientMessage: {
+			XClientMessageEvent *e = (void *)&event;
+			if ((Atom)e->data.l[0] == ATOM(WM_DELETE_WINDOW)) {
+				XDestroyWindow(server.dpy, win->xid);
+				win->online = false;
+			}
+			break;
+		}
+		default:
+			break;
 		}
 	}
 
-	XFlush(win->x11->dpy);
+	XFlush(server.dpy);
+
 	return count;
-}
-
-int
-win_process_events(Win *pub, double timeout)
-{
-	WinData *win = (WinData *)pub;
-	int count = 0;
-	assert(win);
-
-	while (!XPending(win->x11->dpy)) {
-		if (!x11_wait_sys(win->x11->dpy, &timeout)) {
-			goto done;
-		}
-	}
-
-	count = win_poll_events(win);
-done:
-	return count;
-}
-
-void
-win_render_frame(Win *pub)
-{
-	WinData *win = (WinData *)pub;
-	if (!win) return;
-
-	XCopyArea(win->x11->dpy,
-	          win->buf,
-	          win->xid,
-	          win->gc,
-	          0, 0,
-	          win->pub.w, win->pub.h,
-	          0, 0);
-}
-
-int64
-win_get_color_handle(Win *pub, uint32 color)
-{
-	if (!color) return 0;
-
-	WinData *win = (WinData *)pub;
-
-	for (uint i = 0; i < LEN(win->fillcache); i++) {
-		if (win->fillcache[i].color == color) {
-			return win->fillcache[i].xid;
-		}
-	}
-
-	struct XRFillColor *fill = win->fillcache + rand() % LEN(win->fillcache);
-
-	if (fill->xid) {
-		XRenderFreePicture(win->x11->dpy, fill->xid);
-	}
-	fill->xid = XRenderCreateSolidFill(win->x11->dpy, &XRENDER_COLOR(color));
-	fill->color = color;
-
-	return fill->xid;
 }
 
 bool
-win_parse_color_string(const Win *pub, const char *name, uint32 *result)
+window_online(const WinClient *win)
 {
-	const WinData *win = (const WinData *)pub;
+	return win->online;
+}
+
+void *
+server_get_display(void)
+{
+	return server.dpy;
+}
+
+int
+server_events_pending(void)
+{
+	return XPending(server.dpy);
+}
+
+int
+server_get_fileno(void)
+{
+	return server.fd;
+}
+
+bool
+server_parse_color_string(const char *name, uint32 *result)
+{
 	XColor xcolor = { 0 };
 
-	if (!XParseColor(win->x11->dpy, win->colormap, name, &xcolor)) {
+	if (!XParseColor(server.dpy, server.colormap, name, &xcolor)) {
 		return false;
 	}
 
@@ -822,5 +614,39 @@ win_parse_color_string(const Win *pub, const char *name, uint32 *result)
 	}
 
 	return true;
+}
+
+void
+x11_query_dimensions(WinClient *win, int *width, int *height, int *border)
+{
+	ASSERT(win);
+
+	XWindowAttributes attr;
+	XGetWindowAttributes(server.dpy, win->xid, &attr);
+
+	if (width)  *width  = attr.width;
+	if (height) *height = attr.height;
+	if (border) *border = attr.border_width;
+}
+
+void
+x11_query_coordinates(WinClient *win, int *xpos, int *ypos)
+{
+	ASSERT(win);
+
+	Window dummy_;
+	int xpos_, ypos_;
+
+	XTranslateCoordinates(
+		server.dpy,
+		win->xid,
+		server.root,
+		0, 0,
+		&xpos_, &ypos_,
+		&dummy_
+	);
+
+	if (xpos) *xpos = xpos_;
+	if (ypos) *ypos = ypos_;
 }
 

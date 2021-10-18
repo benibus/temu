@@ -1,11 +1,12 @@
+#include <errno.h>
 #include <locale.h>
+#include <poll.h>
 #include <unistd.h>
-#include <sys/select.h>
-#include <time.h>
 
 #include "utils.h"
 #include "terminal.h"
 #include "window.h"
+#include "render.h"
 #include "fonts.h"
 
 #define MAX_CFG_COLORS (2+16)
@@ -24,19 +25,18 @@ typedef struct Config {
 	uint columns, rows;
 	uint scrollinc;
 	struct { int x, y; } position;
-	struct { uint min, max; } latency;
 } Config;
 // NOTE: must include *after* definitions
 #include "config.h"
 
 typedef struct Client_ {
-	Win *win;
+	/* Win *win; */
+	WinClient *win;
 	Term *term;
-	struct {
-		double min;
-		double max;
-	} latency;
 	int scrollinc;
+	int width;
+	int height;
+	int border;
 } Client;
 
 static Client client_;
@@ -116,16 +116,16 @@ error_invalid:
 		exit(1);
 	}
 
-	struct TermConfig tc = { 0 };
-	Win *win;
+	struct TermConfig termcfg = { 0 };
 
 	// temporary
 	srand(time_get_mono_msec(NULL));
 
-	if (!(win = win_create_client()))
+	if (!server_setup()) {
 		return 2;
+	}
 
-	fonts[0] = font_create(win, config.font);
+	fonts[0] = font_create(config.font);
 	if (!fonts[0]) {
 		errfatal(1, "Failed to create default font");
 	} else {
@@ -148,11 +148,11 @@ error_invalid:
 		uint32 *dst;
 
 		switch (i) {
-		case 0:  dst = &tc.color_bg;  break;
-		case 1:  dst = &tc.color_fg;  break;
-		default: dst = &tc.colors[i-2]; break;
+		case 0:  dst = &termcfg.color_bg;  break;
+		case 1:  dst = &termcfg.color_fg;  break;
+		default: dst = &termcfg.colors[i-2]; break;
 		}
-		if (!win_parse_color_string(win, config.colors[i], dst)) {
+		if (!server_parse_color_string(config.colors[i], dst)) {
 			dbgprintf("failed to parse RGB string: %s\n", config.colors[i]);
 			exit(EXIT_FAILURE);
 		}
@@ -162,50 +162,50 @@ error_invalid:
 		int width, height, ascent, descent;
 
 		font_get_extents(fonts[0], &width, &height, &ascent, &descent);
-		tc.colsize = width;
-		tc.rowsize = ascent + descent;
+		termcfg.colsize = width;
+		termcfg.rowsize = ascent + descent;
 	}
 
-	{
-		win->title = config.wm_title;
-		win->instance = config.wm_instance;
-		win->class = config.wm_class;
-		win->w = tc.colsize * config.columns;
-		win->h = tc.rowsize * config.rows;
-		win->bw = config.border_px;
-		win->flags = WINATTR_RESIZABLE;
+	WinClient *win = server_create_window(
+		(struct WinConfig){
+			.smooth_resize = false,
+			.wm_title    = config.wm_title,
+			.wm_instance = config.wm_instance,
+			.wm_class    = config.wm_class,
+			.cols        = config.columns,
+			.rows        = config.rows,
+			.colpx       = termcfg.colsize,
+			.rowpx       = termcfg.rowsize,
+			.border      = config.border_px,
+			.callbacks = {
+				.generic  = &client_,
+				.resize   = event_resize,
+				.keypress = event_key_press,
+				.expose   = NULL
+			}
+		}
+	);
+
+	if (!win || !window_show(win)) {
+		exit(EXIT_FAILURE);
 	}
+	window_get_dimensions(win, &client_.width, &client_.height, &client_.border);
 
-	if (!win_init_client(win)) {
-		return 4;
-	}
+	termcfg.cols = (client_.width - 2 * client_.border) / termcfg.colsize;
+	termcfg.rows = (client_.height - 2 * client_.border) / termcfg.rowsize;
 
-	/* FIXME(ben):
-	 * Border sizes aren't being factored into returned window dimensions.
-	 */
-	tc.cols = (win->w - 2 * win->bw) / tc.colsize;
-	tc.rows = (win->h - 2 * win->bw) / tc.rowsize;
-#if 0
-	ASSERT(tc.cols == (int)config.columns);
-	ASSERT(tc.rows == (int)config.rows);
-#endif
+	ASSERT(termcfg.cols == (int)config.columns);
+	ASSERT(termcfg.rows == (int)config.rows);
 
-	tc.shell = config.shell;
-	tc.histlines = MAX(config.histsize, tc.rows);
-	tc.tabcols = DEFAULT(config.tablen, 8);
+	termcfg.shell = config.shell;
+	termcfg.histlines = MAX(config.histsize, termcfg.rows);
+	termcfg.tabcols = DEFAULT(config.tablen, 8);
 
-	if (!(client_.term = term_create(tc))) {
+	if (!(client_.term = term_create(termcfg))) {
 		return 6;
 	}
 
-	win->ref = &client_;
-	win->events.key_press = event_key_press;
-	win->events.resize = event_resize;
-	win_show_client(win);
-
 	client_.win = win;
-	client_.latency.min = config.latency.min;
-	client_.latency.max = config.latency.max;
 	client_.scrollinc = DEFAULT(config.scrollinc, 1);
 
 	run(&client_);
@@ -218,76 +218,71 @@ error_invalid:
 void
 run(Client *client)
 {
-	Win *win = client->win;
 	Term *term = client->term;
 
-	double timeout = -1.0;
-	double minlat = client->latency.min;
-	double maxlat = client->latency.max;
-	bool busy = false;
-	TimeVal t0 = { 0 };
-	TimeVal t1 = { 0 };
+	do {
+		client_draw_screen(client);
+	} while (window_poll_events(client->win));
 
-	int ptyfd = term_exec(term, config.shell);
-	int maxfd = MAX(win->fd, ptyfd);
+	const int srvfd = server_get_fileno();
+	const int ptyfd = term_exec(term, config.shell);
 
-	while (win->state) {
-		static fd_set rset;
-		FD_ZERO(&rset);
-		FD_SET(ptyfd, &rset);
-		FD_SET(win->fd, &rset);
+	struct pollfd pollset[] = {
+		{ .fd = ptyfd, .events = POLLIN, .revents = 0 },
+		{ .fd = srvfd, .events = POLLIN, .revents = 0 }
+	};
+	static_assert(LEN(pollset) == 2, "Unexpected pollset size.");
 
-		if (win_events_pending(win)) {
-			timeout = 0.0;
-		}
+	// Target polling rate
+	static const int msec = 16;
 
-		struct timespec *ts, ts_ = { 0 };
-		ts_.tv_sec = timeout / 1E3;
-		ts_.tv_nsec = 1E6 * (timeout - 1E3 * ts_.tv_sec);
-		ts = (timeout >= 0.0) ? &ts_ : NULL;
-
-		if (pselect(maxfd + 1, &rset, NULL, NULL, ts, NULL) < 0) {
-			exit(2);
-		}
-		time_get_mono_msec(&t1);
-
-		if (FD_ISSET(ptyfd, &rset)) {
-			term_pull(term);
-		}
-
-		int num_events = win_process_events(win, 0.0);
-
-		if (FD_ISSET(ptyfd, &rset) || num_events) {
-			if (!busy) {
-				busy = true;
-				t0 = t1;
+	while (window_online(client->win)) {
+		switch (poll(pollset, 2, msec)) {
+		case -1:
+			if (errno) {
+				perror("poll()");
+				exit(errno);
 			}
-
-			double elapsed = time_diff_msec(&t1, &t0);
-			timeout = (maxlat - elapsed) / maxlat;
-			timeout *= minlat;
-
-			if (timeout > 0.0) continue;
+			return;
+		case 0:
+			if (!window_poll_events(client->win)) {
+				continue;
+			}
+			break;
+		case 1:
+			if (pollset[0].revents & POLLIN) {
+				term_pull(term);
+			} else if (!window_poll_events(client->win)) {
+				continue;
+			}
+			break;
+		case 2:
+			break;
 		}
-		timeout = -1.0;
-		busy = false;
 
-		if (toggle_render) {
-			client_draw_screen(client);
-		}
+		client_draw_screen(client);
 	}
 }
 
 void
 client_draw_screen(Client *client)
 {
-	Win *win = client->win;
+	/* Win *win = client->win; */
 	Term *term = client->term;
+	int width = client->width;
+	int height = client->height;
+	int border = client->border;
 
 #define ROWBUF_MAX 256
 	GlyphRender cmds[ROWBUF_MAX] = { 0 };
 
-	draw_rect(win, pack_xrgb(term->color_bg, 0xff), 0, 0, win->w, win->h);
+	draw_rect(
+		client->win,
+		pack_xrgb(term->color_bg, 0xff),
+		0, 0,
+		width,
+		height
+	);
 
 	const Cell *framebuf = term_get_framebuffer(term);
 	ASSERT(framebuf);
@@ -316,7 +311,7 @@ client_draw_screen(Client *client)
 		}
 
 		if (len) {
-			draw_text_utf8(win, cmds, len, win->bw, win->bw + row * term->rowsize);
+			draw_text_utf8(client->win, cmds, len, border, border + row * term->rowsize);
 		}
 	}
 #undef ROWBUF_MAX
@@ -324,14 +319,17 @@ client_draw_screen(Client *client)
 	// draw cursor last
 	client_draw_cursor(client);
 
-	win_render_frame(win);
+	window_render(client->win);
 }
 
 void
 client_draw_cursor(const Client *client)
 {
-	const Win *win = client->win;
+	const WinClient *win = client->win;
 	const Term *term = client->term;
+	int width = client->width;
+	int height = client->height;
+	int border = client->border;
 
 	Cursor cursor = { 0 };
 
@@ -348,9 +346,10 @@ client_draw_cursor(const Client *client)
 		);
 
 		draw_rect(
-			client->win, pack_xrgb(term->color_bg, 0xff),
-			win->bw + cursor.col * term->colsize,
-			win->bw + cursor.row * term->rowsize,
+			win,
+			pack_xrgb(term->color_bg, 0xff),
+			border + cursor.col * term->colsize,
+			border + cursor.row * term->rowsize,
 			term->colsize,
 			term->rowsize
 		);
@@ -362,13 +361,13 @@ client_draw_cursor(const Client *client)
 			cmd.fg = pack_xrgb(cell.fg, 0xff);
 			draw_text_utf8(
 				client->win, &cmd, 1,
-				win->bw + cursor.col * term->colsize,
-				win->bw + cursor.row * term->rowsize
+				border + cursor.col * term->colsize,
+				border + cursor.row * term->rowsize
 			);
 			draw_rect(
 				client->win, pack_xrgb(cursor.color, 0xff),
-				win->bw + cursor.col * term->colsize,
-				win->bw + cursor.row * term->rowsize,
+				border + cursor.col * term->colsize,
+				border + cursor.row * term->rowsize,
 				2, term->rowsize
 			);
 			break;
@@ -377,8 +376,8 @@ client_draw_cursor(const Client *client)
 			cmd.fg = pack_xrgb(term->color_bg, 0xff);
 			draw_text_utf8(
 				client->win, &cmd, 1,
-				win->bw + cursor.col * term->colsize,
-				win->bw + cursor.row * term->rowsize
+				border + cursor.col * term->colsize,
+				border + cursor.row * term->rowsize
 			);
 			break;
 		case CursorStyleUnderscore:
@@ -386,13 +385,13 @@ client_draw_cursor(const Client *client)
 			cmd.fg = pack_xrgb(cell.fg, 0xff);
 			draw_text_utf8(
 				client->win, &cmd, 1,
-				win->bw + cursor.col * term->colsize,
-				win->bw + cursor.row * term->rowsize
+				border + cursor.col * term->colsize,
+				border + cursor.row * term->rowsize
 			);
 			draw_rect(
 				client->win, pack_xrgb(term->color_fg, 0xff),
-				win->bw + cursor.col * term->colsize,
-				win->bw + (cursor.row + 1) * term->rowsize - 2,
+				border + cursor.col * term->colsize,
+				border + (cursor.row + 1) * term->rowsize - 2,
 				term->colsize, 2
 			);
 			break;
@@ -442,15 +441,16 @@ void
 event_resize(void *ref, int width, int height)
 {
 	Client *client = ref;
-	Win *win = client->win;
 	Term *term = client->term;
 
-	int cols = (width - 2 * win->bw) / term->colsize;
-	int rows = (height - 2 * win->bw) / term->rowsize;
+	int cols = (width - 2 * client->border) / term->colsize;
+	int rows = (height - 2 * client->border) / term->rowsize;
 
-	win_resize_client(win, width, height);
+	/* win_resize_client(win, width, height); */
 	if (cols != term->cols || rows != term->rows) {
 		term_resize(term, cols, rows);
 	}
+	client->width = width;
+	client->height = height;
 }
 
