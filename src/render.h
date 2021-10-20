@@ -3,6 +3,7 @@
 
 #include "defs.h"
 #include "window.h"
+#include "fonts.h"
 
 typedef struct {
 	PixelFormat format;
@@ -13,20 +14,20 @@ typedef struct {
 } GlyphInfo;
 
 typedef struct {
-	uint32 font;
-	uint32 glyph;
+	uint32 style;
+	uint32 ucs4;
 	uint32 fg;
 	uint32 bg;
 } GlyphRender;
 
 typedef struct GlyphCache GlyphCache;
 
-struct GlyphCache *glyphcache_create(int, PixelFormat, int, int);
-void glyphcache_destroy(struct GlyphCache *);
-GlyphInfo *glyphcache_submit_bitmap(struct GlyphCache *, uint32, const uchar *, GlyphInfo);
+void *glyphcache_create(int);
+void glyphcache_add_glyph(void *, uint32, const Bitmap *);
+void glyphcache_destroy(void *);
 
 void draw_rect(const WinClient *, uint32, int, int, int, int);
-void draw_text_utf8(const WinClient *, const GlyphRender *, uint, int, int);
+void draw_text_utf8(const WinClient *, FontSet *, const GlyphRender *, uint, int, int);
 
 #endif
 

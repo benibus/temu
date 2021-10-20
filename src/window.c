@@ -583,6 +583,12 @@ server_get_display(void)
 	return server.dpy;
 }
 
+float
+server_get_dpi(void)
+{
+	return server.dpi;
+}
+
 int
 server_events_pending(void)
 {

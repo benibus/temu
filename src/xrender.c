@@ -31,19 +31,10 @@ static struct {
 	struct WinSurface surface;
 } globals;
 
-struct GlyphBitmap {
-	GlyphInfo info;
-	void *data;
-};
-
 struct GlyphCache {
 	Display *dpy;
 	XRenderPictFormat *pictformat;
 	GlyphSet glyphset;
-	PixelFormat format;
-	int count;
-	int ascent, descent;
-	struct GlyphBitmap bitmaps[];
 };
 
 static Picture get_color_handle(WinSurface *, uint32);
@@ -98,27 +89,20 @@ surface_resize(WinSurface *surface, int width, int height)
 	);
 }
 
-struct GlyphCache *
-glyphcache_create(int count, PixelFormat format, int ascent, int descent)
+void *
+glyphcache_create(int depth)
 {
 	int format_id;
 
-	switch (format) {
-	case PixelFormatMono: format_id = PictStandardA1;     break;
-	case PixelFormatRGB:  format_id = PictStandardRGB24;  break;
-	case PixelFormatRGBA: format_id = PictStandardARGB32; break;
-	default: format_id = PictStandardA8; break;
+	switch (depth) {
+	case 1:  format_id = PictStandardA1;     break;
+	case 8:  format_id = PictStandardA8;     break;
+	case 24: format_id = PictStandardRGB24;  break;
+	case 32: format_id = PictStandardARGB32; break;
 	}
 
-	size_t size = offsetof(struct GlyphCache, bitmaps) + sizeof(struct GlyphBitmap) * count;
-
-	struct GlyphCache *cache = xcalloc(size, 1);
-
+	GlyphCache *cache = xcalloc(1, sizeof(*cache));
 	cache->dpy        = server_get_display();
-	cache->count      = count;
-	cache->format     = format;
-	cache->ascent     = ascent;
-	cache->descent    = descent;
 	cache->pictformat = XRenderFindStandardFormat(cache->dpy, format_id);
 	cache->glyphset   = XRenderCreateGlyphSet(cache->dpy, cache->pictformat);
 
@@ -126,146 +110,49 @@ glyphcache_create(int count, PixelFormat format, int ascent, int descent)
 }
 
 void
-glyphcache_destroy(GlyphCache *cache)
+glyphcache_destroy(void *generic)
 {
+	GlyphCache *cache = generic;
 	XRenderFreeGlyphSet(cache->dpy, cache->glyphset);
 	free(cache);
 }
 
-GlyphInfo *
-glyphcache_submit_bitmap(GlyphCache *cache, uint32 glyph, const uchar *srcbuf, GlyphInfo srcinfo)
+void
+glyphcache_add_glyph(void *generic, uint32 glyph, const Bitmap *bitmap)
 {
-	ASSERT(cache && cache->dpy);
+	GlyphCache *cache = generic;
 
-	GlyphInfo dstinfo = srcinfo;
-
-	dstinfo.format = cache->format;
-
-	// Compute the aligned pitch
-	switch (srcinfo.format) {
-	case PixelFormatMono:
-		dstinfo.pitch = ALIGN_UP(srcinfo.width, 32) >> 3;
-		break;
-	case PixelFormatRGBA:
-		dstinfo.pitch = srcinfo.width * 4;
-		break;
-	case PixelFormatAlpha:
-	default:
-		dstinfo.pitch = ALIGN_UP(srcinfo.width, 4);
-		break;
-	}
-
-	static uchar local[4096];
-	uchar *dstbuf = local;
-
-	if (dstinfo.pitch * dstinfo.height > (int)sizeof(local)) {
-		dstbuf = xmalloc(dstinfo.pitch * dstinfo.height, 1);
-	}
-
-	const uchar *src = srcbuf;
-	uchar *dst = dstbuf;
-
-	switch (srcinfo.format) {
-	case PixelFormatMono:
-		goto cleanup;
-	case PixelFormatAlpha:
-		switch (dstinfo.format) {
-		// grayscale to grayscale
-		case PixelFormatAlpha:
-			for (int y = 0; y < dstinfo.height; y++) {
-				memcpy(dst, src, dstinfo.width);
-				src += srcinfo.pitch;
-				dst += dstinfo.pitch;
-			}
-			break;
-		// grayscale to ARGB
-		case PixelFormatRGBA:
-			for (int y = 0; y < dstinfo.height; y++) {
-				for (int x = 0; x < dstinfo.width; x++) {
-					((uint32 *)dst)[x] = (
-						(src[x] << 24)|
-						(src[x] << 16)|
-						(src[x] <<  8)|
-						(src[x] <<  0)
-					);
-				}
-				src += srcinfo.pitch;
-				dst += dstinfo.pitch;
-			}
-			break;
-		default:
-			goto cleanup;
-		}
-		break;
-	case PixelFormatRGBA:
-		switch (dstinfo.format) {
-		// BGRA to grayscale
-		case PixelFormatAlpha:
-			goto cleanup;
-		// BGRA to ARGB
-		case PixelFormatRGBA:
-			// TODO(ben): Almost certainly wrong. Need to test with color glyphs.
-			for (int y = 0; y < dstinfo.height; y++) {
-				for (int x = 0; x < dstinfo.width; x += 4) {
-					uint32 pixel = (
-						(src[x+3] << 24)|
-						(src[x+2] << 16)|
-						(src[x+1] <<  8)|
-						(src[x+0] <<  0)
-					);
-					*((uint32 *)(dst + x)) = pixel;
-				}
-				src += srcinfo.pitch * 4;
-				dst += dstinfo.pitch;
-			}
-			break;
-		default:
-			goto cleanup;
-		}
-		break;
-	default:
-		goto cleanup;
-	}
-
-	// Add bitmap to glyphset
 	XRenderAddGlyphs(
 		cache->dpy,
 		cache->glyphset,
 		(Glyph *)&glyph,
 		&(XGlyphInfo){
-			.width  = dstinfo.width,
-			.height = dstinfo.height,
-			.x      = dstinfo.x_bearing,
-			.y      = dstinfo.y_bearing,
-			.xOff   = dstinfo.x_advance,
-			.yOff   = dstinfo.y_advance
+			.width  = bitmap->width,
+			.height = bitmap->height,
+			.x      = bitmap->x_bearing,
+			.y      = bitmap->y_bearing,
+			.xOff   = bitmap->x_advance,
+			.yOff   = bitmap->y_advance
 		},
 		1,
-		(char *)dstbuf,
-		dstinfo.height * dstinfo.pitch
+		(char *)bitmap->data,
+		bitmap->height * bitmap->pitch
 	);
-
-	cache->bitmaps[glyph].info = dstinfo;
-
-cleanup:
-	if (dstbuf != local) {
-		free(dstbuf);
-	}
-
-	return &cache->bitmaps[glyph].info;
 }
 
 void
-draw_text_utf8(const WinClient *win, const GlyphRender *cmds, uint max, int x, int y)
+draw_text_utf8(const WinClient *win,
+               FontSet *fontset,
+               const GlyphRender *cmds, uint max,
+               int x, int y)
 {
 	ASSERT(win);
-	/* WinData *win = (WinData *)pub; */
 	WinSurface *surface = window_get_surface(win);
 
 	if (!max || !cmds) return;
 
 	struct {
-		uint32 font;
+		uint32 style;
 		uint32 bg;
 		uint32 fg;
 	} brush = { 0 };
@@ -277,9 +164,14 @@ draw_text_utf8(const WinClient *win, const GlyphRender *cmds, uint max, int x, i
 	struct { uint32 buf[2048]; uint n; } text = { 0 };
 	struct { XGlyphElt32 buf[32]; uint n; } elts = { 0 };
 
+	int width, ascent, descent;
+	if (!fontset_get_metrics(fontset, &width, NULL, &ascent, &descent)) {
+		return;
+	}
+
+	brush.style = cmds[0].style;
 	brush.bg = cmds[0].bg;
 	brush.fg = cmds[0].fg;
-	brush.font = cmds[0].font;
 
 	pos.x1 = pos.x0 = x;
 	pos.y1 = pos.y0 = y;
@@ -289,10 +181,11 @@ draw_text_utf8(const WinClient *win, const GlyphRender *cmds, uint max, int x, i
 	bool flushed = true;
 
 	for (uint i = 0; i < max; i++) {
-		const GlyphCache *cache = font_get_render_data(cmds[i].font);
+		FontGlyph result = fontset_get_codepoint(fontset, brush.style, cmds[i].ucs4);
+		const GlyphCache *cache = font_get_generic(result.font);
 
-		int chdx = cache->bitmaps[cmds[i].glyph].info.x_advance;
-		int chdy = cache->bitmaps[cmds[i].glyph].info.y_advance;
+		int chdx = width;
+		int chdy = 0;
 		int adjx = 0;
 		int adjy = 0;
 
@@ -306,7 +199,7 @@ draw_text_utf8(const WinClient *win, const GlyphRender *cmds, uint max, int x, i
 			pos.x0 = pos.x1;
 			pos.y0 = pos.y1;
 			pos.kx = 0;
-			pos.ky = cache->ascent;
+			pos.ky = ascent;
 		}
 		// Elt positions must be specified relative to the previous elt in the array.
 		// This is why only the first elt (per draw call) receives the offset from
@@ -320,7 +213,7 @@ draw_text_utf8(const WinClient *win, const GlyphRender *cmds, uint max, int x, i
 		elts.buf[elts.n].yOff = pos.y0 + pos.ky + adjy;
 		elts.buf[elts.n].glyphset = cache->glyphset;
 		elts.buf[elts.n].nchars++;
-		text.buf[text.n++] = cmds[i].glyph;
+		text.buf[text.n++] = result.glyph;
 
 		flushed = false;
 		// accumulate position so we can set the new leading elt after drawing
@@ -332,7 +225,7 @@ draw_text_utf8(const WinClient *win, const GlyphRender *cmds, uint max, int x, i
 		if (i + 1 < max && elts.n < LEN(elts.buf) && text.n < LEN(text.buf)) {
 			if (cmds[i+1].fg == brush.fg &&
 			    cmds[i+1].bg == brush.bg &&
-			    cmds[i+1].font == cmds[i].font)
+			    cmds[i+1].style == cmds[i].style)
 			{
 				continue;
 			}
@@ -345,7 +238,7 @@ draw_text_utf8(const WinClient *win, const GlyphRender *cmds, uint max, int x, i
 				pos.x0,
 				pos.y0,
 				pos.x1 - pos.x0,
-				cache->ascent + cache->descent
+				ascent + descent
 			);
 		}
 
@@ -370,7 +263,7 @@ draw_text_utf8(const WinClient *win, const GlyphRender *cmds, uint max, int x, i
 			text.n = elts.n = 0, flushed = true;
 			brush.fg = cmds[i+1].fg;
 			brush.bg = cmds[i+1].bg;
-			brush.font = cmds[i+1].font;
+			brush.style = cmds[i+1].style;
 		}
 	}
 }

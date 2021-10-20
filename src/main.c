@@ -41,7 +41,7 @@ typedef struct Client_ {
 
 static Client client_;
 
-static FontID fonts[4];
+static FontSet *fontset;
 static bool toggle_render = true;
 
 static void run(Client *);
@@ -125,22 +125,26 @@ error_invalid:
 		return 2;
 	}
 
-	fonts[0] = font_create(config.font);
-	if (!fonts[0]) {
-		errfatal(1, "Failed to create default font");
-	} else {
-		fonts[ATTR_BOLD] = font_create_derivative(fonts[0], STYLE_BOLD);
-		fonts[ATTR_ITALIC] = font_create_derivative(fonts[0], STYLE_ITALIC);
-		fonts[ATTR_BOLD|ATTR_ITALIC] = font_create_derivative(fonts[0], STYLE_BOLD|STYLE_ITALIC);
+	if (!fontmgr_configure(
+		server_get_dpi(),
+		glyphcache_create,
+		glyphcache_add_glyph,
+		glyphcache_destroy))
+	{
+		return false;
 	}
 
-	for (int i = 0; i < 4; i++) {
-		ASSERT(fonts[i]);
-		dbgprintf("Initializing font[%d] = %#.08x\n", i, fonts[i]);
-		if (!font_init(fonts[i])) {
-			dbgprintfl("Failed to initialize font %d", i);
-		}
+	fontset = fontmgr_create_fontset(config.font);
+	ASSERT(fontset);
+
+	{
+		int width, height, ascent, descent;
+
+		fontset_get_metrics(fontset, &width, &height, &ascent, &descent);
+		termcfg.colsize = width;
+		termcfg.rowsize = ascent + descent;
 	}
+
 
 	for (uint i = 0; i < LEN(config.colors); i++) {
 		ASSERT(config.colors[i]);
@@ -156,14 +160,6 @@ error_invalid:
 			dbgprintf("failed to parse RGB string: %s\n", config.colors[i]);
 			exit(EXIT_FAILURE);
 		}
-	}
-
-	{
-		int width, height, ascent, descent;
-
-		font_get_extents(fonts[0], &width, &height, &ascent, &descent);
-		termcfg.colsize = width;
-		termcfg.rowsize = ascent + descent;
 	}
 
 	WinClient *win = server_create_window(
@@ -267,7 +263,6 @@ run(Client *client)
 void
 client_draw_screen(Client *client)
 {
-	/* Win *win = client->win; */
 	Term *term = client->term;
 	int width = client->width;
 	int height = client->height;
@@ -300,18 +295,14 @@ client_draw_screen(Client *client)
 				SWAP(uint32, cell.bg, cell.fg);
 			}
 
-			font_load_codepoint(
-				fonts[cell.attrs & (ATTR_BOLD|ATTR_ITALIC)],
-				cell.ucs4,
-				&cmds[col].font,
-				&cmds[col].glyph
-			);
+			cmds[col].style = cell.attrs & (ATTR_BOLD|ATTR_ITALIC);
+			cmds[col].ucs4 = cell.ucs4;
 			cmds[col].bg = pack_xrgb(cell.bg, (cell.bg != term->color_bg) ? 0xff : 0);
 			cmds[col].fg = pack_xrgb(cell.fg, 0xff);
 		}
 
 		if (len) {
-			draw_text_utf8(client->win, cmds, len, border, border + row * term->rowsize);
+			draw_text_utf8(client->win, fontset, cmds, len, border, border + row * term->rowsize);
 		}
 	}
 #undef ROWBUF_MAX
@@ -338,12 +329,8 @@ client_draw_cursor(const Client *client)
 
 		GlyphRender cmd = { 0 };
 
-		font_load_codepoint(
-			fonts[cell.attrs & (ATTR_BOLD|ATTR_ITALIC)],
-			cell.ucs4,
-			&cmd.font,
-			&cmd.glyph
-		);
+		cmd.style = cell.attrs & (ATTR_BOLD|ATTR_ITALIC);
+		cmd.ucs4 = cell.ucs4;
 
 		draw_rect(
 			win,
@@ -360,7 +347,8 @@ client_draw_cursor(const Client *client)
 			cmd.bg = 0;
 			cmd.fg = pack_xrgb(cell.fg, 0xff);
 			draw_text_utf8(
-				client->win, &cmd, 1,
+				client->win, fontset,
+				&cmd, 1,
 				border + cursor.col * term->colsize,
 				border + cursor.row * term->rowsize
 			);
@@ -375,7 +363,8 @@ client_draw_cursor(const Client *client)
 			cmd.bg = pack_xrgb(term->color_fg, 0xff);
 			cmd.fg = pack_xrgb(term->color_bg, 0xff);
 			draw_text_utf8(
-				client->win, &cmd, 1,
+				client->win, fontset,
+				&cmd, 1,
 				border + cursor.col * term->colsize,
 				border + cursor.row * term->rowsize
 			);
@@ -384,7 +373,8 @@ client_draw_cursor(const Client *client)
 			cmd.bg = 0;
 			cmd.fg = pack_xrgb(cell.fg, 0xff);
 			draw_text_utf8(
-				client->win, &cmd, 1,
+				client->win, fontset,
+				&cmd, 1,
 				border + cursor.col * term->colsize,
 				border + cursor.row * term->rowsize
 			);
@@ -446,7 +436,6 @@ event_resize(void *ref, int width, int height)
 	int cols = (width - 2 * client->border) / term->colsize;
 	int rows = (height - 2 * client->border) / term->rowsize;
 
-	/* win_resize_client(win, width, height); */
 	if (cols != term->cols || rows != term->rows) {
 		term_resize(term, cols, rows);
 	}

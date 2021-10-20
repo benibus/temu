@@ -9,17 +9,35 @@
 #define STYLE_OBLIQUE (1 << 2)
 #define STYLE_MAX     (1 << 3)
 
-typedef uint32 FontID;
-typedef uint64 GlyphID;
+typedef struct {
+	int width;
+	int height;
+	int pitch;
+	int x_advance;
+	int y_advance;
+	int x_bearing;
+	int y_bearing;
+	int ascent;
+	int descent;
+	void *data;
+} Bitmap;
 
-FontID font_create(const char *);
-FontID font_create_derivative(FontID, uint);
-void font_destroy(FontID);
-bool font_get_extents(FontID, int *, int *, int *, int *);
-void *font_get_render_data(FontID);
-bool font_init(FontID);
-bool font_query_glyph(FontID, uint32, FontID *, uint32 *);
-bool font_load_codepoint(FontID, uint32, FontID *, uint32 *);
-void font_print_debug(FontID);
+typedef struct FontSet FontSet;
+typedef struct FontData FontData;
+
+typedef struct {
+	FontData *font;
+	uint32 glyph;
+} FontGlyph;
+
+typedef void *(*FontHookCreate)(int depth);
+typedef void (*FontHookAdd)(void *generic, uint32 glyph, const Bitmap *);
+typedef void (*FontHookDestroy)(void *generic);
+
+bool fontmgr_configure(double, FontHookCreate, FontHookAdd, FontHookDestroy);
+FontSet *fontmgr_create_fontset(const char *);
+FontGlyph fontset_get_codepoint(FontSet *, uint, uint32);
+bool fontset_get_metrics(const FontSet *, int *, int *, int *, int *);
+void *font_get_generic(const FontData *);
 
 #endif
