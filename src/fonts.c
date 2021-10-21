@@ -16,7 +16,7 @@
 #include <fontconfig/fcfreetype.h>
 
 #ifndef NDEBUG
-  #define DEBUG_PRINT_GLYPHS  0
+  #define DEBUG_PRINT_GLYPHS  1
   #define DEBUG_PRINT_PATTERN 0
 #else
   #define DEBUG_PRINT_GLYPHS  0
@@ -763,7 +763,12 @@ dbg_print_freetype_bitmap(const FT_FaceRec *face)
 		"    height      = %d\n"
 		"    max_advance_width  = %d\n"
 		"    max_advance_height = %d\n"
-		"  Bitmap\n"
+		"  FaceSizeMetrics\n"
+		"    ascender    = %ld\n"
+		"    descender   = %ld\n"
+		"    height      = %ld\n"
+		"    max_advance = %ld\n"
+		"  GlyphBitmap\n"
 		"    width       = %d\n"
 		"    height      = %d\n"
 		"    pitch       = %d\n"
@@ -772,7 +777,7 @@ dbg_print_freetype_bitmap(const FT_FaceRec *face)
 		"    advance.y   = %d\n"
 		"    bearing.x   = %d\n"
 		"    bearing.y   = %d\n"
-		"  Metrics\n"
+		"  GlyphMetrics\n"
 		"    width       = %ld\n"
 		"    height      = %ld\n"
 		"    h_advance   = %ld\n"
@@ -788,6 +793,10 @@ dbg_print_freetype_bitmap(const FT_FaceRec *face)
 		face->height >> 6,
 		face->max_advance_width >> 6,
 		face->max_advance_height >> 6,
+		face->size->metrics.ascender >> 6,
+		face->size->metrics.descender >> 6,
+		face->size->metrics.height >> 6,
+		face->size->metrics.max_advance >> 6,
 		width, height, pitch, pitch * height,
 		x_advance, y_advance,
 		x_bearing, y_bearing,
