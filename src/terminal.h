@@ -5,30 +5,6 @@
 #include "cells.h"
 #include "ring.h"
 
-#define ATTR_NONE      (0)
-#define ATTR_BOLD      (1 << 0)
-#define ATTR_ITALIC    (1 << 1)
-#define ATTR_UNDERLINE (1 << 2)
-#define ATTR_BLINK     (1 << 3)
-#define ATTR_INVERT    (1 << 4)
-#define ATTR_INVISIBLE (1 << 5)
-#define ATTR_MAX       (1 << 6)
-#define ATTR_MASK      (ATTR_MAX-1)
-
-typedef enum {
-	CursorStyleDefault,
-	CursorStyleBlock       = 2,
-	CursorStyleUnderscore  = 4,
-	CursorStyleBar         = 5,
-	CursorStyleOutline     = 7
-} CursorStyle;
-
-typedef struct {
-	int col, row;
-	CursorStyle style;
-	uint32 color;
-} Cursor;
-
 struct TermConfig {
 	char *shell;
 	uint16 cols, rows;
@@ -40,7 +16,7 @@ struct TermConfig {
 	uint32 colors[16];
 };
 
-#define IOBUF_MAX 4096
+#define IOBUF_MAX (4096)
 
 typedef struct {
 	int pid;                // PTY PID
@@ -67,7 +43,7 @@ typedef struct {
 	bool wrapnext;
 	bool hidecursor;
 
-	Cell *framebuf;
+	Frame frame;
 	Cell cell;
 	CursorStyle crs_style;
 	uint32 crs_color;
@@ -91,7 +67,7 @@ Term *term_create(struct TermConfig);
 void term_destroy(Term *);
 bool term_init(Term *, struct TermConfig);
 int term_exec(Term *, const char *);
-size_t term_pull(Term *);
+size_t term_pull(Term *, uint32);
 size_t term_push(Term *, const char *, size_t);
 size_t term_consume(Term *, const uchar *, size_t);
 void term_scroll(Term *, int);
@@ -99,9 +75,10 @@ void term_reset_scroll(Term *);
 void term_resize(Term *, int, int);
 Cell *term_get_row(const Term *, int);
 Cell term_get_cell(const Term *, int, int);
-bool term_get_cursor(const Term *, Cursor *);
+bool term_get_cursor(const Term *, CursorDesc *);
 size_t term_make_key_string(const Term *, uint, uint, char *, size_t);
 Cell *term_get_framebuffer(Term *);
+Frame *term_generate_frame(Term *);
 
 void term_print_summary(const Term *, uint);
 void term_print_history(const Term *);

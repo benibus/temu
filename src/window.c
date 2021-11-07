@@ -1,11 +1,15 @@
 #include "utils.h"
-#include "x11.h"
+#include "window.h"
+#define OPENGL_INCLUDE_PLATFORM 1
+#include "opengl.h"
 
 #include <errno.h>
 #include <locale.h>
 #include <poll.h>
 #include <unistd.h>
 
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
 #include <X11/keysym.h>
 #include <X11/Xatom.h>
 
@@ -14,9 +18,8 @@
    PointerMotionMask|ButtonPressMask|ButtonReleaseMask| \
    ExposureMask|FocusChangeMask|VisibilityChangeMask|   \
    EnterWindowMask|LeaveWindowMask|PropertyChangeMask)
-#define WINFLAGS_DEFAULT (WINATTR_RESIZABLE)
-#define ATOM(atom_) wm_atoms[(atom_)]
 
+#define ATOM(atom_) wm_atoms[(atom_)]
 enum {
 	WM_PROTOCOLS,
 	WM_STATE,
@@ -40,10 +43,57 @@ enum {
 	NUM_ATOM
 };
 
-static Atom wm_atoms[NUM_ATOM];
+struct Server {
+	Display *dpy;
+	int screen;
+	Window root;
+	Visual *visual;
+	XIM im;
+	Colormap colormap;
+	int fd;
+	int dpy_width;
+	int dpy_height;
+	float dpi;
+	int depth;
+	struct {
+		EGLDisplay dpy;
+		EGLContext context;
+		EGLConfig config;
+		struct {
+			EGLint major;
+			EGLint minor;
+		} version;
+	} egl;
+};
 
-static struct WinServer server;
-static WinClient clients[4];
+static struct Server server;
+
+struct Win_ {
+	void *param;
+	struct Server *server;
+	Window xid;
+	XIC ic;
+	GC gc;
+	EGLSurface surface;
+	bool online;
+	int pid;
+	int xpos;
+	int ypos;
+	int width;
+	int height;
+	int border;
+	struct {
+		EventFuncResize   resize;
+		EventFuncKeyPress keypress;
+		EventFuncExpose   expose;
+	} callbacks;
+};
+
+static Atom wm_atoms[NUM_ATOM];
+static Win clients[4];
+
+static void x11_query_dimensions(Win *win, int *width, int *height, int *border);
+static void x11_query_coordinates(Win *win, int *xpos, int *ypos);
 
 bool
 server_setup(void)
@@ -55,6 +105,12 @@ server_setup(void)
 	setlocale(LC_CTYPE, "");
 
 	if (!(server.dpy = XOpenDisplay(NULL))) {
+		return false;
+	}
+	if (!(server.egl.dpy = eglGetDisplay((EGLNativeDisplayType)server.dpy))) {
+		return false;
+	}
+	if (!(eglInitialize(server.egl.dpy, &server.egl.version.major, &server.egl.version.minor))) {
 		return false;
 	}
 
@@ -137,10 +193,25 @@ server_setup(void)
 		XVisualInfo template = { 0 };
 		XVisualInfo *visinfo;
 		int count_;
+		static const EGLint eglattrs[] = {
+			EGL_RED_SIZE,        8,
+			EGL_GREEN_SIZE,      8,
+			EGL_BLUE_SIZE,       8,
+			EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+			EGL_NONE
+		};
+		EGLint visid, nconfig;
 
-		template.visualid = XVisualIDFromVisual(DefaultVisual(server.dpy, server.screen));
+		if (!eglChooseConfig(server.egl.dpy, eglattrs, &server.egl.config, 1, &nconfig)) {
+			return false;
+		}
+		ASSERT(server.egl.config && nconfig > 0);
+		if (!eglGetConfigAttrib(server.egl.dpy, server.egl.config, EGL_NATIVE_VISUAL_ID, &visid)) {
+			return false;
+		}
+		template.visualid = visid;
+
 		visinfo = XGetVisualInfo(server.dpy, VisualIDMask, &template, &count_);
-
 		if (!visinfo) {
 			return false;
 		}
@@ -150,6 +221,31 @@ server_setup(void)
 		server.colormap = XCreateColormap(server.dpy, server.root, server.visual, AllocNone);
 
 		XFree(visinfo);
+
+		eglBindAPI(EGL_OPENGL_ES_API);
+
+		// TODO(ben): Global or window-specific context?
+		server.egl.context = eglCreateContext(
+			server.egl.dpy,
+			server.egl.config,
+			EGL_NO_CONTEXT,
+			(EGLint []){
+				EGL_CONTEXT_CLIENT_VERSION, 2,
+#if BUILD_DEBUG
+			EGL_CONTEXT_OPENGL_DEBUG, EGL_TRUE,
+#endif
+				EGL_NONE
+			}
+		);
+
+		if (!server.egl.context) {
+			dbgprint("Failed to open EGL context");
+			return false;
+		}
+
+		EGLint result = 0;
+		eglQueryContext(server.egl.dpy, server.egl.context, EGL_CONTEXT_CLIENT_TYPE, &result);
+		ASSERT(result == EGL_OPENGL_ES_API);
 	}
 
 	server.fd = ConnectionNumber(server.dpy);
@@ -161,7 +257,7 @@ server_setup(void)
 	return true;
 }
 
-WinClient *
+Win *
 server_create_window(struct WinConfig config)
 {
 	if (!server.dpy) {
@@ -184,7 +280,7 @@ server_create_window(struct WinConfig config)
 	const uint16 width      = 2 * config.border + config.cols * config.colpx;
 	const uint16 height     = 2 * config.border + config.rows * config.rowpx;
 
-	WinClient *win = NULL;
+	Win *win = NULL;
 	for (uint i = 0; i < LEN(clients); i++) {
 		if (!clients[i].server) {
 			win = &clients[i];
@@ -206,7 +302,7 @@ server_create_window(struct WinConfig config)
 		server.visual,
 		CWBackPixel|CWColormap|CWBitGravity|CWEventMask,
 		&(XSetWindowAttributes){
-#ifdef NDEBUG
+#if BUILD_DEBUG
 			.background_pixel = 0,
 #else
 			.background_pixel = 0xff00ff,
@@ -321,22 +417,114 @@ server_create_window(struct WinConfig config)
 	x11_query_dimensions(win, &win->width, &win->height, &win->border);
 	x11_query_coordinates(win, &win->xpos, &win->ypos);
 
-	win->callbacks.generic  = config.callbacks.generic;
+	win->param = config.param;
 	win->callbacks.resize   = config.callbacks.resize;
 	win->callbacks.keypress = config.callbacks.keypress;
 	win->callbacks.expose   = config.callbacks.expose;
 
-	win->surface = surface_create(win);
-
+	// OpenGL surface initialization
+	win->surface = eglCreateWindowSurface(
+		server.egl.dpy,
+		server.egl.config,
+		win->xid,
+		NULL
+	);
 	if (!win->surface) {
+		dbgprint("Failed to create EGL surface");
 		return NULL;
 	}
+
+	{
+		EGLint result;
+
+		eglQuerySurface(server.egl.dpy, win->surface, EGL_WIDTH, &result);
+		ASSERT(result == width);
+		eglQuerySurface(server.egl.dpy, win->surface, EGL_HEIGHT, &result);
+		ASSERT(result == height);
+		eglGetConfigAttrib(server.egl.dpy, server.egl.config, EGL_SURFACE_TYPE, &result);
+		ASSERT(result & EGL_WINDOW_BIT);
+	}
+
+	if (!window_make_current(win)) {
+		dbgprint("Failed to set current window");
+		return NULL;
+	}
+	egl_print_info(server.egl.dpy);
+
+	glDebugMessageCallback(gl_message_callback, (void *)win);
+	eglSwapInterval(server.egl.dpy, 0);
 
 	return win;
 }
 
 void
-window_get_dimensions(const WinClient *win, int *width, int *height, int *border)
+server_destroy_window(Win *win)
+{
+	ASSERT(win && win->xid && win->online);
+	XDestroyWindow(server.dpy, win->xid);
+	win->online = false;
+}
+
+float
+server_get_dpi(void)
+{
+	return server.dpi;
+}
+
+int
+server_events_pending(void)
+{
+	return XPending(server.dpy);
+}
+
+int
+server_get_fileno(void)
+{
+	return server.fd;
+}
+
+bool
+server_parse_color_string(const char *name, uint32 *result)
+{
+	XColor xcolor = { 0 };
+
+	if (!XParseColor(server.dpy, server.colormap, name, &xcolor)) {
+		return false;
+	}
+
+	if (result) {
+		*result = pack_argb(
+			xcolor.red   >> 8,
+			xcolor.green >> 8,
+			xcolor.blue  >> 8,
+			0x00
+		);
+	}
+
+	return true;
+}
+
+void
+window_update(const Win *win)
+{
+	eglSwapBuffers(server.egl.dpy, win->surface);
+}
+
+bool
+window_make_current(const Win *win)
+{
+	if (!eglMakeCurrent(server.egl.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT)) {
+		return false;
+	}
+	if (!eglMakeCurrent(server.egl.dpy, win->surface, win->surface, server.egl.context)) {
+		return false;
+	}
+
+	return true;
+}
+
+void
+window_get_dimensions(const Win *win, int *width, int *height, int *border)
 {
 	ASSERT(win);
 
@@ -345,14 +533,8 @@ window_get_dimensions(const WinClient *win, int *width, int *height, int *border
 	if (border) *border = win->border;
 }
 
-void *
-window_get_surface(const WinClient *win)
-{
-	return win->surface;
-}
-
 bool
-window_show(WinClient *win)
+window_show(Win *win)
 {
 	if (win->online) {
 		return true;
@@ -488,7 +670,7 @@ done:
 }
 
 int
-window_poll_events(WinClient *win)
+window_poll_events(Win *win)
 {
 	ASSERT(win);
 
@@ -509,10 +691,7 @@ window_poll_events(WinClient *win)
 		case ConfigureNotify: {
 			XConfigureEvent *e = (void *)&event;
 			if (win->callbacks.resize) {
-				win->callbacks.resize(win->callbacks.generic, e->width, e->height);
-			}
-			if (e->width != win->width || e->height != win->height) {
-				surface_resize(win->surface, e->width, e->height);
+				win->callbacks.resize(win->param, e->width, e->height);
 			}
 			win->width  = e->width;
 			win->height = e->height;
@@ -547,7 +726,7 @@ window_poll_events(WinClient *win)
 			x11_translate_key(ksym, e->state, &k.id, &k.mod);
 
 			if (win->callbacks.keypress && k.id != KeyNone) {
-				win->callbacks.keypress(win->callbacks.generic, k.id, k.mod, buf, k.len);
+				win->callbacks.keypress(win->param, k.id, k.mod, buf, k.len);
 			}
 
 			if (buf != k.buf) free(buf);
@@ -556,8 +735,7 @@ window_poll_events(WinClient *win)
 		case ClientMessage: {
 			XClientMessageEvent *e = (void *)&event;
 			if ((Atom)e->data.l[0] == ATOM(WM_DELETE_WINDOW)) {
-				XDestroyWindow(server.dpy, win->xid);
-				win->online = false;
+				server_destroy_window(win);
 			}
 			break;
 		}
@@ -572,58 +750,13 @@ window_poll_events(WinClient *win)
 }
 
 bool
-window_online(const WinClient *win)
+window_online(const Win *win)
 {
 	return win->online;
 }
 
-void *
-server_get_display(void)
-{
-	return server.dpy;
-}
-
-float
-server_get_dpi(void)
-{
-	return server.dpi;
-}
-
-int
-server_events_pending(void)
-{
-	return XPending(server.dpy);
-}
-
-int
-server_get_fileno(void)
-{
-	return server.fd;
-}
-
-bool
-server_parse_color_string(const char *name, uint32 *result)
-{
-	XColor xcolor = { 0 };
-
-	if (!XParseColor(server.dpy, server.colormap, name, &xcolor)) {
-		return false;
-	}
-
-	if (result) {
-		*result = pack_argb(
-			xcolor.red   >> 8,
-			xcolor.green >> 8,
-			xcolor.blue  >> 8,
-			0x00
-		);
-	}
-
-	return true;
-}
-
 void
-x11_query_dimensions(WinClient *win, int *width, int *height, int *border)
+x11_query_dimensions(Win *win, int *width, int *height, int *border)
 {
 	ASSERT(win);
 
@@ -636,7 +769,7 @@ x11_query_dimensions(WinClient *win, int *width, int *height, int *border)
 }
 
 void
-x11_query_coordinates(WinClient *win, int *xpos, int *ypos)
+x11_query_coordinates(Win *win, int *xpos, int *ypos)
 {
 	ASSERT(win);
 

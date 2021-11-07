@@ -6,8 +6,8 @@
 #include "utils.h"
 #include "terminal.h"
 #include "window.h"
-#include "render.h"
 #include "fonts.h"
+#include "renderer.h"
 
 #define MAX_CFG_COLORS (2+16)
 
@@ -30,29 +30,35 @@ typedef struct Config {
 #include "config.h"
 
 typedef struct Client_ {
-	/* Win *win; */
-	WinClient *win;
+	Win *win;
 	Term *term;
 	int scrollinc;
 	int width;
 	int height;
-	int border;
+	int borderpx;
+	int cols;
+	int rows;
+	int colpx;
+	int rowpx;
 } Client;
 
 static Client client_;
 
-static FontSet *fontset;
-static bool toggle_render = true;
+FontSet *fontset = NULL;
+static struct TermConfig termcfg;
 
 static void run(Client *);
-static void client_draw_screen(Client *);
-static void client_draw_cursor(const Client *);
-static void event_key_press(void *, int, int, char *, int);
+static void event_keypress(void *, int, int, char *, int);
 static void event_resize(void *, int, int);
 
 int
 main(int argc, char **argv)
 {
+	static_assert(FontStyleRegular == ATTR_NONE, "Bitmask mismatch.");
+	static_assert(FontStyleBold == ATTR_BOLD, "Bitmask mismatch.");
+	static_assert(FontStyleItalic == ATTR_ITALIC, "Bitmask mismatch.");
+	static_assert(FontStyleBoldItalic == (ATTR_BOLD|ATTR_ITALIC), "Bitmask mismatch.");
+
 	for (int opt; (opt = getopt(argc, argv, "T:N:C:S:f:c:r:x:y:b:m:s:")) != -1; ) {
 		union {
 			char *s;
@@ -116,26 +122,18 @@ error_invalid:
 		exit(1);
 	}
 
-	struct TermConfig termcfg = { 0 };
-
-	// temporary
-	srand(time_get_mono_msec(NULL));
-
 	if (!server_setup()) {
 		return 2;
 	}
 
-	if (!fontmgr_configure(
-		server_get_dpi(),
-		glyphcache_create,
-		glyphcache_add_glyph,
-		glyphcache_destroy))
-	{
+	if (!fontmgr_init(server_get_dpi())) {
+		dbgprint("Failed to initialize font manager");
 		return false;
 	}
-
-	fontset = fontmgr_create_fontset(config.font);
-	ASSERT(fontset);
+	if (!(fontset = fontmgr_create_fontset(config.font))) {
+		dbgprint("Failed to instantiate fonts");
+		return false;
+	}
 
 	{
 		int width, height, ascent, descent;
@@ -157,13 +155,14 @@ error_invalid:
 		default: dst = &termcfg.colors[i-2]; break;
 		}
 		if (!server_parse_color_string(config.colors[i], dst)) {
-			dbgprintf("failed to parse RGB string: %s\n", config.colors[i]);
+			dbgprintf("Failed to parse RGB string: %s\n", config.colors[i]);
 			exit(EXIT_FAILURE);
 		}
 	}
 
-	WinClient *win = server_create_window(
+	Win *win = server_create_window(
 		(struct WinConfig){
+			.param = &client_,
 			.smooth_resize = false,
 			.wm_title    = config.wm_title,
 			.wm_instance = config.wm_instance,
@@ -174,9 +173,8 @@ error_invalid:
 			.rowpx       = termcfg.rowsize,
 			.border      = config.border_px,
 			.callbacks = {
-				.generic  = &client_,
 				.resize   = event_resize,
-				.keypress = event_key_press,
+				.keypress = event_keypress,
 				.expose   = NULL
 			}
 		}
@@ -185,14 +183,33 @@ error_invalid:
 	if (!win || !window_show(win)) {
 		exit(EXIT_FAILURE);
 	}
-	window_get_dimensions(win, &client_.width, &client_.height, &client_.border);
+	window_get_dimensions(win, &client_.width, &client_.height, &client_.borderpx);
 
-	termcfg.cols = (client_.width - 2 * client_.border) / termcfg.colsize;
-	termcfg.rows = (client_.height - 2 * client_.border) / termcfg.rowsize;
+	if (!fontset_init(fontset)) {
+		dbgprint("Failed to initialize FontSet");
+		exit(EXIT_FAILURE);
+	}
 
-	ASSERT(termcfg.cols == (int)config.columns);
-	ASSERT(termcfg.rows == (int)config.rows);
+	client_.colpx  = termcfg.colsize;
+	client_.rowpx  = termcfg.rowsize;
+	client_.cols   = (client_.width - 2 * client_.borderpx) / client_.colpx;
+	client_.rows   = (client_.height - 2 * client_.borderpx) / client_.rowpx;
+	ASSERT(client_.cols == (int)config.columns);
+	ASSERT(client_.rows == (int)config.rows);
 
+	if (!renderer_init()) {
+		dbgprint("Failed to initialize renderer");
+		exit(EXIT_FAILURE);
+	}
+	renderer_set_dimensions(
+		client_.width, client_.height,
+		client_.cols, client_.rows,
+		client_.colpx, client_.rowpx,
+		client_.borderpx
+	);
+
+	termcfg.cols = client_.cols;
+	termcfg.rows = client_.rows;
 	termcfg.shell = config.shell;
 	termcfg.histlines = MAX(config.histsize, termcfg.rows);
 	termcfg.tabcols = DEFAULT(config.tablen, 8);
@@ -216,191 +233,105 @@ run(Client *client)
 {
 	Term *term = client->term;
 
-	do {
-		client_draw_screen(client);
-	} while (window_poll_events(client->win));
+	window_make_current(client->win);
+
+	if (!window_online(client->win)) {
+		return;
+	}
 
 	const int srvfd = server_get_fileno();
 	const int ptyfd = term_exec(term, config.shell);
+
+	do {
+		renderer_draw_frame(term_generate_frame(term));
+		window_update(client->win);
+	} while (window_poll_events(client->win));
 
 	struct pollfd pollset[] = {
 		{ .fd = ptyfd, .events = POLLIN, .revents = 0 },
 		{ .fd = srvfd, .events = POLLIN, .revents = 0 }
 	};
-	static_assert(LEN(pollset) == 2, "Unexpected pollset size.");
+
+	static_assert(LEN(pollset) == 2, "Unexpected pollset size");
 
 	// Target polling rate
-	static const int msec = 16;
+	static const uint32 msec = 16;
 
 	while (window_online(client->win)) {
-		switch (poll(pollset, 2, msec)) {
+		const uint32 basetime = time_get_mono_msec(NULL);
+		bool draw = true;
+
+		switch (poll(pollset, LEN(pollset), msec)) {
 		case -1:
-			if (errno) {
-				perror("poll()");
-				exit(errno);
+			if (!errno) {
+				return;
 			}
-			return;
+			perror("poll()");
+			exit(errno);
 		case 0:
 			if (!window_poll_events(client->win)) {
-				continue;
+				draw = false;
 			}
 			break;
-		case 1:
+		case LEN(pollset) - 1:
 			if (pollset[0].revents & POLLIN) {
-				term_pull(term);
-			} else if (!window_poll_events(client->win)) {
-				continue;
+				const int timeout = msec - (time_get_mono_msec(NULL) - basetime);
+				term_pull(term, MAX(timeout, 0));
+			} else {
+				if (!window_poll_events(client->win)) {
+					draw = false;
+				}
 			}
 			break;
-		case 2:
+		case LEN(pollset):
 			break;
 		}
 
-		client_draw_screen(client);
+		if (draw) {
+			renderer_draw_frame(term_generate_frame(client->term));
+			window_update(client->win);
+		}
 	}
 }
 
 void
-client_draw_screen(Client *client)
+event_resize(void *param, int width, int height)
 {
-	Term *term = client->term;
-	int width = client->width;
-	int height = client->height;
-	int border = client->border;
+	Client *client = param;
 
-#define ROWBUF_MAX 256
-	GlyphRender cmds[ROWBUF_MAX] = { 0 };
+	if (width == client->width && height == client->height) {
+		return;
+	}
 
-	draw_rect(
-		client->win,
-		pack_xrgb(term->color_bg, 0xff),
-		0, 0,
-		width,
-		height
+	const int cols = (width - 2 * client->borderpx) / client->colpx;
+	const int rows = (height - 2 * client->borderpx) / client->rowpx;
+
+	if (cols != client->term->cols || rows != client->term->rows) {
+		term_resize(client->term, cols, rows);
+	}
+
+	renderer_set_dimensions(
+		width, height,
+		cols, rows,
+		client->colpx, client->rowpx,
+		client->borderpx
 	);
 
-	const Cell *framebuf = term_get_framebuffer(term);
-	ASSERT(framebuf);
-
-	for (int row = 0; row < term->rows; row++) {
-		const Cell *cells = framebuf + row * term->cols;
-		int len = 0;
-
-		for (int col = 0; col < term->cols && col < ROWBUF_MAX; len++, col++) {
-			Cell cell = cells[col];
-
-			if (!cell.ucs4) break;
-
-			if (cell.attrs & ATTR_INVERT) {
-				SWAP(uint32, cell.bg, cell.fg);
-			}
-
-			cmds[col].style = cell.attrs & (ATTR_BOLD|ATTR_ITALIC);
-			cmds[col].ucs4 = cell.ucs4;
-			cmds[col].bg = pack_xrgb(cell.bg, (cell.bg != term->color_bg) ? 0xff : 0);
-			cmds[col].fg = pack_xrgb(cell.fg, 0xff);
-		}
-
-		if (len) {
-			draw_text_utf8(client->win, fontset, cmds, len, border, border + row * term->rowsize);
-		}
-	}
-#undef ROWBUF_MAX
-
-	// draw cursor last
-	client_draw_cursor(client);
-
-	window_render(client->win);
+	client->width  = width;
+	client->height = height;
+	client->cols   = cols;
+	client->rows   = rows;
 }
 
 void
-client_draw_cursor(const Client *client)
+event_keypress(void *param, int key, int mod, char *buf, int len)
 {
-	const WinClient *win = client->win;
-	const Term *term = client->term;
-	int width = client->width;
-	int height = client->height;
-	int border = client->border;
-
-	Cursor cursor = { 0 };
-
-	if (term_get_cursor(term, &cursor)) {
-		Cell cell = term_get_cell(term, cursor.col, cursor.row);
-
-		GlyphRender cmd = { 0 };
-
-		cmd.style = cell.attrs & (ATTR_BOLD|ATTR_ITALIC);
-		cmd.ucs4 = cell.ucs4;
-
-		draw_rect(
-			win,
-			pack_xrgb(term->color_bg, 0xff),
-			border + cursor.col * term->colsize,
-			border + cursor.row * term->rowsize,
-			term->colsize,
-			term->rowsize
-		);
-
-		switch (cursor.style) {
-		case CursorStyleDefault:
-		case CursorStyleBar:
-			cmd.bg = 0;
-			cmd.fg = pack_xrgb(cell.fg, 0xff);
-			draw_text_utf8(
-				client->win, fontset,
-				&cmd, 1,
-				border + cursor.col * term->colsize,
-				border + cursor.row * term->rowsize
-			);
-			draw_rect(
-				client->win, pack_xrgb(cursor.color, 0xff),
-				border + cursor.col * term->colsize,
-				border + cursor.row * term->rowsize,
-				2, term->rowsize
-			);
-			break;
-		case CursorStyleBlock:
-			cmd.bg = pack_xrgb(term->color_fg, 0xff);
-			cmd.fg = pack_xrgb(term->color_bg, 0xff);
-			draw_text_utf8(
-				client->win, fontset,
-				&cmd, 1,
-				border + cursor.col * term->colsize,
-				border + cursor.row * term->rowsize
-			);
-			break;
-		case CursorStyleUnderscore:
-			cmd.bg = 0;
-			cmd.fg = pack_xrgb(cell.fg, 0xff);
-			draw_text_utf8(
-				client->win, fontset,
-				&cmd, 1,
-				border + cursor.col * term->colsize,
-				border + cursor.row * term->rowsize
-			);
-			draw_rect(
-				client->win, pack_xrgb(term->color_fg, 0xff),
-				border + cursor.col * term->colsize,
-				border + (cursor.row + 1) * term->rowsize - 2,
-				term->colsize, 2
-			);
-			break;
-		default:
-			break;
-		}
-	}
-}
-
-void
-event_key_press(void *ref, int key, int mod, char *buf, int len)
-{
-	Client *client = ref;
+	Client *client = param;
 	Term *term = client->term;
 
 	char seq[64];
 	int seqlen = 0;
 
-#if 1
 	if (mod == ModAlt) {
 		switch (key) {
 		case KeyF9:
@@ -417,7 +348,6 @@ event_key_press(void *ref, int key, int mod, char *buf, int len)
 			return;
 		}
 	}
-#endif
 
 	if ((seqlen = term_make_key_string(term, key, mod, seq, LEN(seq)))) {
 		term_push(term, seq, seqlen);
@@ -425,21 +355,5 @@ event_key_press(void *ref, int key, int mod, char *buf, int len)
 		term_reset_scroll(term);
 		term_push(term, buf, len);
 	}
-}
-
-void
-event_resize(void *ref, int width, int height)
-{
-	Client *client = ref;
-	Term *term = client->term;
-
-	int cols = (width - 2 * client->border) / term->colsize;
-	int rows = (height - 2 * client->border) / term->rowsize;
-
-	if (cols != term->cols || rows != term->rows) {
-		term_resize(term, cols, rows);
-	}
-	client->width = width;
-	client->height = height;
 }
 

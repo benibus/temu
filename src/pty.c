@@ -89,6 +89,23 @@ pty_init(const char *shell, int *mfd_, int *sfd_)
 		break;
 	}
 
+#if 0
+	{
+		struct termios tattr;
+
+		if (tcgetattr(mfd, &tattr) < 0) {
+			perror("tcgetattr()");
+			exit(EXIT_FAILURE);
+		}
+
+		tattr.c_oflag |= OFILL;
+		if (tcsetattr(mfd, TCSADRAIN, &tattr) < 0) {
+			perror("tcsetattr()");
+			exit(EXIT_FAILURE);
+		}
+	}
+#endif
+
 	*mfd_ = mfd;
 	*sfd_ = sfd;
 
@@ -96,22 +113,45 @@ pty_init(const char *shell, int *mfd_, int *sfd_)
 }
 
 size_t
-pty_read(int mfd, uchar *buf, size_t len)
+pty_read(int mfd, uchar *buf, size_t len, uint32 msec)
 {
 	ASSERT(mfd > 0);
 
-	ssize_t result = read(mfd, buf, len);
+	fd_set rset;
+	FD_ZERO(&rset);
+	FD_SET(mfd, &rset);
 
-	switch (result) {
-	case  0:
-		exit(0);
-	case -1:
-		fatal("read()");
-	default:
-		break;
+	switch (select(mfd + 1, &rset, NULL, NULL, &(struct timeval){ 0, msec * 1E3 })) {
+	case -1: fatal("select()");
+	case  0: return 0;
 	}
 
-	return result;
+	ssize_t nread = read(mfd, buf, len);
+	switch (nread) {
+	case -1: fatal("read()");
+	case  0: exit(0);
+	}
+
+	return nread;
+
+	/* if (!status) { */
+	/* 	return 0; */
+	/* } else if (status < 0) { */
+	/* 	fatal("select()"); */
+	/* } */
+
+	/* ssize_t nread = read(mfd, buf, len); */
+
+	/* switch (nread) { */
+	/* case  0: */
+	/* 	exit(0); */
+	/* case -1: */
+	/* 	fatal("read()"); */
+	/* default: */
+	/* 	break; */
+	/* } */
+
+	/* return nread; */
 }
 
 size_t

@@ -123,6 +123,67 @@ typedef struct {
       T_ w;              \
     };                   \
   }
+
+typedef union {
+	float arr[2];
+	struct { float x, y; };
+	struct { float s, t; };
+	struct { float u, v; };
+} Vec2F;
+
+typedef union {
+	int arr[2];
+	struct { int x, y; };
+	struct { int s, t; };
+	struct { int u, v; };
+} Vec2I;
+
+typedef union {
+	uint arr[2];
+	struct { uint x, y; };
+	struct { uint s, t; };
+	struct { uint u, v; };
+} Vec2U;
+
+typedef union {
+	float arr[3];
+	struct { float x, y, z; };
+	struct { float r, g, b; };
+} Vec3F;
+
+typedef union {
+	int arr[3];
+	struct { int x, y, z; };
+	struct { int r, g, b; };
+} Vec3I;
+
+typedef union {
+	uint arr[3];
+	struct { uint x, y, z; };
+	struct { uint r, g, b; };
+} Vec3U;
+
+typedef union {
+	float arr[4];
+	struct { float x, y, z, w; };
+	struct { float s, t, u, v; };
+	struct { float r, g, b, a; };
+} Vec4F;
+
+typedef union {
+	int arr[4];
+	struct { int x, y, z, w; };
+	struct { int s, t, u, v; };
+	struct { int r, g, b, a; };
+} Vec4I;
+
+typedef union {
+	uint arr[4];
+	struct { uint x, y, z, w; };
+	struct { uint s, t, u, v; };
+	struct { uint r, g, b, a; };
+} Vec4U;
+
 #else
   #define vecx(...) { __VA_ARGS__ }
 

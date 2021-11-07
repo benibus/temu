@@ -140,7 +140,7 @@ static const struct FuncEntry {
 };
 #undef FUNC_ENTRIES
 
-#if 1
+#if 0
 #define FUNC_DEBUG(sym) parser_print_debug(term, Func##sym)
 #else
 #define FUNC_DEBUG(...)
@@ -174,7 +174,7 @@ term_init(Term *term, struct TermConfig config)
 	term->histlines = bitround(config.histlines, 1);
 
 	term->ring = ring_create(term->histlines, term->cols, term->rows);
-	term->framebuf = xcalloc(term->cols * term->rows, sizeof(*term->framebuf));
+	term->frame.cells = xcalloc(term->cols * term->rows, sizeof(*term->frame.cells));
 
 	term->tabcols = config.tabcols;
 	term->tabstops = xcalloc(term->cols, sizeof(*term->tabstops));
@@ -213,8 +213,8 @@ term_destroy(Term *term)
 {
 	ASSERT(term);
 	arr_free(term->parser.data);
-	if (term->framebuf) {
-		free(term->framebuf);
+	if (term->frame.cells) {
+		free(term->frame.cells);
 	}
 	if (term->tabstops) {
 		free(term->tabstops);
@@ -234,12 +234,29 @@ term_exec(Term *term, const char *shell)
 	return term->mfd;
 }
 
-Cell *
-term_get_framebuffer(Term *term)
+Frame *
+term_generate_frame(Term *term)
 {
-	ring_copy_framebuffer(term->ring, term->framebuf);
+	Frame *frame = &term->frame;
 
-	return term->framebuf;
+	ring_copy_framebuffer(term->ring, frame->cells);
+	frame->cols = term->cols;
+	frame->rows = term->rows;
+	frame->cursor.col = term->x;
+	frame->cursor.row = term->y;
+	frame->cursor.style = term->crs_style;
+	frame->cursor.color = term->color_fg;
+	frame->time = time_get_mono_msec(NULL);
+	frame->default_bg = term->color_bg;
+	frame->default_fg = term->color_fg;
+
+	if (!term->hidecursor && check_visible(term->ring, term->x, term->y)) {
+		frame->cursor.visible = true;
+	} else {
+		frame->cursor.visible = false;
+	}
+
+	return frame;
 }
 
 size_t
@@ -249,15 +266,26 @@ term_push(Term *term, const char *str, size_t len)
 }
 
 size_t
-term_pull(Term *term)
+term_pull(Term *term, uint32 msec)
 {
-	size_t result = pty_read(term->mfd, term->input, LEN(term->input));
+	ASSERT(msec < 1E3);
 
-	if (result) {
-		term_consume(term, term->input, result);
-	}
+	size_t accum = 0;
+	const uint32 basetime = time_get_mono_msec(NULL);
+	int timeout = msec;
 
-	return result;
+	do {
+		size_t len = pty_read(term->mfd, term->input, LEN(term->input), timeout);
+		if (!len) {
+			timeout = 0;
+		} else {
+			term_consume(term, term->input, len);
+			accum += len;
+			timeout -= (time_get_mono_msec(NULL) - basetime);
+		}
+	} while (timeout > 0);
+
+	return accum;
 }
 
 void
@@ -282,10 +310,10 @@ term_resize(Term *term, int cols, int rows)
 		if (cols > term->max_cols || rows > term->max_rows) {
 			term->max_cols = MAX(cols, term->max_cols);
 			term->max_rows = MAX(rows, term->max_rows);
-			term->framebuf = xrealloc(
-				term->framebuf,
+			term->frame.cells = xrealloc(
+				term->frame.cells,
 				term->max_cols * term->max_rows,
-				sizeof(*term->framebuf)
+				sizeof(*term->frame.cells)
 			);
 		}
 
@@ -345,7 +373,7 @@ term_get_cell(const Term *term, int col, int row)
 }
 
 bool
-term_get_cursor(const Term *term, Cursor *cursor)
+term_get_cursor(const Term *term, CursorDesc *cursor)
 {
 	if (!term->hidecursor && check_visible(term->ring, term->x, term->y)) {
 		if (cursor) {
@@ -377,7 +405,7 @@ term_consume(Term *term, const uchar *str, size_t len)
 
 		term->parser.state = result.state;
 
-#if 1
+#if 0
 #define DBGOPT_PRINT_INPUT 1
 		{
 			const char *tmp = charstring(str[i]);
@@ -1004,11 +1032,13 @@ emu_csi_sgr(Term *term, const int *argv, int argc)
 			break;
 
 		case 1:  add_active_attrs(term, ATTR_BOLD);      break;
+		case 3:  add_active_attrs(term, ATTR_ITALIC);    break;
 		case 4:  add_active_attrs(term, ATTR_UNDERLINE); break;
 		case 5:  add_active_attrs(term, ATTR_BLINK);     break;
 		case 7:  add_active_attrs(term, ATTR_INVERT);    break;
 		case 8:  add_active_attrs(term, ATTR_INVISIBLE); break;
 		case 22: del_active_attrs(term, ATTR_BOLD);      break;
+		case 23: del_active_attrs(term, ATTR_ITALIC);    break;
 		case 24: del_active_attrs(term, ATTR_UNDERLINE); break;
 		case 25: del_active_attrs(term, ATTR_BLINK);     break;
 		case 27: del_active_attrs(term, ATTR_INVERT);    break;

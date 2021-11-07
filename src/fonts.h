@@ -3,41 +3,36 @@
 
 #include "defs.h"
 
-#define STYLE_REGULAR (0)
-#define STYLE_BOLD    (1 << 0)
-#define STYLE_ITALIC  (1 << 1)
-#define STYLE_OBLIQUE (1 << 2)
-#define STYLE_MAX     (1 << 3)
+#define FONTSTYLE_REGULAR (0)
+#define FONTSTYLE_BOLD    (1 << 0)
+#define FONTSTYLE_ITALIC  (1 << 1)
+#define FONTSTYLE_MASK    ((1 << 2)-1)
+
+typedef enum {
+	FontStyleRegular    = FONTSTYLE_REGULAR,
+	FontStyleBold       = FONTSTYLE_BOLD,
+	FontStyleItalic     = FONTSTYLE_ITALIC,
+	FontStyleBoldItalic = FONTSTYLE_BOLD|FONTSTYLE_ITALIC,
+	FontStyleCount
+} FontStyle;
+
+typedef struct FontSet_ FontSet;
 
 typedef struct {
-	int width;
-	int height;
-	int pitch;
-	int x_advance;
-	int y_advance;
-	int x_bearing;
-	int y_bearing;
-	int ascent;
-	int descent;
-	void *data;
-} Bitmap;
+	uint32 idx;
+	uint texid;
+	float x;
+	float y;
+	float width;
+	float height;
+	float hbearing;
+	float vbearing;
+} Glyph;
 
-typedef struct FontSet FontSet;
-typedef struct FontData FontData;
-
-typedef struct {
-	FontData *font;
-	uint32 glyph;
-} FontGlyph;
-
-typedef void *(*FontHookCreate)(int depth);
-typedef void (*FontHookAdd)(void *generic, uint32 glyph, const Bitmap *);
-typedef void (*FontHookDestroy)(void *generic);
-
-bool fontmgr_configure(double, FontHookCreate, FontHookAdd, FontHookDestroy);
+bool fontmgr_init(double);
 FontSet *fontmgr_create_fontset(const char *);
-FontGlyph fontset_get_codepoint(FontSet *, uint, uint32);
+bool fontset_init(FontSet *);
+Glyph *fontset_get_glyph(FontSet *, FontStyle, uint32);
 bool fontset_get_metrics(const FontSet *, int *, int *, int *, int *);
-void *font_get_generic(const FontData *);
 
 #endif
