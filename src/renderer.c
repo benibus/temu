@@ -152,7 +152,6 @@ renderer_draw_frame(const Frame *frame)
 				cell.attrs & (ATTR_BOLD|ATTR_ITALIC),
 				cell.ucs4
 			);
-			/* ASSERT(g); */
 			rc.instances[at].screen_pos = (Vec2U)vec2(ix, iy);
 			rc.instances[at].texid      = tex.id;
 			rc.instances[at].tile_pos   = (Vec2F)vec2(tex.u, tex.v);

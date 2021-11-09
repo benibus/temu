@@ -31,7 +31,5 @@ FontSet *fontmgr_create_fontset(const char *);
 bool fontset_init(FontSet *);
 Texture fontset_get_glyph_texture(FontSet *, FontStyle, uint32);
 bool fontset_get_metrics(const FontSet *, int *, int *, int *, int *);
-void fontset_reset_counters(FontSet *);
-int fontset_count_evictions(const FontSet *);
 
 #endif

@@ -78,7 +78,6 @@ typedef struct {
 	int lpad;         // Left tile padding
 	int rpad;         // Right tile padding
 	int vpad;         // Top/Bottom tile padding
-	int evicted;      // Number of cache evictions since last reset
 } Atlas;
 
 typedef struct {
@@ -844,18 +843,6 @@ font_render_glyph(Font *font, uint32 idx)
 	return glyph;
 }
 
-void
-fontset_reset_counters(FontSet *set)
-{
-	set->atlas.evicted = 0;
-}
-
-int
-fontset_count_evictions(const FontSet *set)
-{
-	return set->atlas.evicted;
-}
-
 Atlas *
 atlas_match_pixelmode(FT_Pixel_Mode pixelmode)
 {
@@ -961,8 +948,6 @@ atlas_cache_glyph_bitmap(Atlas *atlas, Glyph *glyph, uchar *bitmap)
 				head->next = NULL;
 				tail->next = head;
 			}
-
-			atlas->evicted++;
 		}
 		// Set the new back-reference
 		node->glyph = glyph;
