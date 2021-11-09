@@ -19,20 +19,19 @@ typedef enum {
 typedef struct FontSet_ FontSet;
 
 typedef struct {
-	uint32 idx;
-	uint texid;
-	float x;
-	float y;
-	float width;
-	float height;
-	float hbearing;
-	float vbearing;
-} Glyph;
+	uint id;
+	float u;
+	float v;
+	float w;
+	float h;
+} Texture;
 
 bool fontmgr_init(double);
 FontSet *fontmgr_create_fontset(const char *);
 bool fontset_init(FontSet *);
-Glyph *fontset_get_glyph(FontSet *, FontStyle, uint32);
+Texture fontset_get_glyph_texture(FontSet *, FontStyle, uint32);
 bool fontset_get_metrics(const FontSet *, int *, int *, int *, int *);
+void fontset_reset_counters(FontSet *);
+int fontset_count_evictions(const FontSet *);
 
 #endif

@@ -147,16 +147,16 @@ renderer_draw_frame(const Frame *frame)
 	for (iy = 0; iy < frame->rows; iy++) {
 		for (ix = 0; cells[ix].ucs4 && ix < frame->cols; ix++, at++) {
 			const Cell cell = cells[ix];
-			const Glyph *g = fontset_get_glyph(
+			const Texture tex = fontset_get_glyph_texture(
 				fontset,
 				cell.attrs & (ATTR_BOLD|ATTR_ITALIC),
 				cell.ucs4
 			);
-			ASSERT(g);
+			/* ASSERT(g); */
 			rc.instances[at].screen_pos = (Vec2U)vec2(ix, iy);
-			rc.instances[at].texid      = g->texid;
-			rc.instances[at].tile_pos   = (Vec2F)vec2(g->x, g->y);
-			rc.instances[at].tile_size  = (Vec2F)vec2(g->width, g->height);
+			rc.instances[at].texid      = tex.id;
+			rc.instances[at].tile_pos   = (Vec2F)vec2(tex.u, tex.v);
+			rc.instances[at].tile_size  = (Vec2F)vec2(tex.w, tex.h);
 			if (cell.attrs & ATTR_INVERT) {
 				rc.instances[at].color_bg = unpack_argb(cell.fg);
 				rc.instances[at].color_fg = unpack_argb(cell.bg);
@@ -182,15 +182,6 @@ renderer_draw_frame(const Frame *frame)
 		cinst->color_bg = fg;
 		cinst->color_fg = bg;
 	}
-
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, 1);
-	glActiveTexture(GL_TEXTURE1);
-	glBindTexture(GL_TEXTURE_2D, 2);
-	glActiveTexture(GL_TEXTURE2);
-	glBindTexture(GL_TEXTURE_2D, 3);
-	glActiveTexture(GL_TEXTURE3);
-	glBindTexture(GL_TEXTURE_2D, 4);
 
 	glClearColor(bg.r, bg.g, bg.b, 1.f);
 	glClear(GL_COLOR_BUFFER_BIT);

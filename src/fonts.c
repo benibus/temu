@@ -31,13 +31,59 @@
 #define PIXEL_ALIGN 4
 #define MIN_PADDING 1
 
-struct GlyphMapping {
+#define ATLAS_WIDTH  2048
+#define ATLAS_HEIGHT 2048
+
+#if (ATLAS_WIDTH > GL_MAX_TEXTURE_SIZE) || (ATLAS_HEIGHT > GL_MAX_TEXTURE_SIZE)
+  #error "Atlas texture size exceeds OpenGL ES limits"
+#endif
+
+typedef struct AtlasNode_ AtlasNode;
+
+typedef struct {
+	AtlasNode *node;
+	uint32 idx;
+	int width;
+	int height;
+	int hbearing;
+	int vbearing;
+} Glyph;
+
+typedef struct {
 	bool status;
 	uint32 idx;
 	uint32 ucs4;
+} GlyphMapping;
+
+struct AtlasNode_ {
+	AtlasNode *prev;
+	AtlasNode *next;
+	Glyph *glyph;
+	float u;
+	float v;
+	float du;
+	float dv;
 };
 
 typedef struct {
+	GLuint tex;       // GPU texture ID
+	AtlasNode *nodes; // Tile data
+	AtlasNode *head;  // LRU tile in queue (pointer into nodes array)
+	AtlasNode *tail;  // MRU tile in queue (pointer into nodes array)
+	int count;        // Current number of used tiles
+	int max;          // Max number of tiles
+	int depth;        // Pixel depth of texture
+	int nx, ny;       // Atlas dimension (in tiles)
+	int dx, dy;       // Tile width (in pixels)
+	int lpad;         // Left tile padding
+	int rpad;         // Right tile padding
+	int vpad;         // Top/Bottom tile padding
+	int evicted;      // Number of cache evictions since last reset
+} Atlas;
+
+typedef struct {
+	FontSet *set;
+
 	FT_FaceRec *face;
 	FT_Matrix matrix;
 	FT_Int loadflags;
@@ -45,24 +91,24 @@ typedef struct {
 	FT_Render_Mode rendermode;
 	FT_LcdFilter lcdfilter;
 
+	char *filepath;
 	FcPattern *pattern;
 	FcCharSet *charset;
 
-	struct GlyphMapping *glyphmap;
-	uint32 basehash;
-	int depth;
-	uchar *bitmap;
 	Glyph *glyphs;
+	GlyphMapping *glyphmap;
+	uint32 basehash;
 
 	uint num_codepoints;
 	uint num_glyphs;
 	uint num_mapped;
 
+	uchar *bitmap;
+
 	uint16 attrs;
 	float pixsize;
 	float scale;
 	float aspect;
-	int pitch;
 	int width;
 	int height;
 	int ascent;
@@ -70,20 +116,11 @@ typedef struct {
 	int max_advance;
 	int max_width;
 	int max_height;
-
-	uint texid;
-	int tex_width;
-	int tex_height;
-	int tile_width;
-	int tile_height;
-	int square;
-	int lpad;
-	int rpad;
-	int vpad;
 } Font;
 
 struct FontDesc {
 	FcPattern *pattern;
+	char *filepath;
 	float pixsize;
 	float aspect;
 	FT_Matrix matrix;
@@ -97,6 +134,7 @@ struct FontDesc {
 struct FontSet_ {
 	FcFontSet *fcset;
 	Font fonts[FontStyleCount];
+	Atlas atlas;
 };
 
 struct FontManager {
@@ -119,14 +157,36 @@ enum FontHinting {
 #define FCMATRIX_DFL ((FcMatrix){ 1, 0, 0, 1 })
 #define FTMATRIX_DFL ((FT_Matrix){ 0x10000, 0, 0, 0x10000 })
 
+static float norm_x(int);
+static float norm_y(int);
+static int denorm_x(float);
+static int denorm_y(float);
+
+FontSet *fontset_create(FcPattern *pat);
 static void font_create_from_desc(Font *font, struct FontDesc desc);
 static uint32 font_create_glyphmap(Font *font, uint);
 static Glyph *font_render_glyph(Font *font, uint32 glyph);
 static int font_compute_nominal_width(const Font *font);
-static bool get_pattern_desc(FcPattern *pat, struct FontDesc *desc_);
-static uint32 hash_codepoint(const struct GlyphMapping *, uint32, uint32);
+
+static FcPattern *pattern_create_from_name(const char *);
+static FcPattern *pattern_create_from_file(const char *);
+static void pattern_set_defaults(FcPattern *);
+static FcFontSet *pattern_expand_set(FcPattern *);
+static bool pattern_extract_desc(FcPattern *pat, struct FontDesc *desc_);
+
+static uint32 hash_codepoint(const GlyphMapping *, uint32, uint32);
 static uint32 query_file_glyph_index(FT_FaceRec *, const FcCharSet *, uint32);
 static void dbg_print_freetype_bitmap(const FT_FaceRec *face);
+
+static Atlas *atlas_match_pixelmode(FT_Pixel_Mode pixelmode);
+static Atlas *atlas_match_depth(int depth);
+static AtlasNode *atlas_cache_glyph_bitmap(Atlas *atlas, Glyph *glyph, uchar *bitmap);
+static AtlasNode *atlas_reference_glyph(Atlas *atlas, Glyph *glyph);
+
+inline float norm_x(int x) { return x / (float)ATLAS_WIDTH;  }
+inline float norm_y(int y) { return y / (float)ATLAS_HEIGHT; }
+inline int denorm_x(float x) { return x * ATLAS_WIDTH;  }
+inline int denorm_y(float y) { return y * ATLAS_HEIGHT; }
 
 bool
 fontmgr_init(double dpi)
@@ -142,86 +202,162 @@ fontmgr_init(double dpi)
 
 	instance.dpi = dpi;
 
+	dbgprintf(
+		"Font manager initialized: DPI = %.02f, GL_MAX_TEXTURE_SIZE = %d\n",
+		instance.dpi,
+		GL_MAX_TEXTURE_SIZE
+	);
+
 	return true;
+}
+
+// TODO(ben): Merging user settings with arbitrary files requires more fontconfig knowledge
+// than I currently have, so the API is unexposed for now.
+FcPattern *
+pattern_create_from_file(const char *filepath)
+{
+	FcPattern *result = NULL;
+	int count;
+
+	FcPattern *pat = FcFreeTypeQuery((const FcChar8 *)filepath, 0, NULL, &count);
+	if (pat && count) {
+		result = FcPatternDuplicate(pat);
+		pattern_set_defaults(result);
+	} else {
+		dbgprintf("Failed to query font file at %s... loading system fallback\n", filepath);
+		result = pattern_create_from_name("monospace:size=12.0");
+	}
+
+	return result;
+}
+
+FcPattern *
+pattern_create_from_name(const char *name)
+{
+	FcPattern *result = NULL;
+
+	FcPattern *pat = FcNameParse((FcChar8 *)name);
+	if (pat) {
+		result = FcPatternDuplicate(pat);
+		pattern_set_defaults(result);
+	}
+
+	return result;
+}
+
+void
+pattern_set_defaults(FcPattern *pat)
+{
+	ASSERT(pat);
+
+	FcValue fcval;
+
+	FcConfigSubstitute(NULL, pat, FcMatchPattern);
+	if (FcPatternGet(pat, FC_DPI, 0, &fcval) != FcResultMatch) {
+		FcPatternAddDouble(pat, FC_DPI, instance.dpi);
+	}
+	if (FcPatternGet(pat, FC_RGBA, 0, &fcval) != FcResultMatch) {
+		FcPatternAddInteger(pat, FC_RGBA, FC_RGBA_UNKNOWN);
+	}
+
+	FcDefaultSubstitute(pat);
+	if (FcPatternGet(pat, FC_SLANT, 0, &fcval) == FcResultMatch) {
+		FcPatternDel(pat, FC_SLANT);
+	}
+	if (FcPatternGet(pat, FC_WEIGHT, 0, &fcval) == FcResultMatch) {
+		FcPatternDel(pat, FC_WEIGHT);
+	}
+}
+
+FcFontSet *
+pattern_expand_set(FcPattern *pat)
+{
+	ASSERT(pat);
+
+	FcPattern *pats[FontStyleCount];
+
+	FcFontSet *fcset = FcFontSetCreate();
+	if (!fcset) {
+		dbgprint("Failed to create FcFontSet\n");
+		goto done;
+	}
+
+	for (int i = 0; i < FontStyleCount; i++) {
+		pats[i] = FcPatternDuplicate(pat);
+
+		switch (i) {
+		case FontStyleRegular:
+			FcPatternAddInteger(pats[i], FC_SLANT,  FC_SLANT_ROMAN);
+			FcPatternAddInteger(pats[i], FC_WEIGHT, FC_WEIGHT_REGULAR);
+			break;
+		case FontStyleBold:
+			FcPatternAddInteger(pats[i], FC_SLANT,  FC_SLANT_ROMAN);
+			FcPatternAddInteger(pats[i], FC_WEIGHT, FC_WEIGHT_BOLD);
+			break;
+		case FontStyleItalic:
+			FcPatternAddInteger(pats[i], FC_SLANT,  FC_SLANT_ITALIC);
+			FcPatternAddInteger(pats[i], FC_WEIGHT, FC_WEIGHT_REGULAR);
+			break;
+		case FontStyleBoldItalic:
+			FcPatternAddInteger(pats[i], FC_SLANT,  FC_SLANT_ITALIC);
+			FcPatternAddInteger(pats[i], FC_WEIGHT, FC_WEIGHT_BOLD);
+			break;
+		}
+
+		FcResult result;
+		FcPattern *pat_match = FcFontMatch(NULL, pats[i], &result);
+		if (pat_match) {
+			FcFontSetAdd(fcset, pat_match);
+		}
+		FcPatternDestroy(pats[i]);
+
+		if (fcset->nfont < i + 1) {
+			dbgprintf("Failed to find matching FcPattern for style %d", i);
+			FcFontSetDestroy(fcset);
+			fcset = NULL;
+			goto done;
+		}
+	}
+
+#if 0
+	FcFontSetPrint(fcset);
+#endif
+
+done:
+	FcPatternDestroy(pat);
+
+	return fcset;
 }
 
 FontSet *
 fontmgr_create_fontset(const char *name)
 {
-	FcPattern *pat_base = FcPatternDuplicate(FcNameParse((FcChar8 *)name));
-	FcPatternPrint(pat_base);
+	return fontset_create(pattern_create_from_name(name));
+}
 
-	FcConfigSubstitute(NULL, pat_base, FcMatchPattern);
-	FcPatternPrint(pat_base);
+FontSet *
+fontmgr_create_fontset_from_file(const char *filepath)
+{
+	return fontset_create(pattern_create_from_file(filepath));
+}
 
-	FcValue fcval;
-
-	if (FcPatternGet(pat_base, FC_DPI, 0, &fcval) != FcResultMatch) {
-		FcPatternAddDouble(pat_base, FC_DPI, instance.dpi);
-	}
-	if (FcPatternGet(pat_base, FC_RGBA, 0, &fcval) != FcResultMatch) {
-		FcPatternAddInteger(pat_base, FC_RGBA, FC_RGBA_UNKNOWN);
-	}
-
-	FcDefaultSubstitute(pat_base);
-
-	FcPattern *pats[FontStyleCount];
-
-	pats[0] = FcPatternDuplicate(pat_base);
-
-	if (!pats[0]) return 0;
-
-	if (FcPatternGet(pats[0], FC_SLANT, 0, &fcval) == FcResultMatch) {
-		FcPatternDel(pats[0], FC_SLANT);
-	}
-	if (FcPatternGet(pats[0], FC_WEIGHT, 0, &fcval) == FcResultMatch) {
-		FcPatternDel(pats[0], FC_WEIGHT);
-	}
-
-	pats[1] = FcPatternDuplicate(pats[0]);
-	pats[2] = FcPatternDuplicate(pats[0]);
-	pats[3] = FcPatternDuplicate(pats[0]);
-
-	FcPatternAddInteger(pats[FontStyleRegular],    FC_SLANT,  FC_SLANT_ROMAN);
-	FcPatternAddInteger(pats[FontStyleRegular],    FC_WEIGHT, FC_WEIGHT_REGULAR);
-	FcPatternAddInteger(pats[FontStyleBold],       FC_SLANT,  FC_SLANT_ROMAN);
-	FcPatternAddInteger(pats[FontStyleBold],       FC_WEIGHT, FC_WEIGHT_BOLD);
-	FcPatternAddInteger(pats[FontStyleItalic],     FC_SLANT,  FC_SLANT_ITALIC);
-	FcPatternAddInteger(pats[FontStyleItalic],     FC_WEIGHT, FC_WEIGHT_REGULAR);
-	FcPatternAddInteger(pats[FontStyleBoldItalic], FC_SLANT,  FC_SLANT_ITALIC);
-	FcPatternAddInteger(pats[FontStyleBoldItalic], FC_WEIGHT, FC_WEIGHT_BOLD);
-
-	FcFontSet *fcset = FcFontSetCreate();
-
-	for (uint i = 0; i < LEN(pats); i++) {
-		if (pats[i]) {
-			FcResult result;
-			FcPattern *pat = FcFontMatch(NULL, pats[i], &result);
-			if (pat || (pat = pats[0])) {
-				FcFontSetAdd(fcset, pat);
-			}
-			FcPatternDestroy(pats[i]);
-		}
-	}
-
-	FcFontSetPrint(fcset);
-
-	FcPatternDestroy(pat_base);
-
-	if (!fcset->nfont) {
-		FcFontSetDestroy(fcset);
+FontSet *
+fontset_create(FcPattern *pat)
+{
+	if (!pat) {
 		return NULL;
 	}
 
 	FontSet *set = &instance.set;
+	set->fcset = pattern_expand_set(pat);
+	ASSERT(set->fcset->nfont == FontStyleCount);
 
-	set->fcset = fcset;
-
-	for (int i = 0; i < fcset->nfont; i++) {
+	for (int i = 0; i < FontStyleCount; i++) {
 		struct FontDesc desc = { 0 };
-		if (get_pattern_desc(fcset->fonts[i], &desc)) {
+		if (pattern_extract_desc(set->fcset->fonts[i], &desc)) {
 			Font *font = &set->fonts[i];
 			font_create_from_desc(font, desc);
+			font->set = set;
 		}
 	}
 
@@ -231,44 +367,85 @@ fontmgr_create_fontset(const char *name)
 bool
 fontset_init(FontSet *set)
 {
+	Atlas *atlas = &set->atlas;
+	Font *basefont = &set->fonts[0];
+
+	{
+		const int pitch = ALIGN_UP(basefont->width + 2 * MIN_PADDING, PIXEL_ALIGN);
+
+		atlas->vpad = MIN_PADDING;
+		atlas->lpad = MIN_PADDING;
+		atlas->rpad = pitch - basefont->width - MIN_PADDING;
+
+		atlas->depth = 1;
+
+		atlas->dx = basefont->width + atlas->lpad + atlas->rpad;
+		atlas->dy = basefont->height + 2 * atlas->vpad;
+		atlas->nx = ATLAS_WIDTH / atlas->dx;
+		atlas->ny = ATLAS_HEIGHT / atlas->dy;
+
+		atlas->max = atlas->nx * atlas->ny;
+		atlas->nodes = xcalloc(atlas->max, sizeof(*atlas->nodes));
+
+		const float du = norm_x(atlas->dx);
+		const float dv = norm_y(atlas->dy);
+		const float pl = norm_x(atlas->lpad);
+		const float pr = norm_x(atlas->rpad);
+		const float pv = norm_y(atlas->vpad);
+
+		for (int y = 0, i = 0; y < atlas->ny; y++) {
+			for (int x = 0; x < atlas->nx; x++, i++) {
+				atlas->nodes[i].u = x * du + pl;
+				atlas->nodes[i].v = y * dv + pv;
+				atlas->nodes[i].du = du - pl - pr;
+				atlas->nodes[i].dv = dv - pv - pv;
+			}
+		}
+	}
+
 	glEnable(GL_CULL_FACE);
 	glEnable(GL_BLEND);
 	glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, PIXEL_ALIGN);
 
-	for (int i = 0; i < set->fcset->nfont; i++) {
+	glGenTextures(1, &atlas->tex);
+	ASSERT(atlas->tex);
+	dbgprintf("Generated texture: %u\n", atlas->tex);
+
+	glActiveTexture(GL_TEXTURE0 + atlas->tex - 1);
+	glBindTexture(GL_TEXTURE_2D, atlas->tex);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+	glTexImage2D(
+		GL_TEXTURE_2D,
+		0,
+		GL_R8,
+		ATLAS_WIDTH,
+		ATLAS_HEIGHT,
+		0,
+		GL_RED,
+		GL_UNSIGNED_BYTE,
+		NULL
+	);
+
+	for (int i = 0; i < FontStyleCount; i++) {
 		Font *font = &set->fonts[i];
-
-		if (!font_create_glyphmap(font, font->num_codepoints)) {
-			return false;
-		}
+		font_create_glyphmap(font, font->num_codepoints);
 		font->glyphs = xcalloc(font->num_glyphs, sizeof(*font->glyphs));
-		font->bitmap = xcalloc(MAX(font->pitch, font->max_width) * font->max_height, font->depth);
+		font->bitmap = xcalloc(font->max_width * font->max_height, 1);
 
-		glGenTextures(1, &font->texid);
-		ASSERT(font->texid);
-		dbgprintf("Generated texture: %u\n", font->texid);
+	}
 
-		glBindTexture(GL_TEXTURE_2D, font->texid);
-
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-		glTexImage2D(
-			GL_TEXTURE_2D,
-			0,
-			GL_R8,
-			font->tex_width,
-			font->tex_height,
-			0,
-			GL_RED,
-			GL_UNSIGNED_BYTE,
-			NULL
-		);
-
-		font_render_glyph(font, 0);
+	{
+		// Render the "missing glyph" glyph first.
+		Glyph *glyph = font_render_glyph(basefont, 0);
+		ASSERT(glyph);
+		AtlasNode *node = atlas_cache_glyph_bitmap(atlas, glyph, basefont->bitmap);
+		ASSERT(node && node->glyph == glyph);
 	}
 
 	return true;
@@ -290,7 +467,7 @@ fontset_get_metrics(const FontSet *fontset, int *width, int *height, int *ascent
 }
 
 bool
-get_pattern_desc(FcPattern *pat, struct FontDesc *desc_)
+pattern_extract_desc(FcPattern *pat, struct FontDesc *desc_)
 {
 	struct FontDesc desc = {
 		.pattern    = pat,
@@ -306,6 +483,10 @@ get_pattern_desc(FcPattern *pat, struct FontDesc *desc_)
 	FcResult fcres;
 	FcValue fcval;
 
+	if (FcPatternGetString(pat, FC_FILE, 0, (FcChar8 **)&desc.filepath) != FcResultMatch) {
+		dbgprint("Failed to extract font file from FcPattern");
+		return false;
+	}
 	if (FcPatternGet(pat, FC_PIXEL_SIZE, 0, &fcval) == FcResultMatch) {
 		desc.pixsize = fcval.u.d;
 	}
@@ -389,16 +570,11 @@ void
 font_create_from_desc(Font *font_, struct FontDesc desc)
 {
 	ASSERT(font_);
-
-	if (!instance.library) {
-		if (!!FT_Init_FreeType(&instance.library)) {
-			dbgprint("Failed to initialize FreeType");
-			return;
-		}
-	}
+	ASSERT(instance.library);
 
 	Font font = { 0 };
 
+	font.filepath  = desc.filepath;
 	font.attrs     = desc.attrs;
 	font.pixsize   = desc.pixsize;
 	font.aspect    = desc.aspect;
@@ -406,21 +582,15 @@ font_create_from_desc(Font *font_, struct FontDesc desc)
 	font.lcdfilter = desc.lcdfilter;
 	font.pattern   = desc.pattern;
 
-	FcChar8 *filepath;
-	if (FcPatternGetString(desc.pattern, FC_FILE, 0, &filepath) != FcResultMatch) {
-		filepath = NULL;
-	}
-	if (!filepath) {
-		dbgprint("Failed to extract font file from FcPattern");
+	FT_Error fterr;
+	fterr = FT_New_Face(instance.library, desc.filepath, 0, &font.face);
+	if (fterr) {
+		dbgprintf("Failed to initialize font file: %s\n", desc.filepath);
 		exit(EXIT_FAILURE);
 	}
 
-	FT_Error fterr;
-	fterr = FT_New_Face(instance.library, (char *)filepath, 0, &font.face);
-	if (fterr) {
-		dbgprintf("Failed to initialize font file: %s\n", (char *)filepath);
-		exit(EXIT_FAILURE);
-	}
+	dbgprintf("Opened FreeType face for %s\n", desc.filepath);
+
 	FT_Set_Char_Size(font.face, desc.pixsize * 64, 0, 72 * desc.aspect, 72);
 	FT_Set_Transform(font.face, &desc.matrix, NULL);
 
@@ -448,7 +618,7 @@ font_create_from_desc(Font *font_, struct FontDesc desc)
 	}
 
 #if 1
-	font.depth = 1;
+	/* font.depth = 1; */
 #else
 	if (font.rendermode == FT_RENDER_MODE_LCD) {
 		font.depth = sizeof(uint32);
@@ -476,33 +646,10 @@ font_create_from_desc(Font *font_, struct FontDesc desc)
 		font.max_advance = +(metrics.max_advance >> 6);
 	}
 
-	font.width       = font_compute_nominal_width(&font);
-	font.height      = MAX(font.height, font.ascent + font.descent);
-	font.max_width   = (font.face->bbox.xMax - font.face->bbox.xMin) >> 6;
-	font.max_height  = (font.face->bbox.yMax - font.face->bbox.yMin) >> 6;
-	font.pitch       = ALIGN_UP(font.width + 2 * MIN_PADDING, PIXEL_ALIGN);
-	font.vpad        = MIN_PADDING;
-	font.lpad        = MIN_PADDING;
-	font.rpad        = font.pitch - font.width - MIN_PADDING;
-
-	font.num_glyphs  = font.face->num_glyphs + 1;
-	font.square      = floor(sqrt(font.num_glyphs)) + 1;
-	font.tile_width  = font.pitch * font.depth;
-	font.tile_height = (font.height + 2 * font.vpad) * font.depth;
-	font.tex_width   = font.square * font.tile_width;
-	font.tex_height  = font.square * font.tile_height;
-
-	// TODO(ben): The actual glyph cache.
-	if (font.tex_width / font.depth > GL_MAX_TEXTURE_SIZE ||
-	    font.tex_height / font.depth > GL_MAX_TEXTURE_SIZE)
-	{
-		dbgprintf(
-			"Atlas dimensions (%dx%d) exceed GL_MAX_TEXTURE_SIZE (%dx%d)\n",
-			font.tex_width / font.depth, font.tex_height / font.depth,
-			GL_MAX_TEXTURE_SIZE, GL_MAX_TEXTURE_SIZE
-		);
-		abort();
-	}
+	font.width  = font_compute_nominal_width(&font);
+	font.height = MAX(font.height, font.ascent + font.descent);
+	font.max_width  = (font.face->bbox.xMax - font.face->bbox.xMin) >> 6;
+	font.max_height = (font.face->bbox.yMax - font.face->bbox.yMin) >> 6;
 
 	if (!desc.charset) {
 		font.charset = FcFreeTypeCharSet(font.face, NULL);
@@ -510,6 +657,7 @@ font_create_from_desc(Font *font_, struct FontDesc desc)
 		font.charset = desc.charset;
 	}
 	font.num_codepoints = FcCharSetCount(font.charset);
+	font.num_glyphs = font.face->num_glyphs + 1;
 
 	*font_ = font;
 }
@@ -550,7 +698,7 @@ font_compute_nominal_width(const Font *font)
 }
 
 uint32
-hash_codepoint(const struct GlyphMapping *glyphmap, uint32 capacity, uint32 ucs4)
+hash_codepoint(const GlyphMapping *glyphmap, uint32 capacity, uint32 ucs4)
 {
 	uint32 hash = ucs4 % capacity;
 	uint32 offset = 0;
@@ -580,32 +728,50 @@ query_file_glyph_index(FT_FaceRec *face, const FcCharSet *charset, uint32 ucs4)
 	return 0;
 }
 
-Glyph *
-fontset_get_glyph(FontSet *set, FontStyle style, uint32 ucs4)
+Texture
+fontset_get_glyph_texture(FontSet *set, FontStyle style, uint32 ucs4)
 {
 	Font *font = &set->fonts[style];
-
 	Glyph *glyph = &font->glyphs[0];
+	Atlas *atlas = &set->atlas;
+	AtlasNode *node = glyph->node;
+
 	uint32 hash = hash_codepoint(font->glyphmap, font->num_glyphs, ucs4);
 
 	if (font->glyphmap[hash].status) {
 		glyph = &font->glyphs[font->glyphmap[hash].idx];
+		if (glyph->node) {
+			node = atlas_reference_glyph(atlas, glyph);
+		} else {
+			glyph = font_render_glyph(font, glyph->idx);
+			node = atlas_cache_glyph_bitmap(atlas, glyph, font->bitmap);
+		}
 	} else {
 		uint idx = query_file_glyph_index(font->face, font->charset, ucs4);
 		if (idx) {
-			glyph = font_render_glyph(font, idx);
 			font->glyphmap[hash].status = true;
 			font->glyphmap[hash].idx  = idx;
 			font->glyphmap[hash].ucs4 = ucs4;
 			font->num_mapped++;
+
+			glyph = font_render_glyph(font, idx);
+			node = atlas_cache_glyph_bitmap(atlas, glyph, font->bitmap);
 		}
 	}
 
-	return glyph;
+	ASSERT(node == glyph->node);
+
+	return (Texture){
+		.id = atlas->tex,
+		.u  = node->u,
+		.v  = node->v,
+		.w  = node->du,
+		.h  = node->dv
+	};
 }
 
 Glyph *
-font_render_glyph(Font *font, uint32 glyph)
+font_render_glyph(Font *font, uint32 idx)
 {
 	FT_FaceRec *face = font->face;
 	FT_GlyphSlotRec *active = face->glyph;
@@ -613,7 +779,7 @@ font_render_glyph(Font *font, uint32 glyph)
 	FT_Library_SetLcdFilter(instance.library, font->lcdfilter);
 	{
 		FT_Error err;
-		err = FT_Load_Glyph(face, glyph, font->loadflags|font->loadtarget);
+		err = FT_Load_Glyph(face, idx, font->loadflags|font->loadtarget);
 		if (err) {
 			return NULL;
 		}
@@ -636,6 +802,8 @@ font_render_glyph(Font *font, uint32 glyph)
 	dbg_print_freetype_bitmap(face);
 #endif
 
+	const Atlas *atlas = &font->set->atlas;
+
 	int xsrc = 0, ysrc = 0;
 	int xdst = 0, ydst = 0;
 
@@ -654,46 +822,168 @@ font_render_glyph(Font *font, uint32 glyph)
 	const int height = imin(active->bitmap.rows - ysrc, font->height - ydst);
 	ASSERT(width >= 0 && height >= 0);
 
-	memset(font->bitmap, 0, font->tile_width * font->tile_height);
+	memset(font->bitmap, 0, font->max_width * font->max_height);
 
 	const uchar *srcptr = active->bitmap.buffer + ysrc * active->bitmap.pitch;
-	uchar *dstptr = font->bitmap + (ydst + font->vpad) * font->tile_width;
+	uchar *dstptr = font->bitmap + (ydst + atlas->vpad) * atlas->dx;
 
 	for (int y = ydst; y - ydst < height; y++) {
-		memcpy(dstptr + (font->lpad + xdst) * font->depth, srcptr + xsrc, width);
+		memcpy(dstptr + (atlas->lpad + xdst) * atlas->depth, srcptr + xsrc, width);
 		srcptr += active->bitmap.pitch;
-		dstptr += font->tile_width;
+		dstptr += atlas->dx;
 	}
 
-	const int col = glyph % font->square;
-	const int row = glyph / font->square;
-	const float xdiv = font->tex_width;
-	const float ydiv = font->tex_height;
+	Glyph *glyph = &font->glyphs[idx];
+	glyph->idx      = idx;
+	glyph->width    = active->bitmap.width;
+	glyph->height   = active->bitmap.rows;
+	glyph->hbearing = -active->bitmap_left;
+	glyph->vbearing = active->bitmap_top;
+	glyph->node     = NULL;
 
-	Glyph *entry = &font->glyphs[glyph];
-	entry->idx      = glyph;
-	entry->x        = (col * font->tile_width + font->lpad * font->depth) / xdiv;
-	entry->y        = (row * font->tile_height + font->vpad * font->depth) / ydiv;
-	entry->width    = (font->width * font->depth) / xdiv;
-	entry->height   = (font->height * font->depth) / ydiv;
-	entry->hbearing = (-active->bitmap_left * font->depth) / xdiv;
-	entry->vbearing = (active->bitmap_top * font->depth) / ydiv;
-	entry->texid    = font->texid;
+	return glyph;
+}
 
-	glBindTexture(GL_TEXTURE_2D, font->texid);
+void
+fontset_reset_counters(FontSet *set)
+{
+	set->atlas.evicted = 0;
+}
+
+int
+fontset_count_evictions(const FontSet *set)
+{
+	return set->atlas.evicted;
+}
+
+Atlas *
+atlas_match_pixelmode(FT_Pixel_Mode pixelmode)
+{
+	(void)pixelmode;
+	return &instance.set.atlas;
+}
+
+Atlas *
+atlas_match_depth(int depth)
+{
+	(void)depth;
+	return &instance.set.atlas;
+}
+
+AtlasNode *
+atlas_reference_glyph(Atlas *atlas, Glyph *glyph)
+{
+	ASSERT(atlas->count);
+	ASSERT(glyph && glyph->node);
+
+	AtlasNode *const head = atlas->head;
+	AtlasNode *const tail = atlas->tail;
+	AtlasNode *const node = glyph->node;
+
+	if (node != tail) {
+		ASSERT(head != tail);
+		ASSERT(head->next);
+
+		if (node == head) {
+			atlas->head = head->next;
+		}
+		atlas->tail = node;
+
+		if (node->prev) node->prev->next = node->next;
+		if (node->next) node->next->prev = node->prev;
+		node->prev = tail;
+		node->next = NULL;
+		tail->next = node;
+	}
+
+	return node;
+}
+
+AtlasNode *
+atlas_cache_glyph_bitmap(Atlas *atlas, Glyph *glyph, uchar *bitmap)
+{
+	ASSERT(!glyph->node);
+
+	AtlasNode *node = NULL;
+
+	// A null glyph gets cached once and never gets paged out
+	// The same node is provided to every font
+	if (!glyph->idx) {
+		node = &atlas->nodes[0];
+		if (!node->glyph) {
+			node->glyph = glyph;
+			atlas->count++;
+		}
+	} else {
+		AtlasNode *const head = atlas->head;
+		AtlasNode *const tail = atlas->tail;
+
+		atlas->count += !atlas->count;
+
+		if (atlas->count < atlas->max) {
+			// Add a bitmap to the atlas, push its node to the back of the queue
+			node = &atlas->nodes[atlas->count];
+			if (atlas->count == 1) {
+				// Setup the queue if this is the first "real" glyph
+				ASSERT(!head);
+				ASSERT(!tail);
+
+				atlas->head = node;
+				atlas->tail = node;
+
+				node->prev = NULL;
+				node->next = NULL;
+			} else {
+				// Otherwise, perform a normal DLL insertion
+				atlas->tail = node;
+
+				tail->next = node;
+				node->prev = tail;
+				node->next = NULL;
+			}
+			atlas->count++;
+		} else {
+			ASSERT(atlas->count == atlas->max);
+			// Atlas is full, replace the LRU node and nullify its current forward-reference
+			head->glyph->node = NULL;
+			// Reuse the least recently used node
+			node = head;
+
+			if (head != tail) {
+				ASSERT(atlas->count > 2);
+				ASSERT(!head->prev && head->next);
+
+				atlas->head = head->next;
+				atlas->tail = head;
+
+				head->prev = tail;
+				head->next->prev = NULL;
+				head->next = NULL;
+				tail->next = head;
+			}
+
+			atlas->evicted++;
+		}
+		// Set the new back-reference
+		node->glyph = glyph;
+	}
+	// Set the the new forward-reference
+	glyph->node = node;
+
+	glBindTexture(GL_TEXTURE_2D, atlas->tex);
 	glTexSubImage2D(
 		GL_TEXTURE_2D,
 		0,
-		col * font->tile_width,
-		row * font->tile_height,
-		font->tile_width,
-		font->tile_height,
+		(node) ? (denorm_x(node->u) - atlas->lpad) * atlas->depth : 0,
+		(node) ? (denorm_y(node->v) - atlas->vpad) * atlas->depth : 0,
+		atlas->dx * atlas->depth,
+		atlas->dy * atlas->depth,
 		GL_RED,
 		GL_UNSIGNED_BYTE,
-		font->bitmap
+		bitmap
 	);
 
-	return entry;
+	return node;
 }
 
 void

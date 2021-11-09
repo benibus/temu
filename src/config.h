@@ -6,7 +6,7 @@ static Config config = {
 	.wm_instance = "win_floating",
 	.wm_title = "temu",
 	.geometry = NULL,
-	.font = "DejaVu Sans Mono:size=12.0",
+	.font = "monospace:size=12.0",
 	.colors = {
 		"#07070A", // default background
 		"#989898", // default foreground
