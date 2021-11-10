@@ -1,7 +1,18 @@
-cmake_minimum_required(VERSION 3.7)
+# Arbitrarily chosen based on https://pkgs.org/download/cmake
+cmake_minimum_required(VERSION 3.7.2)
 
 project(temu LANGUAGES C)
 
+find_package(Freetype 2.0 REQUIRED)
+find_package(Fontconfig REQUIRED)
+find_package(X11 REQUIRED)
+find_package(OpenGL REQUIRED COMPONENTS EGL)
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Default build type" FORCE)
+endif()
+
+set(BIN ${PROJECT_NAME})
 set(SOURCES
     src/fonts.c
     src/fsm.c
@@ -31,36 +42,19 @@ set(SOURCES
     src/utils.h
 )
 
-# if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.11.0")
-#     file(GLOB SOURCES CONFIGURE_DEPENDS src/*.c src/*.h)
-# else()
-#     file(GLOB SOURCES src/*.c src/*.h)
-# endif()
+add_executable(${BIN} ${SOURCES})
 
-add_executable(${PROJECT_NAME} ${SOURCES})
+set_target_properties(${BIN} PROPERTIES C_EXTENSIONS OFF)
+set_target_properties(${BIN} PROPERTIES C_STANDARD 11)
 
-find_package(Freetype 2.0 REQUIRED)
-find_package(Fontconfig REQUIRED)
-find_package(X11 REQUIRED)
-find_package(OpenGL REQUIRED COMPONENTS EGL)
-# find_package(X11 REQUIRED COMPONENTS Xrender)
-
-if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    message(STATUS "Defaulting to debug build")
-    set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Default build type" FORCE)
-endif()
-
-set_target_properties(${PROJECT_NAME} PROPERTIES C_EXTENSIONS OFF)
-set_target_properties(${PROJECT_NAME} PROPERTIES C_STANDARD 11)
-
-target_compile_definitions(${PROJECT_NAME} PRIVATE _POSIX_C_SOURCE=200809L)
-target_compile_definitions(${PROJECT_NAME} PRIVATE _XOPEN_SOURCE=600)
-target_compile_definitions(${PROJECT_NAME}
+target_compile_definitions(${BIN} PRIVATE _POSIX_C_SOURCE=200809L)
+target_compile_definitions(${BIN} PRIVATE _XOPEN_SOURCE=600)
+target_compile_definitions(${BIN}
     PRIVATE
     $<$<CONFIG:Debug>:BUILD_DEBUG=1>
     $<$<CONFIG:Release>:BUILD_RELEASE=1>
 )
-target_compile_options(${PROJECT_NAME}
+target_compile_options(${BIN}
     PRIVATE
     $<$<CONFIG:Debug>:-g3>
     $<$<CONFIG:Debug>:-O0>
@@ -71,20 +65,18 @@ target_compile_options(${PROJECT_NAME}
     $<$<CONFIG:Debug>:-Wno-unused-function>
 )
 
-target_include_directories(${PROJECT_NAME}
+target_include_directories(${BIN}
     PRIVATE
     Freetype::Freetype
     Fontconfig::Fontconfig
     X11::X11
     OpenGL::EGL
-    # X11::Xrender
 )
-target_link_libraries(${PROJECT_NAME}
+target_link_libraries(${BIN}
     Freetype::Freetype
     Fontconfig::Fontconfig
     X11::X11
     OpenGL::EGL
     util m
-    # X11::Xrender
 )
 
