@@ -1,5 +1,5 @@
-#ifndef CORE_DEFS_H__
-#define CORE_DEFS_H__
+#ifndef COMMON_H__
+#define COMMON_H__
 
 #if defined(__GNUC__)
   #define COMPILER_GCC 1
@@ -39,6 +39,19 @@
   #define STDC 2018L
 #endif
 
+#if defined(NDEBUG) && (defined(BUILD_DEBUG) || !defined(BUILD_RELEASE))
+  #error "Build-type definition mismatch"
+#endif
+#if defined(BUILD_RELEASE) && !defined(NDEBUG)
+  #define NDEBUG 1
+#endif
+
+#if defined(COMPILER_GCC) || defined(COMPILER_CLANG)
+  #define attribute__ __attribute__
+#else
+  #define attribute__(...)
+#endif
+
 #include <stdio.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -76,9 +89,9 @@ typedef uint32_t UTF8;
 typedef uint32_t UCS4;
 
 typedef struct {
+	char *data;
 	uint32 len;
 	uint32 max;
-	char *data;
 } String;
 
 #define MIN(a,b)        (((a) < (b)) ? (a) : (b))
@@ -90,124 +103,12 @@ typedef struct {
 #define DEFAULT(v1,v2)  ((!!(v1)) ? (v1) : (v2))
 #define ALIGN_DOWN(n,a) ((n) & ~((a) - 1))
 #define ALIGN_UP(n,a)   (((n) + ((a) - 1)) & ~((a) - 1))
-#define BSET(n,m,c)     ((!!(c)) ? ((n) |= (m)) : ((n) &= ~(m)))
-#define RANGE(v1,o1,v2,o2,v3) (((v1) o1 (v2)) && ((v2) o2 (v3)))
 
 #if STD_C11
-  #define vecx(...) { { __VA_ARGS__ } }
-
-  #define V2(T_,x,y)     \
-  union {                \
-    T_ arr[2];           \
-    struct {             \
-      T_ x;              \
-      T_ y;              \
-    };                   \
-  }
-  #define V3(T_,x,y,z)   \
-  union {                \
-    T_ arr[3];           \
-    struct {             \
-      T_ x;              \
-      T_ y;              \
-      T_ z;              \
-    };                   \
-  }
-  #define V4(T_,x,y,z,w) \
-  union {                \
-    T_ arr[4];           \
-    struct {             \
-      T_ x;              \
-      T_ y;              \
-      T_ z;              \
-      T_ w;              \
-    };                   \
-  }
-
-typedef union {
-	float arr[2];
-	struct { float x, y; };
-	struct { float s, t; };
-	struct { float u, v; };
-} Vec2F;
-
-typedef union {
-	int arr[2];
-	struct { int x, y; };
-	struct { int s, t; };
-	struct { int u, v; };
-} Vec2I;
-
-typedef union {
-	uint arr[2];
-	struct { uint x, y; };
-	struct { uint s, t; };
-	struct { uint u, v; };
-} Vec2U;
-
-typedef union {
-	float arr[3];
-	struct { float x, y, z; };
-	struct { float r, g, b; };
-} Vec3F;
-
-typedef union {
-	int arr[3];
-	struct { int x, y, z; };
-	struct { int r, g, b; };
-} Vec3I;
-
-typedef union {
-	uint arr[3];
-	struct { uint x, y, z; };
-	struct { uint r, g, b; };
-} Vec3U;
-
-typedef union {
-	float arr[4];
-	struct { float x, y, z, w; };
-	struct { float s, t, u, v; };
-	struct { float r, g, b, a; };
-} Vec4F;
-
-typedef union {
-	int arr[4];
-	struct { int x, y, z, w; };
-	struct { int s, t, u, v; };
-	struct { int r, g, b, a; };
-} Vec4I;
-
-typedef union {
-	uint arr[4];
-	struct { uint x, y, z, w; };
-	struct { uint s, t, u, v; };
-	struct { uint r, g, b, a; };
-} Vec4U;
-
+  #define vecx(...) {{ __VA_ARGS__ }}
 #else
   #define vecx(...) { __VA_ARGS__ }
-
-  #define V2(T_,x,y)     \
-  struct {               \
-    T_ x;                \
-    T_ y;                \
-  }
-  #define V3(T_,x,y,z)   \
-  struct {               \
-    T_ x;                \
-    T_ y;                \
-    T_ z;                \
-  }
-  #define V4(T_,x,y,z,w) \
-  struct {               \
-    T_ x;                \
-    T_ y;                \
-    T_ z;                \
-    T_ w;                \
-  }
 #endif
-
-#define VLEN(v) (sizeof(v))
 
 #define vec2(x_,y_)       vecx((x_), (y_))
 #define vec3(x_,y_,z_)    vecx((x_), (y_), (z_))

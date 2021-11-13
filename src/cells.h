@@ -1,7 +1,7 @@
 #ifndef CELLS_H__
 #define CELLS_H__
 
-#include "defs.h"
+#include "common.h"
 
 #define ATTR_NONE      (0)
 #define ATTR_BOLD      (1 << 0)

@@ -9,7 +9,10 @@
 #define LINE_HASCOMPLEX (1 << 3)
 
 typedef struct {
-	uint16 flags;
+	union {
+		uint16 flags;
+		char pad_[16];
+	};
 	Cell cells[];
 } Line;
 
@@ -59,6 +62,8 @@ get_visible_index(const Ring *ring, int row)
 Ring *
 ring_create(int histlines, int cols, int rows)
 {
+	static_assert(LINESIZE(0) == 16, "Bad member alignment");
+
 	Ring *ring = xcalloc(1, sizeof(*ring));
 
 	size_t size = LINESIZE(cols) * (histlines + 1);

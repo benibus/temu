@@ -1,7 +1,7 @@
 #ifndef FSM_H__
 #define FSM_H__
 
-#include "defs.h"
+#include "common.h"
 
 typedef enum {
 	ActionNone,

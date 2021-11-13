@@ -8,6 +8,7 @@
 - [x] Prepare the codebase for leak detection tools
 - [ ] Cleanup the utilities and link as a static library
 - [ ] Implement the alt-screen
+- [ ] Fix bug where cursor doesn't move when scrolling up if it wasn't at the bottom of the screen (i.e. after clearing)
 - [ ] Signal-handling for CTRL-C/CTRL-D
 - [ ] Signal-handling for external program queries
 - [ ] Second pass on keypress-triggered escape strings
@@ -31,6 +32,7 @@
 
 ## Mid-term
 
+- [ ] Dynamic line rewrapping
 - [ ] Switch to using the POSIX-compliant API for PTY creation
 - [ ] Acheive full xterm compatibility
 - [ ] User config file

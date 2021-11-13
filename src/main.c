@@ -142,7 +142,7 @@ error_invalid:
 		default: dst = &termcfg.colors[i-2]; break;
 		}
 		if (!server_parse_color_string(config.colors[i], dst)) {
-			dbgprintf("Failed to parse RGB string: %s\n", config.colors[i]);
+			dbgprint("Failed to parse RGB string: %s", config.colors[i]);
 			exit(EXIT_FAILURE);
 		}
 	}
@@ -159,9 +159,9 @@ error_invalid:
 		if (config.fontfile) {
 			fontpath = realpath(config.fontfile, NULL);
 			if (fontpath) {
-				dbgprintf("Resolved file path: %s -> %s\n", config.fontfile, fontpath);
+				dbgprint("Resolved file path: %s -> %s", config.fontfile, fontpath);
 			} else {
-				dbgprintf("Failed to resolve file path: %s\n", config.fontfile);
+				dbgprint("Failed to resolve file path: %s", config.fontfile);
 			}
 		}
 		if (fontpath) {
@@ -233,13 +233,13 @@ error_invalid:
 	app->rows = (app->height - 2 * app->borderpx) / app->rowpx;
 	app->scrollinc = DEFAULT(config.scrollinc, 1);
 
-	dbgprintf(
+	dbgprint(
 		"Window displayed\n"
 		"    width   = %d\n"
 		"    height  = %d\n"
 		"    border  = %d\n"
 		"    columns = %dx%d\n"
-		"    rows    = %dx%d\n",
+		"    rows    = %dx%d",
 		app->width,
 		app->height,
 		app->borderpx,
@@ -258,11 +258,11 @@ error_invalid:
 	termcfg.histlines = MAX(config.histsize, termcfg.rows);
 	termcfg.tabcols   = DEFAULT(config.tablen, 8);
 
-	dbgprintf(
+	dbgprint(
 		"Creating virtual terminal...\n"
 		"    shell     = %s\n"
 		"    histlines = %u\n"
-		"    tabspaces = %u\n",
+		"    tabspaces = %u",
 		DEFAULT(termcfg.shell, "$SHELL"),
 		termcfg.histlines,
 		termcfg.tabcols
@@ -286,8 +286,6 @@ error_invalid:
 	dbgprint("Running temu...");
 
 	int result = run(app);
-
-	dbgprint("Quitting temu...");
 
 	term_destroy(app->term);
 	fontset_destroy(app->fontset);
@@ -313,7 +311,7 @@ run(App *app)
 	const int ptyfd = term_exec(term, config.shell);
 
 	if (ptyfd && srvfd) {
-		dbgprintf("Virtual terminal online. FD = %d\n", ptyfd);
+		dbgprint("Virtual terminal online. FD = %d", ptyfd);
 	} else {
 		dbgprint("Failed to start virtual terminal");
 		result = EXIT_FAILURE;
@@ -336,7 +334,7 @@ run(App *app)
 	static const uint32 msec = 16;
 
 	while (window_online(app->win)) {
-		const uint32 basetime = time_get_mono_msec(NULL);
+		const uint32 basetime = timer_msec(NULL);
 		bool draw = true;
 
 		switch (poll(pollset, LEN(pollset), msec)) {
@@ -353,7 +351,11 @@ run(App *app)
 			break;
 		case LEN(pollset) - 1:
 			if (pollset[0].revents & POLLIN) {
-				const int timeout = msec - (time_get_mono_msec(NULL) - basetime);
+#if 1
+				const int timeout = 0;
+#else
+				const int timeout = msec - (timer_msec(NULL) - basetime);
+#endif
 				term_pull(term, MAX(timeout, 0));
 			} else {
 				if (!window_poll_events(app->win)) {

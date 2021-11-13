@@ -1,7 +1,7 @@
 #ifndef OPENGL_H__
 #define OPENGL_H__
 
-#include "defs.h"
+#include "common.h"
 
 #define GL_GLEXT_PROTOTYPES 1
 #include <GLES3/gl32.h>

@@ -181,7 +181,7 @@ term_init(Term *term, struct TermConfig config)
 	term->rows = config.rows;
 	term->max_cols = term->cols;
 	term->max_rows = term->rows;
-	term->histlines = bitround(config.histlines, 1);
+	term->histlines = round_pow2(config.histlines);
 
 	term->ring = ring_create(term->histlines, term->cols, term->rows);
 	term->frame.cells = xcalloc(term->cols * term->rows, sizeof(*term->frame.cells));
@@ -260,7 +260,7 @@ term_generate_frame(Term *term)
 	frame->cursor.row = term->y;
 	frame->cursor.style = term->crs_style;
 	frame->cursor.color = term->color_fg;
-	frame->time = time_get_mono_msec(NULL);
+	frame->time = timer_msec(NULL);
 	frame->default_bg = term->color_bg;
 	frame->default_fg = term->color_fg;
 
@@ -285,7 +285,7 @@ term_pull(Term *term, uint32 msec)
 	ASSERT(msec < 1E3);
 
 	size_t accum = 0;
-	const uint32 basetime = time_get_mono_msec(NULL);
+	const uint32 basetime = timer_msec(NULL);
 	int timeout = msec;
 
 	do {
@@ -295,7 +295,7 @@ term_pull(Term *term, uint32 msec)
 		} else {
 			term_consume(term, term->input, len);
 			accum += len;
-			timeout -= (time_get_mono_msec(NULL) - basetime);
+			timeout -= (timer_msec(NULL) - basetime);
 		}
 	} while (timeout > 0);
 
@@ -433,7 +433,7 @@ term_consume(Term *term, const uchar *str, size_t len)
 
 #if DEBUG_PRINT_INPUT
 	if (arr_count(dbginput)) {
-		dbgprintf("Input: %.*s\n", (int)arr_count(dbginput), (char *)dbginput);
+		dbgprint("Input: %.*s", (int)arr_count(dbginput), (char *)dbginput);
 		arr_clear(dbginput);
 	}
 #endif
@@ -670,7 +670,7 @@ parser_print_debug(const Term *term, FuncID id)
 		}
 	}
 
-	dbgprintf("{ %03d, %03d } [[%s]] %s%s\n", term->x, term->y, ent.symbol, buf, post);
+	dbgprint("{ %03d, %03d } [[%s]] %s%s", term->x, term->y, ent.symbol, buf, post);
 }
 
 void
@@ -680,7 +680,7 @@ parser_dispatch(Term *term, StateCode state, ActionCode action, uchar c)
 
 	struct Parser *parser = &term->parser;
 #if 0
-	dbgprintf("FSM(%s|%#.02x): State%s -> State%s ... %s()\n",
+	dbgprint("FSM(%s|%#.02x): State%s -> State%s ... %s()",
 	  charstring(c), c,
 	  fsm_get_state_string(parser->state),
 	  fsm_get_state_string(state),
@@ -911,7 +911,7 @@ emu_c0_ctrl(Term *term, char c)
 	case '\a':
 		break;
 	default:
-		dbgprintf("unhandled control character: %s\n", charstring(c));
+		dbgprint("unhandled control character: %s", charstring(c));
 		break;
 	}
 }
@@ -1166,7 +1166,7 @@ emu_osc(Term *term, const char *str, const int *argv, int argc)
 	FUNC_DEBUG(OSC);
 
 	// TODO(ben): Implement the actual OSC handlers
-#define dbgmsg__(msg_) dbgprintf("OSC(%s): \"%s\"\n", msg_, str)
+#define dbgmsg__(msg_) dbgprint("OSC(%s): \"%s\"", msg_, str)
 	switch (argv[0]) {
 	case 0:  dbgmsg__("Icon/Title"); break;
 	case 1:  dbgmsg__("Icon");       break;

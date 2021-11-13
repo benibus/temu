@@ -1,7 +1,7 @@
 #ifndef FONTS_H__
 #define FONTS_H__
 
-#include "defs.h"
+#include "common.h"
 
 #define FONT_DEFAULT "monospace:size=12.0"
 

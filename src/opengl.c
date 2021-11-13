@@ -43,7 +43,7 @@ gl_compile_shader(const char *src, GLenum type)
 		char local[BUFSIZ];
 		GLsizei len = 0;
 		glGetShaderInfoLog(shader, sizeof(local), &len, local);
-		dbgprintf("OpenGLError > %.*s\n", len, local);
+		dbgprint("OpenGLError > %.*s", len, local);
 		return 0;
 	}
 
@@ -66,7 +66,7 @@ gl_link_shaders(GLuint *shaders, uint count)
 		char local[BUFSIZ];
 		GLsizei len = 0;
 		glGetProgramInfoLog(program, sizeof(local), &len, local);
-		dbgprintf("OpenGLError > %.*s\n", len, local);
+		dbgprint("OpenGLError > %.*s", len, local);
 		return 0;
 	}
 
@@ -141,7 +141,7 @@ gl__get_error(const char *file, const char *func, int line)
 {
 	GLenum error = GL_NO_ERROR;
 	while ((error = glGetError()) != GL_NO_ERROR) {
-		dbgprintf("GLerror(%s:%d/%s): %d (%#.04x)\n", file, line, func, error, error);
+		dbgprint("GLerror(%s:%d/%s): %d (%#.04x)", file, line, func, error, error);
 		dbgbreak();
 	}
 }

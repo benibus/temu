@@ -1,7 +1,7 @@
 #ifndef WINDOW_H__
 #define WINDOW_H__
 
-#include "defs.h"
+#include "common.h"
 #include "keymap.h"
 
 typedef struct Win_ Win;

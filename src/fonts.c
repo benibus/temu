@@ -201,10 +201,10 @@ fontmgr_init(double dpi)
 
 	instance.dpi = dpi;
 
-	dbgprintf(
+	dbgprint(
 		"Font manager initialized\n"
 		"    DPI = %.02f\n"
-		"    GL_MAX_TEXTURE_SIZE = %d\n",
+		"    GL_MAX_TEXTURE_SIZE = %d",
 		instance.dpi,
 		GL_MAX_TEXTURE_SIZE
 	);
@@ -220,7 +220,7 @@ pattern_create_from_file(const char *filepath)
 
 	FcPattern *result = NULL;
 
-	dbgprintf("Opening font from path: %s\n", filepath);
+	dbgprint("Opening font from path: %s", filepath);
 
 	if (filepath && FcConfigAppFontAddFile(NULL, (const FcChar8 *)filepath)) {
 		FcFontSet *fcset = FcConfigGetFonts(NULL, FcSetApplication);
@@ -252,7 +252,7 @@ pattern_create_from_name(const char *name)
 	FcPattern *result = NULL;
 	name = DEFAULT(name, FONT_DEFAULT);
 
-	dbgprintf("Opening font from name: \"%s\"\n", name);
+	dbgprint("Opening font from name: \"%s\"", name);
 
 	FcPattern *pat = FcNameParse((FcChar8 *)name);
 	if (pat) {
@@ -343,7 +343,7 @@ pattern_expand_set(FcPattern *pat)
 #endif
 
 		if (fcset->nfont < i + 1) {
-			dbgprintf("Failed to find matching FcPattern for style %d", i);
+			dbgprint("Failed to find matching FcPattern for style %d", i);
 			FcFontSetDestroy(fcset);
 			fcset = NULL;
 			goto done;
@@ -443,7 +443,7 @@ fontset_init(FontSet *set)
 
 	glGenTextures(1, &atlas->tex);
 	ASSERT(atlas->tex);
-	dbgprintf("Generated texture: %u\n", atlas->tex);
+	dbgprint("Generated texture: %u", atlas->tex);
 
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, atlas->tex);
@@ -639,11 +639,11 @@ font_create_from_desc(Font *font_, struct FontDesc desc)
 	FT_Error fterr;
 	fterr = FT_New_Face(instance.library, desc.filepath, 0, &font.face);
 	if (fterr) {
-		dbgprintf("Failed to initialize font file: %s\n", desc.filepath);
+		dbgprint("Failed to initialize font file: %s", desc.filepath);
 		exit(EXIT_FAILURE);
 	}
 
-	dbgprintf("Opened freetype face for %s\n", desc.filepath);
+	dbgprint("Opened freetype face for %s", desc.filepath);
 
 	FT_Set_Char_Size(font.face, desc.pixsize * 64, 0, 72 * desc.aspect, 72);
 	FT_Set_Transform(font.face, &desc.matrix, NULL);
@@ -853,9 +853,9 @@ font_render_glyph(Font *font, uint32 idx)
 		FT_Error err;
 		err = FT_Load_Glyph(face, idx, font->loadflags|font->loadtarget);
 		if (err) {
-			dbgprintf(
+			dbgprint(
 				"Failed to load glyph (%u) from %s... "
-				"style: %ld flags: %#x target: %#x\n",
+				"style: %ld flags: %#x target: %#x",
 				idx,
 				font->filepath,
 				font - font->set->fonts,
@@ -870,9 +870,9 @@ font_render_glyph(Font *font, uint32 idx)
 			if (!err) {
 				glyph = &font->glyphs[idx];
 			} else {
-				dbgprintf(
+				dbgprint(
 					"Failed to render glyph (%u) from %s... "
-					"style: %ld flags: %#x target: %#x mode: %d\n",
+					"style: %ld flags: %#x target: %#x mode: %d",
 					idx,
 					font->filepath,
 					font - font->set->fonts,

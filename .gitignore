@@ -1,12 +1,9 @@
 .*
 !.gitignore
 build/
-utils/
-lib/
 *.bin
 *.[oa]
 *.so
 *.pro*
 *.user
 temu
-utils.[ch]

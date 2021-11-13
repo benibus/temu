@@ -1,7 +1,7 @@
 #ifndef TERM_H__
 #define TERM_H__
 
-#include "defs.h"
+#include "common.h"
 #include "cells.h"
 #include "ring.h"
 

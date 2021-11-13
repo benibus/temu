@@ -89,23 +89,6 @@ pty_init(const char *shell, int *mfd_, int *sfd_)
 		break;
 	}
 
-#if 0
-	{
-		struct termios tattr;
-
-		if (tcgetattr(mfd, &tattr) < 0) {
-			perror("tcgetattr()");
-			exit(EXIT_FAILURE);
-		}
-
-		tattr.c_oflag |= OFILL;
-		if (tcsetattr(mfd, TCSADRAIN, &tattr) < 0) {
-			perror("tcsetattr()");
-			exit(EXIT_FAILURE);
-		}
-	}
-#endif
-
 	*mfd_ = mfd;
 	*sfd_ = sfd;
 
@@ -133,25 +116,6 @@ pty_read(int mfd, uchar *buf, size_t len, uint32 msec)
 	}
 
 	return nread;
-
-	/* if (!status) { */
-	/* 	return 0; */
-	/* } else if (status < 0) { */
-	/* 	fatal("select()"); */
-	/* } */
-
-	/* ssize_t nread = read(mfd, buf, len); */
-
-	/* switch (nread) { */
-	/* case  0: */
-	/* 	exit(0); */
-	/* case -1: */
-	/* 	fatal("read()"); */
-	/* default: */
-	/* 	break; */
-	/* } */
-
-	/* return nread; */
 }
 
 size_t

@@ -28,7 +28,7 @@ set(SOURCES
     src/window.c
     src/cells.h
     src/config.h
-    src/defs.h
+    src/common.h
     src/fonts.h
     src/fsm.h
     src/keymap.h

@@ -1,7 +1,7 @@
 #ifndef RING_H__
 #define RING_H__
 
-#include "defs.h"
+#include "common.h"
 #include "cells.h"
 
 typedef struct Ring Ring;

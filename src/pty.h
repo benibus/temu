@@ -1,7 +1,7 @@
 #ifndef PTY_H__
 #define PTY_H__
 
-#include "defs.h"
+#include "common.h"
 #include "terminal.h"
 
 int pty_init(const char *, int *, int *);
