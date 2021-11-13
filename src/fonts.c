@@ -195,14 +195,16 @@ fontmgr_init(double dpi)
 	}
 
 	if (FT_Init_FreeType(&instance.library)) {
-		dbgprint("Failed to initialize FreeType");
+		dbgprint("Failed to initialize freetype");
 		return false;
 	}
 
 	instance.dpi = dpi;
 
 	dbgprintf(
-		"Font manager initialized: DPI = %.02f, GL_MAX_TEXTURE_SIZE = %d\n",
+		"Font manager initialized\n"
+		"    DPI = %.02f\n"
+		"    GL_MAX_TEXTURE_SIZE = %d\n",
 		instance.dpi,
 		GL_MAX_TEXTURE_SIZE
 	);
@@ -336,7 +338,9 @@ pattern_expand_set(FcPattern *pat)
 			FcFontSetAdd(fcset, pat_match);
 		}
 		FcPatternDestroy(pats[i]);
+#if DEBUG_PRINT_PATTERN
 		FcPatternPrint(pat_match);
+#endif
 
 		if (fcset->nfont < i + 1) {
 			dbgprintf("Failed to find matching FcPattern for style %d", i);
@@ -639,7 +643,7 @@ font_create_from_desc(Font *font_, struct FontDesc desc)
 		exit(EXIT_FAILURE);
 	}
 
-	dbgprintf("Opened FreeType face for %s\n", desc.filepath);
+	dbgprintf("Opened freetype face for %s\n", desc.filepath);
 
 	FT_Set_Char_Size(font.face, desc.pixsize * 64, 0, 72 * desc.aspect, 72);
 	FT_Set_Transform(font.face, &desc.matrix, NULL);

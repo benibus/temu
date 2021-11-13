@@ -30,9 +30,10 @@ typedef struct Config {
 // NOTE: must include *after* definitions
 #include "config.h"
 
-typedef struct Client_ {
+typedef struct {
 	Win *win;
 	Term *term;
+	FontSet *fontset;
 	int scrollinc;
 	int width;
 	int height;
@@ -41,14 +42,11 @@ typedef struct Client_ {
 	int rows;
 	int colpx;
 	int rowpx;
-} Client;
+} App;
 
-static Client client_;
+static App app_;
 
-FontSet *fontset = NULL;
-static struct TermConfig termcfg;
-
-static void run(Client *);
+static int run(App *);
 static void event_keypress(void *, int, int, char *, int);
 static void event_resize(void *, int, int);
 
@@ -124,48 +122,14 @@ error_invalid:
 		exit(1);
 	}
 
-	if (!server_setup()) {
-		return 2;
-	}
-
-	if (!fontmgr_init(server_get_dpi())) {
-		dbgprint("Failed to initialize font manager");
+	if (server_setup()) {
+		dbgprint("Window server initialized");
+	} else {
+		dbgprint("Failed to initialize window server");
 		return EXIT_FAILURE;
 	}
 
-	{
-		char *fontpath = NULL;
-
-		if (config.fontfile) {
-			fontpath = realpath(config.fontfile, NULL);
-			if (fontpath) {
-				dbgprintf("Resolved file path: %s -> %s\n", config.fontfile, fontpath);
-			} else {
-				dbgprintf("Failed to resolve file path: %s\n", config.fontfile);
-			}
-		}
-		if (fontpath) {
-			fontset = fontmgr_create_fontset_from_file(fontpath);
-			FREE(fontpath);
-		} else {
-			fontset = fontmgr_create_fontset(config.font);
-		}
-		if (!fontset) {
-			dbgprint("Failed to open fallback fonts. aborting...");
-			return EXIT_FAILURE;
-		}
-
-		dbgprint("Opened fonts succesfully");
-	}
-
-	{
-		int width, height, ascent, descent;
-
-		fontset_get_metrics(fontset, &width, &height, &ascent, &descent);
-		termcfg.colsize = width;
-		termcfg.rowsize = ascent + descent;
-	}
-
+	struct TermConfig termcfg = { 0 };
 
 	for (uint i = 0; i < LEN(config.colors); i++) {
 		ASSERT(config.colors[i]);
@@ -182,18 +146,51 @@ error_invalid:
 			exit(EXIT_FAILURE);
 		}
 	}
+	dbgprint("User colors parsed");
+
+	App *const app = &app_;
+
+	if (!fontmgr_init(server_get_dpi())) {
+		dbgprint("Failed to initialize font manager");
+		return EXIT_FAILURE;
+	} else {
+		char *fontpath = NULL;
+
+		if (config.fontfile) {
+			fontpath = realpath(config.fontfile, NULL);
+			if (fontpath) {
+				dbgprintf("Resolved file path: %s -> %s\n", config.fontfile, fontpath);
+			} else {
+				dbgprintf("Failed to resolve file path: %s\n", config.fontfile);
+			}
+		}
+		if (fontpath) {
+			app->fontset = fontmgr_create_fontset_from_file(fontpath);
+			FREE(fontpath);
+		} else {
+			app->fontset = fontmgr_create_fontset(config.font);
+		}
+		if (!app->fontset) {
+			dbgprint("Failed to open fallback fonts. aborting...");
+			return EXIT_FAILURE;
+		}
+
+		dbgprint("Fonts opened");
+	}
+
+	fontset_get_metrics(app->fontset, &app->colpx, &app->rowpx, NULL, NULL);
 
 	Win *win = server_create_window(
 		(struct WinConfig){
-			.param = &client_,
+			.param = app,
 			.smooth_resize = false,
 			.wm_title    = config.wm_title,
 			.wm_instance = config.wm_instance,
 			.wm_class    = config.wm_class,
 			.cols        = config.columns,
 			.rows        = config.rows,
-			.colpx       = termcfg.colsize,
-			.rowpx       = termcfg.rowsize,
+			.colpx       = app->colpx,
+			.rowpx       = app->rowpx,
 			.border      = config.border_px,
 			.callbacks = {
 				.resize   = event_resize,
@@ -203,75 +200,130 @@ error_invalid:
 		}
 	);
 
-	if (!win || !window_show(win)) {
-		exit(EXIT_FAILURE);
-	}
-	window_get_dimensions(win, &client_.width, &client_.height, &client_.borderpx);
-
-	if (!fontset_init(fontset)) {
-		dbgprint("Failed to initialize FontSet");
-		exit(EXIT_FAILURE);
+	if (win) {
+		dbgprint("Window created");
+	} else {
+		dbgprint("Failed to create window");
+		return EXIT_FAILURE;
 	}
 
-	client_.colpx  = termcfg.colsize;
-	client_.rowpx  = termcfg.rowsize;
-	client_.cols   = (client_.width - 2 * client_.borderpx) / client_.colpx;
-	client_.rows   = (client_.height - 2 * client_.borderpx) / client_.rowpx;
-	ASSERT(client_.cols == (int)config.columns);
-	ASSERT(client_.rows == (int)config.rows);
+	if (fontset_init(app->fontset)) {
+		dbgprint("Font cache initialized");
+	} else {
+		dbgprint("Failed to initialize font cache");
+		return EXIT_FAILURE;
+	}
 
-	if (!renderer_init()) {
+	if (renderer_init()) {
+		dbgprint("Renderer initialized");
+	} else {
 		dbgprint("Failed to initialize renderer");
-		exit(EXIT_FAILURE);
+		return EXIT_FAILURE;
 	}
-	renderer_set_dimensions(
-		client_.width, client_.height,
-		client_.cols, client_.rows,
-		client_.colpx, client_.rowpx,
-		client_.borderpx
+
+	if (window_show(win)) {
+		window_get_dimensions(win, &app->width, &app->height, &app->borderpx);
+	} else {
+		dbgprint("Failed to display window");
+		return EXIT_FAILURE;
+	}
+
+	app->win = win;
+	app->cols = (app->width - 2 * app->borderpx) / app->colpx;
+	app->rows = (app->height - 2 * app->borderpx) / app->rowpx;
+	app->scrollinc = DEFAULT(config.scrollinc, 1);
+
+	dbgprintf(
+		"Window displayed\n"
+		"    width   = %d\n"
+		"    height  = %d\n"
+		"    border  = %d\n"
+		"    columns = %dx%d\n"
+		"    rows    = %dx%d\n",
+		app->width,
+		app->height,
+		app->borderpx,
+		app->cols, app->colpx,
+		app->rows, app->rowpx
 	);
 
-	termcfg.cols = client_.cols;
-	termcfg.rows = client_.rows;
-	termcfg.shell = config.shell;
-	termcfg.histlines = MAX(config.histsize, termcfg.rows);
-	termcfg.tabcols = DEFAULT(config.tablen, 8);
+	ASSERT(app->cols == (int)config.columns);
+	ASSERT(app->rows == (int)config.rows);
 
-	if (!(client_.term = term_create(termcfg))) {
-		return 6;
+	termcfg.cols      = app->cols;
+	termcfg.rows      = app->rows;
+	termcfg.colsize   = app->colpx;
+	termcfg.rowsize   = app->rowpx;
+	termcfg.shell     = config.shell;
+	termcfg.histlines = MAX(config.histsize, termcfg.rows);
+	termcfg.tabcols   = DEFAULT(config.tablen, 8);
+
+	dbgprintf(
+		"Creating virtual terminal...\n"
+		"    shell     = %s\n"
+		"    histlines = %u\n"
+		"    tabspaces = %u\n",
+		DEFAULT(termcfg.shell, "$SHELL"),
+		termcfg.histlines,
+		termcfg.tabcols
+	);
+
+	if ((app->term = term_create(termcfg))) {
+		dbgprint("Virtual terminal created");
+	} else {
+		dbgprint("Failed to create virtual terminal");
+		return EXIT_FAILURE;
 	}
 
-	client_.win = win;
-	client_.scrollinc = DEFAULT(config.scrollinc, 1);
+	renderer_set_dimensions(
+		app->width, app->height,
+		app->cols, app->rows,
+		app->colpx, app->rowpx,
+		app->borderpx
+	);
+	dbgprint("Renderer online");
 
-	run(&client_);
+	dbgprint("Running temu...");
 
-	term_destroy(client_.term);
-	fontset_destroy(fontset);
+	int result = run(app);
+
+	dbgprint("Quitting temu...");
+
+	term_destroy(app->term);
+	fontset_destroy(app->fontset);
 	renderer_shutdown();
 	server_shutdown();
 
-	return 0;
+	return result;
 }
 
-void
-run(Client *client)
+int
+run(App *app)
 {
-	Term *term = client->term;
+	Term *term = app->term;
 
-	window_make_current(client->win);
+	window_make_current(app->win);
 
-	if (!window_online(client->win)) {
-		return;
+	if (!window_online(app->win)) {
+		return 0;
 	}
 
+	int result = 0;
 	const int srvfd = server_get_fileno();
 	const int ptyfd = term_exec(term, config.shell);
 
+	if (ptyfd && srvfd) {
+		dbgprintf("Virtual terminal online. FD = %d\n", ptyfd);
+	} else {
+		dbgprint("Failed to start virtual terminal");
+		result = EXIT_FAILURE;
+		goto quit;
+	}
+
 	do {
-		renderer_draw_frame(term_generate_frame(term), fontset);
-		window_update(client->win);
-	} while (window_poll_events(client->win));
+		renderer_draw_frame(term_generate_frame(term), app->fontset);
+		window_update(app->win);
+	} while (window_poll_events(app->win));
 
 	struct pollfd pollset[] = {
 		{ .fd = ptyfd, .events = POLLIN, .revents = 0 },
@@ -283,19 +335,19 @@ run(Client *client)
 	// Target polling rate
 	static const uint32 msec = 16;
 
-	while (window_online(client->win)) {
+	while (window_online(app->win)) {
 		const uint32 basetime = time_get_mono_msec(NULL);
 		bool draw = true;
 
 		switch (poll(pollset, LEN(pollset), msec)) {
 		case -1:
-			if (!errno) {
-				return;
+			if (errno) {
+				perror("poll()");
 			}
-			perror("poll()");
-			exit(errno);
+			result = errno;
+			goto quit;
 		case 0:
-			if (!window_poll_events(client->win)) {
+			if (!window_poll_events(app->win)) {
 				draw = false;
 			}
 			break;
@@ -304,7 +356,7 @@ run(Client *client)
 				const int timeout = msec - (time_get_mono_msec(NULL) - basetime);
 				term_pull(term, MAX(timeout, 0));
 			} else {
-				if (!window_poll_events(client->win)) {
+				if (!window_poll_events(app->win)) {
 					draw = false;
 				}
 			}
@@ -313,49 +365,51 @@ run(Client *client)
 			break;
 		}
 
-		if (draw && window_online(client->win)) {
-			renderer_draw_frame(term_generate_frame(client->term), fontset);
-			window_update(client->win);
+		if (draw && window_online(app->win)) {
+			renderer_draw_frame(term_generate_frame(app->term), app->fontset);
+			window_update(app->win);
 		}
 	}
 
-	window_destroy(client->win);
+quit:
+	window_destroy(app->win);
+
+	return result;
 }
 
 void
 event_resize(void *param, int width, int height)
 {
-	Client *client = param;
+	App *const app = param;
 
-	if (width == client->width && height == client->height) {
+	if (width == app->width && height == app->height) {
 		return;
 	}
 
-	const int cols = (width - 2 * client->borderpx) / client->colpx;
-	const int rows = (height - 2 * client->borderpx) / client->rowpx;
+	const int cols = (width - 2 * app->borderpx) / app->colpx;
+	const int rows = (height - 2 * app->borderpx) / app->rowpx;
 
-	if (cols != client->term->cols || rows != client->term->rows) {
-		term_resize(client->term, cols, rows);
+	if (cols != app->term->cols || rows != app->term->rows) {
+		term_resize(app->term, cols, rows);
 	}
 
 	renderer_set_dimensions(
 		width, height,
 		cols, rows,
-		client->colpx, client->rowpx,
-		client->borderpx
+		app->colpx, app->rowpx,
+		app->borderpx
 	);
 
-	client->width  = width;
-	client->height = height;
-	client->cols   = cols;
-	client->rows   = rows;
+	app->width  = width;
+	app->height = height;
+	app->cols   = cols;
+	app->rows   = rows;
 }
 
 void
 event_keypress(void *param, int key, int mod, char *buf, int len)
 {
-	Client *client = param;
-	Term *term = client->term;
+	App *const app = param;
 
 	char seq[64];
 	int seqlen = 0;
@@ -363,25 +417,25 @@ event_keypress(void *param, int key, int mod, char *buf, int len)
 	if (mod == ModAlt) {
 		switch (key) {
 		case KeyF9:
-			term_print_history(term);
+			term_print_history(app->term);
 			return;
 		case KeyF10:
-			term_print_summary(term, ~0);
+			term_print_summary(app->term, ~0);
 			return;
 		case 'u':
-			term_scroll(term, -client->scrollinc);
+			term_scroll(app->term, -app->scrollinc);
 			return;
 		case 'd':
-			term_scroll(term, +client->scrollinc);
+			term_scroll(app->term, +app->scrollinc);
 			return;
 		}
 	}
 
-	if ((seqlen = term_make_key_string(term, key, mod, seq, LEN(seq)))) {
-		term_push(term, seq, seqlen);
+	if ((seqlen = term_make_key_string(app->term, key, mod, seq, LEN(seq)))) {
+		term_push(app->term, seq, seqlen);
 	} else if (len == 1) {
-		term_reset_scroll(term);
-		term_push(term, buf, len);
+		term_reset_scroll(app->term);
+		term_push(app->term, buf, len);
 	}
 }
 

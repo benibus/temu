@@ -9,6 +9,7 @@ egl_print_info(EGLDisplay dpy)
 	if (!dpy) return;
 
 	fprintf(stderr,
+		"\n"
 		"EGL_VERSION     = %s\n"
 		"EGL_VENDOR      = %s\n"
 		"EGL_CLIENT_APIS = %s\n"
@@ -113,17 +114,22 @@ gl_message_callback(GLenum source_,
 	default:                             severity = "Unknown"; break;
 	}
 
-	fprintf(
-		stderr,
-		"glDebugMessage > "
-		"SOURCE(%s) TYPE(%s) ID(%d) SEVERITY(%s) %.*s\n",
-		source,
-		type,
-		id,
-		severity,
-		length,
-		message
-	);
+#ifndef OPENGL_VERBOSE
+	if (severity_ != GL_DEBUG_SEVERITY_NOTIFICATION)
+#endif
+	{
+		fprintf(
+			stderr,
+			"glDebugMessage > "
+			"SOURCE(%s) TYPE(%s) ID(%d) SEVERITY(%s) %.*s\n",
+			source,
+			type,
+			id,
+			severity,
+			length,
+			message
+		);
+	}
 
 	if (type_ == GL_DEBUG_TYPE_ERROR) {
 		abort();
