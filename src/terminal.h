@@ -6,61 +6,61 @@
 #include "ring.h"
 
 struct TermConfig {
-	char *shell;
-	uint16 cols, rows;
-	uint16 colsize, rowsize;
-	uint16 tabcols;
-	uint16 histlines;
-	uint32 color_bg;
-	uint32 color_fg;
-	uint32 colors[16];
+    char *shell;
+    uint16 cols, rows;
+    uint16 colsize, rowsize;
+    uint16 tabcols;
+    uint16 histlines;
+    uint32 color_bg;
+    uint32 color_fg;
+    uint32 colors[16];
 };
 
 #define IOBUF_MAX (4096)
 
 typedef struct {
-	int pid;                // PTY PID
-	int mfd;                // PTY master file descriptor
-	int sfd;                // PTY slave file descriptor
-	uchar input[IOBUF_MAX]; // PTY input buffer
+    int pid;                // PTY PID
+    int mfd;                // PTY master file descriptor
+    int sfd;                // PTY slave file descriptor
+    uchar input[IOBUF_MAX]; // PTY input buffer
 
-	Ring *ring;
-	uint8 *tabstops;
+    Ring *ring;
+    uint8 *tabstops;
 
-	int cols;
-	int rows;
-	int max_cols;
-	int max_rows;
+    int cols;
+    int rows;
+    int max_cols;
+    int max_rows;
 
-	int colsize;
-	int rowsize;
-	int histlines;
-	int tabcols;
+    int colsize;
+    int rowsize;
+    int histlines;
+    int tabcols;
 
-	int x;
-	int y;
+    int x;
+    int y;
 
-	bool wrapnext;
-	bool hidecursor;
+    bool wrapnext;
+    bool hidecursor;
 
-	Frame frame;
-	Cell cell;
-	CursorStyle crs_style;
-	uint32 crs_color;
+    Frame frame;
+    Cell cell;
+    CursorStyle crs_style;
+    uint32 crs_color;
 
-	uint32 color_bg;
-	uint32 color_fg;
-	uint32 colors[16];
+    uint32 color_bg;
+    uint32 color_fg;
+    uint32 colors[16];
 
-	struct Parser {
-		uint state;      // Current FSM state
-		uint32 ucs4;     // Current codepoint being decoded
-		uchar *data;     // Dynamic buffer for OSC/DCS/APC string sequences
-		uchar tokens[2]; // Stashed intermediate tokens
-		int depth;       // Intermediate token index
-		int argv[16];    // Numeric parameters
-		int argi;        // Numeric parameter index
-	} parser;
+    struct Parser {
+        uint state;      // Current FSM state
+        uint32 ucs4;     // Current codepoint being decoded
+        uchar *data;     // Dynamic buffer for OSC/DCS/APC string sequences
+        uchar tokens[2]; // Stashed intermediate tokens
+        int depth;       // Intermediate token index
+        int argv[16];    // Numeric parameters
+        int argi;        // Numeric parameter index
+    } parser;
 } Term;
 
 Term *term_create(struct TermConfig);

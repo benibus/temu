@@ -2,42 +2,42 @@
 #define CONFIG_H__
 
 static Config config = {
-	.wm_class = "Temu",
-	.wm_instance = "temu",
-	.wm_title = "temu",
-	.geometry = NULL,
-	.font = NULL,
-	.fontfile = NULL,
-	.colors = {
-		"#07070A", // default background
-		"#989898", // default foreground
+    .wm_class = "Temu",
+    .wm_instance = "temu",
+    .wm_title = "temu",
+    .geometry = NULL,
+    .font = NULL,
+    .fontfile = NULL,
+    .colors = {
+        "#07070A", // default background
+        "#989898", // default foreground
 
-		"#27272A", // user colors (0-16)
-		"#803A41",
-		"#38574D",
-		"#785C46",
-		"#3A4D5C",
-		"#5F495A",
-		"#406262",
-		"#888888",
+        "#27272A", // user colors (0-16)
+        "#803A41",
+        "#38574D",
+        "#785C46",
+        "#3A4D5C",
+        "#5F495A",
+        "#406262",
+        "#888888",
 
-		"#4D4D4D",
-		"#93484F",
-		"#3D6354",
-		"#7A6E52",
-		"#495E68",
-		"#725463",
-		"#537676",
-		"#A4A4A4"
-	},
-	.shell = NULL,
-	.tablen = 8,
-	.border_px = 0,
-	.histsize = 120,
-	.columns = 140,
-	.rows = 40,
-	.scrollinc = 1,
-	.position = { .x = 0, .y = 0 }
+        "#4D4D4D",
+        "#93484F",
+        "#3D6354",
+        "#7A6E52",
+        "#495E68",
+        "#725463",
+        "#537676",
+        "#A4A4A4"
+    },
+    .shell = NULL,
+    .tablen = 8,
+    .border_px = 0,
+    .histsize = 120,
+    .columns = 140,
+    .rows = 40,
+    .scrollinc = 1,
+    .position = { .x = 0, .y = 0 }
 };
 
 #endif

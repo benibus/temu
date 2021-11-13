@@ -53,28 +53,28 @@ bool isprime(int32);
 const char *charstring(uint32);
 
 typedef struct {
-	char *data;
-	size_t size;
-	int fd;
+    char *data;
+    size_t size;
+    int fd;
 } FileBuf;
 
 void *file_load(FileBuf *, const char *);
 void file_unload(FileBuf *);
 
 typedef union {
-	uint32 units[4];
-	struct {
-		uint32 sec;
-		uint32 msec;
-		uint32 usec;
-		uint32 nsec;
-	};
+    uint32 units[4];
+    struct {
+        uint32 sec;
+        uint32 msec;
+        uint32 usec;
+        uint32 nsec;
+    };
 } TimeRec;
 
 typedef struct {
-	TimeRec t0;
-	TimeRec t1;
-	TimeRec t2;
+    TimeRec t0;
+    TimeRec t1;
+    TimeRec t2;
 } TimeBlock;
 
 uint32 timer_msec(TimeRec *);
@@ -93,9 +93,9 @@ static inline int64 uclamp(int64 a, int64 b, int64 c) { return CLAMP(a, MAX(b, 0
 static inline int uwrap(int n, int m) { return ((n %= m) < 0) ? m + n : n; }
 
 struct ArrHdr_ {
-	size_t count;
-	size_t max;
-	uchar data[];
+    size_t count;
+    size_t max;
+    uchar data[];
 };
 
 #define arr__(p) ((struct ArrHdr_ *)((uchar *)(p) - offsetof(struct ArrHdr_, data)))
@@ -118,24 +118,24 @@ struct ArrHdr_ {
 static inline void *
 arr__resize(const void *data, size_t count, size_t stride)
 {
-	static_assert(offsetof(struct ArrHdr_, data) == 16, "Bad member alignment");
+    static_assert(offsetof(struct ArrHdr_, data) == 16, "Bad member alignment");
 
-	struct ArrHdr_ *ptr;
-	size_t max, size;
+    struct ArrHdr_ *ptr;
+    size_t max, size;
 
-	max = MAX(2 * arr_max(data), MAX(count, offsetof(struct ArrHdr_, data)));
-	ASSERT(count <= max);
-	size = offsetof(struct ArrHdr_, data) + max * stride;
+    max = MAX(2 * arr_max(data), MAX(count, offsetof(struct ArrHdr_, data)));
+    ASSERT(count <= max);
+    size = offsetof(struct ArrHdr_, data) + max * stride;
 
-	if (data) {
-		ptr = xrealloc(arr__(data), size, 1);
-	} else {
-		ptr = xcalloc(size, 1);
-		ptr->count = 0;
-	}
-	ptr->max = max;
+    if (data) {
+        ptr = xrealloc(arr__(data), size, 1);
+    } else {
+        ptr = xcalloc(size, 1);
+        ptr->count = 0;
+    }
+    ptr->max = max;
 
-	return ptr->data;
+    return ptr->data;
 }
 
 #endif

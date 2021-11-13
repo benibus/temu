@@ -21,63 +21,63 @@ void renderer_shutdown(void);
 void renderer_draw_frame(const Frame *, FontSet *);
 
 union Vec2F_ {
-	float arr[2];
-	struct { float x, y; };
-	struct { float s, t; };
-	struct { float u, v; };
+    float arr[2];
+    struct { float x, y; };
+    struct { float s, t; };
+    struct { float u, v; };
 };
 
 union Vec2I_ {
-	int arr[2];
-	struct { int x, y; };
-	struct { int s, t; };
-	struct { int u, v; };
+    int arr[2];
+    struct { int x, y; };
+    struct { int s, t; };
+    struct { int u, v; };
 };
 
 union Vec2U_ {
-	uint arr[2];
-	struct { uint x, y; };
-	struct { uint s, t; };
-	struct { uint u, v; };
+    uint arr[2];
+    struct { uint x, y; };
+    struct { uint s, t; };
+    struct { uint u, v; };
 };
 
 union Vec3F_ {
-	float arr[3];
-	struct { float x, y, z; };
-	struct { float r, g, b; };
+    float arr[3];
+    struct { float x, y, z; };
+    struct { float r, g, b; };
 };
 
 union Vec3I_ {
-	int arr[3];
-	struct { int x, y, z; };
-	struct { int r, g, b; };
+    int arr[3];
+    struct { int x, y, z; };
+    struct { int r, g, b; };
 };
 
 union Vec3U_ {
-	uint arr[3];
-	struct { uint x, y, z; };
-	struct { uint r, g, b; };
+    uint arr[3];
+    struct { uint x, y, z; };
+    struct { uint r, g, b; };
 };
 
 union Vec4F_ {
-	float arr[4];
-	struct { float x, y, z, w; };
-	struct { float s, t, u, v; };
-	struct { float r, g, b, a; };
+    float arr[4];
+    struct { float x, y, z, w; };
+    struct { float s, t, u, v; };
+    struct { float r, g, b, a; };
 };
 
 union Vec4I_ {
-	int arr[4];
-	struct { int x, y, z, w; };
-	struct { int s, t, u, v; };
-	struct { int r, g, b, a; };
+    int arr[4];
+    struct { int x, y, z, w; };
+    struct { int s, t, u, v; };
+    struct { int r, g, b, a; };
 };
 
 union Vec4U_ {
-	uint arr[4];
-	struct { uint x, y, z, w; };
-	struct { uint s, t, u, v; };
-	struct { uint r, g, b, a; };
+    uint arr[4];
+    struct { uint x, y, z, w; };
+    struct { uint s, t, u, v; };
+    struct { uint r, g, b, a; };
 };
 
 #endif

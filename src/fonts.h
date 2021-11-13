@@ -11,21 +11,21 @@
 #define FONTSTYLE_MASK    ((1 << 2)-1)
 
 typedef enum {
-	FontStyleRegular    = FONTSTYLE_REGULAR,
-	FontStyleBold       = FONTSTYLE_BOLD,
-	FontStyleItalic     = FONTSTYLE_ITALIC,
-	FontStyleBoldItalic = FONTSTYLE_BOLD|FONTSTYLE_ITALIC,
-	FontStyleCount
+    FontStyleRegular    = FONTSTYLE_REGULAR,
+    FontStyleBold       = FONTSTYLE_BOLD,
+    FontStyleItalic     = FONTSTYLE_ITALIC,
+    FontStyleBoldItalic = FONTSTYLE_BOLD|FONTSTYLE_ITALIC,
+    FontStyleCount
 } FontStyle;
 
 typedef struct FontSet_ FontSet;
 
 typedef struct {
-	uint id;
-	float u;
-	float v;
-	float w;
-	float h;
+    uint id;
+    float u;
+    float v;
+    float w;
+    float h;
 } Texture;
 
 bool fontmgr_init(double);

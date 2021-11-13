@@ -73,28 +73,28 @@
     X_(KPEnd,       349)
 
 enum {
-	KeyNone = -1,
+    KeyNone = -1,
 #define X_(key,val) Key##key = val,
-	KEYCODE_TABLE
+    KEYCODE_TABLE
 #undef  X_
-	KeyCount
+    KeyCount
 };
 
 static char *keyname[] = {
 #define X_(key,val) [Key##key] = #key,
-	KEYCODE_TABLE
+    KEYCODE_TABLE
 #undef  X_
 };
 
 #undef KEYCODE_TABLE
 
 enum {
-	ModNone  = (0),
-	ModShift = (1 << 0),
-	ModAlt   = (1 << 1),
-	ModCtrl  = (1 << 2),
-	ModAny   = (1 << 3),
-	ModCount
+    ModNone  = (0),
+    ModShift = (1 << 0),
+    ModAlt   = (1 << 1),
+    ModCtrl  = (1 << 2),
+    ModAny   = (1 << 3),
+    ModCount
 };
 
 #endif

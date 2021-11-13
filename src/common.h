@@ -89,9 +89,9 @@ typedef uint32_t UTF8;
 typedef uint32_t UCS4;
 
 typedef struct {
-	char *data;
-	uint32 len;
-	uint32 max;
+    char *data;
+    uint32 len;
+    uint32 max;
 } String;
 
 #define MIN(a,b)        (((a) < (b)) ? (a) : (b))

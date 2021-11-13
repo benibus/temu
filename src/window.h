@@ -7,17 +7,17 @@
 typedef struct Win_ Win;
 
 typedef enum {
-	EventTypeNone,
-	EventTypeDestroy,
-	EventTypeResize,
-	EventTypeTextInput,
-	EventTypeKeyPress,
-	EventTypeKeyRelease,
-	EventTypeButtonPress,
-	EventTypeButtonRelease,
-	EventTypePointerMove,
-	EventTypeExpose,
-	EventTypeCount
+    EventTypeNone,
+    EventTypeDestroy,
+    EventTypeResize,
+    EventTypeTextInput,
+    EventTypeKeyPress,
+    EventTypeKeyRelease,
+    EventTypeButtonPress,
+    EventTypeButtonRelease,
+    EventTypePointerMove,
+    EventTypeExpose,
+    EventTypeCount
 } EventType;
 
 typedef void (*EventFuncResize)(void *, int, int);
@@ -25,21 +25,21 @@ typedef void (*EventFuncKeyPress)(void *, int, int, char *, int);
 typedef void (*EventFuncExpose)(void *);
 
 struct WinConfig {
-	void *param;
-	char *wm_title;
-	char *wm_instance;
-	char *wm_class;
-	uint16 cols;
-	uint16 rows;
-	uint16 colpx;
-	uint16 rowpx;
-	uint16 border;
-	bool smooth_resize;
-	struct {
-		EventFuncResize resize;
-		EventFuncKeyPress keypress;
-		EventFuncExpose expose;
-	} callbacks;
+    void *param;
+    char *wm_title;
+    char *wm_instance;
+    char *wm_class;
+    uint16 cols;
+    uint16 rows;
+    uint16 colpx;
+    uint16 rowpx;
+    uint16 border;
+    bool smooth_resize;
+    struct {
+        EventFuncResize resize;
+        EventFuncKeyPress keypress;
+        EventFuncExpose expose;
+    } callbacks;
 };
 
 bool server_setup(void);

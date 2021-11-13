@@ -4,51 +4,51 @@
 #include "common.h"
 
 typedef enum {
-	ActionNone,
-	ActionIgnore,
-	ActionPrint,
-	ActionExec,
-	ActionClear,
-	ActionCollect,
-	ActionParam,
-	ActionEscDispatch,
-	ActionCsiDispatch,
-	ActionHook,
-	ActionUnhook,
-	ActionPut,
-	ActionOscStart,
-	ActionOscPut,
-	ActionOscEnd,
-	ActionUtf8Start,
-	ActionUtf8Cont,
-	ActionUtf8Fail,
-	ActionCount
+    ActionNone,
+    ActionIgnore,
+    ActionPrint,
+    ActionExec,
+    ActionClear,
+    ActionCollect,
+    ActionParam,
+    ActionEscDispatch,
+    ActionCsiDispatch,
+    ActionHook,
+    ActionUnhook,
+    ActionPut,
+    ActionOscStart,
+    ActionOscPut,
+    ActionOscEnd,
+    ActionUtf8Start,
+    ActionUtf8Cont,
+    ActionUtf8Fail,
+    ActionCount
 } ActionCode;
 
 typedef enum {
-	StateGround,
-	StateEsc1,
-	StateEsc2,
-	StateCsi1,
-	StateCsi2,
-	StateCsiParam,
-	StateCsiIgnore,
-	StateOsc,
-	StateDcs1,
-	StateDcs2,
-	StateDcsParam,
-	StateDcsIgnore,
-	StateDcsPass,
-	StateSosPmApc,
-	StateUtf8B1,
-	StateUtf8B2,
-	StateUtf8B3,
-	StateCount,
+    StateGround,
+    StateEsc1,
+    StateEsc2,
+    StateCsi1,
+    StateCsi2,
+    StateCsiParam,
+    StateCsiIgnore,
+    StateOsc,
+    StateDcs1,
+    StateDcs2,
+    StateDcsParam,
+    StateDcsIgnore,
+    StateDcsPass,
+    StateSosPmApc,
+    StateUtf8B1,
+    StateUtf8B2,
+    StateUtf8B3,
+    StateCount,
 } StateCode;
 
 typedef struct {
-	StateCode state;       // next state to transition to
-	ActionCode actions[3]; // actions to complete before transition (in order)
+    StateCode state;       // next state to transition to
+    ActionCode actions[3]; // actions to complete before transition (in order)
 } StateTrans;
 
 StateTrans fsm_next_state(StateCode, uchar);
