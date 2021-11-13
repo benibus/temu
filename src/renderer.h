@@ -7,9 +7,8 @@
 
 void renderer_set_dimensions(int, int, int, int, int, int, int);
 bool renderer_init(void);
-void renderer_draw_frame(const Frame *);
-
-extern FontSet *fontset;
+void renderer_shutdown(void);
+void renderer_draw_frame(const Frame *, FontSet *);
 
 #endif
 

@@ -126,7 +126,7 @@ unpack_argb(uint32 argb)
 }
 
 void
-renderer_draw_frame(const Frame *frame)
+renderer_draw_frame(const Frame *frame, FontSet *fontset)
 {
 	if (!frame) {
 		return;
@@ -134,9 +134,12 @@ renderer_draw_frame(const Frame *frame)
 
 	Instance *cinst = NULL;
 	uint at = 0;
-
 	const Vec4F bg = unpack_argb(frame->default_bg);
 	const Vec4F fg = unpack_argb(frame->default_fg);
+
+	if (!fontset) {
+		goto draw;
+	}
 
 	const Cell *cells = frame->cells;
 	const int cx = frame->cursor.col;
@@ -182,6 +185,7 @@ renderer_draw_frame(const Frame *frame)
 		cinst->color_fg = bg;
 	}
 
+draw:
 	glClearColor(bg.r, bg.g, bg.b, 1.f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
@@ -279,6 +283,12 @@ renderer_init(void)
 	rc.uniforms.screenpx   = glGetUniformLocation(rc.program, "u_screenpx");
 
 	return true;
+}
+
+void
+renderer_shutdown(void)
+{
+	FREE(rc.instances);
 }
 
 void

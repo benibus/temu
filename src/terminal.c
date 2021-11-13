@@ -148,6 +148,16 @@ static const struct FuncEntry {
 
 static void parser_print_debug(const Term *, FuncID);
 
+#if BUILD_DEBUG
+  #define DEBUG_PRINT_INPUT 0
+#else
+  #define DEBUG_PRINT_INPUT 0
+#endif
+
+#if DEBUG_PRINT_INPUT
+static uchar *dbginput; // For human-readable printing
+#endif
+
 Term *
 term_create(struct TermConfig config)
 {
@@ -221,6 +231,10 @@ term_destroy(Term *term)
 	}
 	ring_destroy(term->ring);
 	free(term);
+
+#if DEBUG_PRINT_INPUT
+	arr_free(dbginput);
+#endif
 }
 
 int
@@ -392,9 +406,7 @@ term_get_cursor(const Term *term, CursorDesc *cursor)
 size_t
 term_consume(Term *term, const uchar *str, size_t len)
 {
-	static uchar *input_; // Debug
 	uint i = 0;
-
 
 	for (; str[i] && i < len; i++) {
 		StateTrans result = fsm_next_state(term->parser.state, str[i]);
@@ -405,27 +417,24 @@ term_consume(Term *term, const uchar *str, size_t len)
 
 		term->parser.state = result.state;
 
-#if 0
-#define DBGOPT_PRINT_INPUT 1
+#if DEBUG_PRINT_INPUT
 		{
 			const char *tmp = charstring(str[i]);
 			int len = strlen(tmp);
 			if (len) {
 				for (int j = 0; j < len; j++) {
-					arr_push(input_, tmp[j]);
+					arr_push(dbginput, tmp[j]);
 				}
-				arr_push(input_, ' ');
+				arr_push(dbginput, ' ');
 			}
 		}
-#else
-		(void)input_;
 #endif
 	}
 
-#ifdef DBGOPT_PRINT_INPUT
-	if (arr_count(input_)) {
-		dbgprintf("Input: %.*s\n", (int)arr_count(input_), (char *)input_);
-		arr_clear(input_);
+#if DEBUG_PRINT_INPUT
+	if (arr_count(dbginput)) {
+		dbgprintf("Input: %.*s\n", (int)arr_count(dbginput), (char *)dbginput);
+		arr_clear(dbginput);
 	}
 #endif
 

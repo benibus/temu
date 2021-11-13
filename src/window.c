@@ -458,11 +458,24 @@ server_create_window(struct WinConfig config)
 }
 
 void
-server_destroy_window(Win *win)
+window_destroy(Win *win)
 {
-	ASSERT(win && win->xid && win->online);
+	ASSERT(win && win->xid);
+	if (win->surface) {
+		eglDestroySurface(server.egl.dpy, win->surface);
+		window_make_current(NULL);
+	}
 	XDestroyWindow(server.dpy, win->xid);
 	win->online = false;
+}
+
+void
+server_shutdown()
+{
+	window_make_current(NULL);
+	eglDestroyContext(server.egl.dpy, server.egl.context);
+	eglTerminate(server.egl.dpy);
+	XCloseDisplay(server.dpy);
 }
 
 float
@@ -516,7 +529,7 @@ window_make_current(const Win *win)
 	if (!eglMakeCurrent(server.egl.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT)) {
 		return false;
 	}
-	if (!eglMakeCurrent(server.egl.dpy, win->surface, win->surface, server.egl.context)) {
+	if (win && !eglMakeCurrent(server.egl.dpy, win->surface, win->surface, server.egl.context)) {
 		return false;
 	}
 
@@ -735,7 +748,8 @@ window_poll_events(Win *win)
 		case ClientMessage: {
 			XClientMessageEvent *e = (void *)&event;
 			if ((Atom)e->data.l[0] == ATOM(WM_DELETE_WINDOW)) {
-				server_destroy_window(win);
+				/* server_destroy_window(win); */
+				win->online = false;
 			}
 			break;
 		}

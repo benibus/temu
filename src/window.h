@@ -43,8 +43,8 @@ struct WinConfig {
 };
 
 bool server_setup(void);
+void server_shutdown(void);
 Win *server_create_window(struct WinConfig);
-void server_destroy_window(Win *);
 float server_get_dpi(void);
 int server_get_fileno(void);
 bool server_parse_color_string(const char *, uint32 *);
@@ -52,6 +52,7 @@ int server_events_pending(void);
 int server_get_fileno(void);
 
 bool window_online(const Win *);
+void window_destroy(Win *);
 void window_get_dimensions(const Win *, int *, int *, int *);
 int window_poll_events(Win *);
 bool window_show(Win *);

@@ -3,6 +3,8 @@
 
 #include "defs.h"
 
+#define FONT_DEFAULT "monospace:size=12.0"
+
 #define FONTSTYLE_REGULAR (0)
 #define FONTSTYLE_BOLD    (1 << 0)
 #define FONTSTYLE_ITALIC  (1 << 1)
@@ -28,6 +30,8 @@ typedef struct {
 
 bool fontmgr_init(double);
 FontSet *fontmgr_create_fontset(const char *);
+FontSet *fontmgr_create_fontset_from_file(const char *);
+void fontset_destroy(FontSet *set);
 bool fontset_init(FontSet *);
 Texture fontset_get_glyph_texture(FontSet *, FontStyle, uint32);
 bool fontset_get_metrics(const FontSet *, int *, int *, int *, int *);

@@ -210,21 +210,35 @@ fontmgr_init(double dpi)
 	return true;
 }
 
-// TODO(ben): Merging user settings with arbitrary files requires more fontconfig knowledge
-// than I currently have, so the API is unexposed for now.
 FcPattern *
 pattern_create_from_file(const char *filepath)
 {
-	FcPattern *result = NULL;
-	int count;
+	// Fontconfig stores the path as-is, but we normalize it for predictability
+	ASSERT(!filepath || filepath[0] == '/');
 
-	FcPattern *pat = FcFreeTypeQuery((const FcChar8 *)filepath, 0, NULL, &count);
-	if (pat && count) {
-		result = FcPatternDuplicate(pat);
+	FcPattern *result = NULL;
+
+	dbgprintf("Opening font from path: %s\n", filepath);
+
+	if (filepath && FcConfigAppFontAddFile(NULL, (const FcChar8 *)filepath)) {
+		FcFontSet *fcset = FcConfigGetFonts(NULL, FcSetApplication);
+		for (int i = 0; !result && fcset && i < fcset->nfont; i++) {
+			FcValue fcval;
+			// There's probably a better way to retreive the pattern...
+			if (FcPatternGet(fcset->fonts[i], FC_FILE, 0, &fcval) == FcResultMatch) {
+				if (strequal(filepath, (const char *)fcval.u.s)) {
+					result = FcPatternDuplicate(fcset->fonts[i]);
+					ASSERT(result);
+				}
+			}
+		}
+	}
+
+	if (result) {
 		pattern_set_defaults(result);
 	} else {
-		dbgprintf("Failed to query font file at %s... loading system fallback\n", filepath);
-		result = pattern_create_from_name("monospace:size=12.0");
+		dbgprint("Failed to open font... falling back to defaults");
+		result = pattern_create_from_name(NULL);
 	}
 
 	return result;
@@ -234,11 +248,20 @@ FcPattern *
 pattern_create_from_name(const char *name)
 {
 	FcPattern *result = NULL;
+	name = DEFAULT(name, FONT_DEFAULT);
+
+	dbgprintf("Opening font from name: \"%s\"\n", name);
 
 	FcPattern *pat = FcNameParse((FcChar8 *)name);
 	if (pat) {
 		result = FcPatternDuplicate(pat);
+	} else if (!strequal(name, FONT_DEFAULT)) {
+		dbgprint("Failed to open font... falling back to defaults");
+		result = pattern_create_from_name(NULL);
+	}
+	if (result) {
 		pattern_set_defaults(result);
+		FcPatternDestroy(pat);
 	}
 
 	return result;
@@ -266,6 +289,10 @@ pattern_set_defaults(FcPattern *pat)
 	if (FcPatternGet(pat, FC_WEIGHT, 0, &fcval) == FcResultMatch) {
 		FcPatternDel(pat, FC_WEIGHT);
 	}
+	if (FcPatternGet(pat, FC_SCALABLE, 0, &fcval) == FcResultMatch) {
+		FcPatternDel(pat, FC_SCALABLE);
+	}
+	FcPatternAddBool(pat, FC_SCALABLE, FcTrue);
 }
 
 FcFontSet *
@@ -309,6 +336,7 @@ pattern_expand_set(FcPattern *pat)
 			FcFontSetAdd(fcset, pat_match);
 		}
 		FcPatternDestroy(pats[i]);
+		FcPatternPrint(pat_match);
 
 		if (fcset->nfont < i + 1) {
 			dbgprintf("Failed to find matching FcPattern for style %d", i);
@@ -369,6 +397,7 @@ fontset_init(FontSet *set)
 	Atlas *atlas = &set->atlas;
 	Font *basefont = &set->fonts[0];
 
+	// Setup the atlas metrics and nodes
 	{
 		const int pitch = ALIGN_UP(basefont->width + 2 * MIN_PADDING, PIXEL_ALIGN);
 
@@ -402,6 +431,7 @@ fontset_init(FontSet *set)
 		}
 	}
 
+	// Setup the atlas texture
 	glEnable(GL_CULL_FACE);
 	glEnable(GL_BLEND);
 	glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
@@ -411,7 +441,7 @@ fontset_init(FontSet *set)
 	ASSERT(atlas->tex);
 	dbgprintf("Generated texture: %u\n", atlas->tex);
 
-	glActiveTexture(GL_TEXTURE0 + atlas->tex - 1);
+	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, atlas->tex);
 
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -431,6 +461,7 @@ fontset_init(FontSet *set)
 		NULL
 	);
 
+	// Finalize initialization for the fonts
 	for (int i = 0; i < FontStyleCount; i++) {
 		Font *font = &set->fonts[i];
 		font_create_glyphmap(font, font->num_codepoints);
@@ -439,12 +470,14 @@ fontset_init(FontSet *set)
 
 	}
 
+	// Render the "missing glyph" glyph first.
 	{
-		// Render the "missing glyph" glyph first.
-		Glyph *glyph = font_render_glyph(basefont, 0);
+		Glyph *glyph = font_render_glyph(&set->fonts[0], 0);
 		ASSERT(glyph);
-		AtlasNode *node = atlas_cache_glyph_bitmap(atlas, glyph, basefont->bitmap);
+
+		AtlasNode *node = atlas_cache_glyph_bitmap(atlas, glyph, set->fonts[0].bitmap);
 		ASSERT(node && node->glyph == glyph);
+		ASSERT(atlas->count == 1);
 	}
 
 	return true;
@@ -463,6 +496,24 @@ fontset_get_metrics(const FontSet *fontset, int *width, int *height, int *ascent
 	}
 
 	return false;
+}
+
+void
+fontset_destroy(FontSet *set)
+{
+	for (int i = 0; i < FontStyleCount; i++) {
+		Font *font = &set->fonts[i];
+		FREE(font->bitmap);
+		FREE(font->glyphs);
+		FREE(font->glyphmap);
+		FcCharSetDestroy(font->charset);
+		FT_Done_Face(font->face);
+	}
+
+	FREE(set->atlas.nodes);
+	FcFontSetDestroy(set->fcset);
+	FT_Done_FreeType(instance.library);
+	FcFini();
 }
 
 bool
@@ -616,9 +667,7 @@ font_create_from_desc(Font *font_, struct FontDesc desc)
 		font.rendermode = FT_RENDER_MODE_MONO;
 	}
 
-#if 1
-	/* font.depth = 1; */
-#else
+#if 0
 	if (font.rendermode == FT_RENDER_MODE_LCD) {
 		font.depth = sizeof(uint32);
 	} else {
@@ -730,35 +779,51 @@ query_file_glyph_index(FT_FaceRec *face, const FcCharSet *charset, uint32 ucs4)
 Texture
 fontset_get_glyph_texture(FontSet *set, FontStyle style, uint32 ucs4)
 {
+	// Sanity checks. The missing glyph *must* be canonicalized by this point
+	ASSERT(set->fonts[0].glyphs[0].idx == 0);
+	ASSERT(set->fonts[0].glyphs[0].node);
+	ASSERT(set->atlas.nodes[0].glyph == &set->fonts[0].glyphs[0]);
+
 	Font *font = &set->fonts[style];
-	Glyph *glyph = &font->glyphs[0];
-	Atlas *atlas = &set->atlas;
-	AtlasNode *node = glyph->node;
 
 	uint32 hash = hash_codepoint(font->glyphmap, font->num_glyphs, ucs4);
+	ASSERT(hash < font->basehash);
 
+	Glyph *glyph;
+	Atlas *atlas = &set->atlas;
+	AtlasNode *node;
+
+	// A valid codepoint -> glyph mapping already exists
 	if (font->glyphmap[hash].status) {
+		ASSERT(font->glyphmap[hash].idx < font->num_glyphs);
 		glyph = &font->glyphs[font->glyphmap[hash].idx];
+		// The glyph is already allocated, so we set it to MRU
+		// The cache skips referencing index 0 automatically
 		if (glyph->node) {
 			node = atlas_reference_glyph(atlas, glyph);
+		// The glyph texture was paged out, so re-render/cache the bitmap
 		} else {
 			glyph = font_render_glyph(font, glyph->idx);
 			node = atlas_cache_glyph_bitmap(atlas, glyph, font->bitmap);
 		}
+	// A glyph has never been mapped to this codepoint
 	} else {
-		uint idx = query_file_glyph_index(font->face, font->charset, ucs4);
-		if (idx) {
+		// Extract the codepoint's glyph index from the font (the expensive operation)
+		uint32 idx = query_file_glyph_index(font->face, font->charset, ucs4);
+		// No glyph found in the font, use the (already existing) missing glyph
+		if (!idx) {
+			glyph = &font->glyphs[0];
+		// Glyph found, add a new mapping and a new bitmap entry
+		} else {
 			font->glyphmap[hash].status = true;
 			font->glyphmap[hash].idx  = idx;
 			font->glyphmap[hash].ucs4 = ucs4;
 			font->num_mapped++;
-
 			glyph = font_render_glyph(font, idx);
-			node = atlas_cache_glyph_bitmap(atlas, glyph, font->bitmap);
 		}
+		// If glyph->idx == 0, the cache resolves to the missing glyph. The bitmap isn't read.
+		node = atlas_cache_glyph_bitmap(atlas, glyph, font->bitmap);
 	}
-
-	ASSERT(node == glyph->node);
 
 	return (Texture){
 		.id = atlas->tex,
@@ -773,29 +838,65 @@ Glyph *
 font_render_glyph(Font *font, uint32 idx)
 {
 	FT_FaceRec *face = font->face;
-	FT_GlyphSlotRec *active = face->glyph;
+
+	ASSERT(font->set);
+	ASSERT(idx < font->num_glyphs);
+
+	Glyph *glyph = NULL;
 
 	FT_Library_SetLcdFilter(instance.library, font->lcdfilter);
 	{
 		FT_Error err;
 		err = FT_Load_Glyph(face, idx, font->loadflags|font->loadtarget);
 		if (err) {
-			return NULL;
-		}
-		if (font->attrs & FONTATTR_EMBOLDEN) {
-			FT_GlyphSlot_Embolden(active);
-		}
-		if (active->format != FT_GLYPH_FORMAT_BITMAP) {
-			err = FT_Render_Glyph(active, font->rendermode);
-			if (err) {
-				return NULL;
+			dbgprintf(
+				"Failed to load glyph (%u) from %s... "
+				"style: %ld flags: %#x target: %#x\n",
+				idx,
+				font->filepath,
+				font - font->set->fonts,
+				font->loadflags,
+				font->loadtarget
+			);
+		} else if (face->glyph->format != FT_GLYPH_FORMAT_BITMAP) {
+			if (font->attrs & FONTATTR_EMBOLDEN) {
+				FT_GlyphSlot_Embolden(face->glyph);
 			}
-			active = face->glyph;
+			err = FT_Render_Glyph(face->glyph, font->rendermode);
+			if (!err) {
+				glyph = &font->glyphs[idx];
+			} else {
+				dbgprintf(
+					"Failed to render glyph (%u) from %s... "
+					"style: %ld flags: %#x target: %#x mode: %d\n",
+					idx,
+					font->filepath,
+					font - font->set->fonts,
+					font->loadflags,
+					font->loadtarget,
+					font->rendermode
+				);
+			}
 		}
 	}
 	FT_Library_SetLcdFilter(instance.library, FT_LCD_FILTER_NONE);
 
-	ASSERT(face->glyph->format == FT_GLYPH_FORMAT_BITMAP);
+	const FT_GlyphSlotRec *slot = face->glyph;
+
+	// NOTE(ben): Currently, only scalable alpha-only glyphs are safe to load
+	if (!glyph || slot->bitmap.pixel_mode != FT_PIXEL_MODE_GRAY) {
+#if 1
+		if (idx && !font->glyphs[0].node) {
+			return font_render_glyph(font, 0);
+		} else {
+			return &font->glyphs[0];
+		}
+#else
+		return &font->glyphs[0];
+#endif
+	}
+
+	ASSERT(slot->format == FT_GLYPH_FORMAT_BITMAP);
 
 #if DEBUG_PRINT_GLYPHS
 	dbg_print_freetype_bitmap(face);
@@ -806,38 +907,40 @@ font_render_glyph(Font *font, uint32 idx)
 	int xsrc = 0, ysrc = 0;
 	int xdst = 0, ydst = 0;
 
-	if (active->bitmap_left < 0) {
-		xsrc = imin(-active->bitmap_left, font->width);
+	// Right now, we have to pre-clamp the bitmaps at load time since the atlas doesn't support
+	// variable-sized rectangles yet. This has a negative effect on transformed glyphs.
+	if (slot->bitmap_left < 0) {
+		xsrc = imin(-slot->bitmap_left, font->width);
 	} else {
-		xdst = imin(active->bitmap_left, font->width);
+		xdst = imin(slot->bitmap_left, font->width);
 	}
-	if (active->bitmap_top > font->ascent) {
-		ysrc = imin(active->bitmap_top - font->ascent, font->height);
+	if (slot->bitmap_top > font->ascent) {
+		ysrc = imin(slot->bitmap_top - font->ascent, font->height);
 	} else {
-		ydst = imin(font->ascent - active->bitmap_top, font->height);
+		ydst = imin(font->ascent - slot->bitmap_top, font->height);
 	}
 
-	const int width  = imin(active->bitmap.width - xsrc, font->width - xdst);
-	const int height = imin(active->bitmap.rows - ysrc, font->height - ydst);
+	const int width  = imin(slot->bitmap.width - xsrc, font->width - xdst);
+	const int height = imin(slot->bitmap.rows - ysrc, font->height - ydst);
 	ASSERT(width >= 0 && height >= 0);
 
 	memset(font->bitmap, 0, font->max_width * font->max_height);
 
-	const uchar *srcptr = active->bitmap.buffer + ysrc * active->bitmap.pitch;
+	const uchar *srcptr = slot->bitmap.buffer + ysrc * slot->bitmap.pitch;
 	uchar *dstptr = font->bitmap + (ydst + atlas->vpad) * atlas->dx;
 
+	// Do the copy (alpha-to-alpha for now)
 	for (int y = ydst; y - ydst < height; y++) {
 		memcpy(dstptr + (atlas->lpad + xdst) * atlas->depth, srcptr + xsrc, width);
-		srcptr += active->bitmap.pitch;
+		srcptr += slot->bitmap.pitch;
 		dstptr += atlas->dx;
 	}
 
-	Glyph *glyph = &font->glyphs[idx];
 	glyph->idx      = idx;
-	glyph->width    = active->bitmap.width;
-	glyph->height   = active->bitmap.rows;
-	glyph->hbearing = -active->bitmap_left;
-	glyph->vbearing = active->bitmap_top;
+	glyph->width    = slot->bitmap.width;
+	glyph->height   = slot->bitmap.rows;
+	glyph->hbearing = -slot->bitmap_left;
+	glyph->vbearing = slot->bitmap_top;
 	glyph->node     = NULL;
 
 	return glyph;
@@ -867,7 +970,8 @@ atlas_reference_glyph(Atlas *atlas, Glyph *glyph)
 	AtlasNode *const tail = atlas->tail;
 	AtlasNode *const node = glyph->node;
 
-	if (node != tail) {
+	// Move the glyph's node to the back of the queue (unless it's the sentinel)
+	if (node != &atlas->nodes[0] && node != tail) {
 		ASSERT(head != tail);
 		ASSERT(head->next);
 
@@ -889,9 +993,9 @@ atlas_reference_glyph(Atlas *atlas, Glyph *glyph)
 AtlasNode *
 atlas_cache_glyph_bitmap(Atlas *atlas, Glyph *glyph, uchar *bitmap)
 {
-	ASSERT(!glyph->node);
-
 	AtlasNode *node = NULL;
+
+	ASSERT(glyph);
 
 	// A null glyph gets cached once and never gets paged out
 	// The same node is provided to every font
@@ -900,8 +1004,12 @@ atlas_cache_glyph_bitmap(Atlas *atlas, Glyph *glyph, uchar *bitmap)
 		if (!node->glyph) {
 			node->glyph = glyph;
 			atlas->count++;
+		} else {
+			goto assign;
 		}
 	} else {
+		ASSERT(!glyph->node);
+
 		AtlasNode *const head = atlas->head;
 		AtlasNode *const tail = atlas->tail;
 
@@ -952,21 +1060,24 @@ atlas_cache_glyph_bitmap(Atlas *atlas, Glyph *glyph, uchar *bitmap)
 		// Set the new back-reference
 		node->glyph = glyph;
 	}
-	// Set the the new forward-reference
-	glyph->node = node;
 
 	glBindTexture(GL_TEXTURE_2D, atlas->tex);
 	glTexSubImage2D(
 		GL_TEXTURE_2D,
 		0,
-		(node) ? (denorm_x(node->u) - atlas->lpad) * atlas->depth : 0,
-		(node) ? (denorm_y(node->v) - atlas->vpad) * atlas->depth : 0,
+		(denorm_x(node->u) - atlas->lpad) * atlas->depth,
+		(denorm_y(node->v) - atlas->vpad) * atlas->depth,
 		atlas->dx * atlas->depth,
 		atlas->dy * atlas->depth,
 		GL_RED,
 		GL_UNSIGNED_BYTE,
 		bitmap
 	);
+
+assign:
+	ASSERT(node);
+	// Set the new forward-reference
+	glyph->node = node;
 
 	return node;
 }

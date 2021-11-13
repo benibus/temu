@@ -17,6 +17,7 @@ typedef struct Config {
 	char *wm_title;
 	char *geometry;
 	char *font;
+	char *fontfile;
 	char *colors[MAX_CFG_COLORS];
 	char *shell;
 	uint tablen;
@@ -59,7 +60,7 @@ main(int argc, char **argv)
 	static_assert(FontStyleItalic == ATTR_ITALIC, "Bitmask mismatch.");
 	static_assert(FontStyleBoldItalic == (ATTR_BOLD|ATTR_ITALIC), "Bitmask mismatch.");
 
-	for (int opt; (opt = getopt(argc, argv, "T:N:C:S:f:c:r:x:y:b:m:s:")) != -1; ) {
+	for (int opt; (opt = getopt(argc, argv, "T:N:C:S:F:f:c:r:x:y:b:m:s:")) != -1; ) {
 		union {
 			char *s;
 			long n;
@@ -73,6 +74,7 @@ main(int argc, char **argv)
 		case 'C': config.wm_class = optarg; break;
 		case 'S': config.shell = optarg; break;
 		case 'f': config.font = optarg; break;
+		case 'F': config.fontfile = optarg; break;
 		case 'c':
 			arg.n = strtol(optarg, &errp, 10);
 			if (!*errp) {
@@ -128,11 +130,32 @@ error_invalid:
 
 	if (!fontmgr_init(server_get_dpi())) {
 		dbgprint("Failed to initialize font manager");
-		return false;
+		return EXIT_FAILURE;
 	}
-	if (!(fontset = fontmgr_create_fontset(config.font))) {
-		dbgprint("Failed to instantiate fonts");
-		return false;
+
+	{
+		char *fontpath = NULL;
+
+		if (config.fontfile) {
+			fontpath = realpath(config.fontfile, NULL);
+			if (fontpath) {
+				dbgprintf("Resolved file path: %s -> %s\n", config.fontfile, fontpath);
+			} else {
+				dbgprintf("Failed to resolve file path: %s\n", config.fontfile);
+			}
+		}
+		if (fontpath) {
+			fontset = fontmgr_create_fontset_from_file(fontpath);
+			FREE(fontpath);
+		} else {
+			fontset = fontmgr_create_fontset(config.font);
+		}
+		if (!fontset) {
+			dbgprint("Failed to open fallback fonts. aborting...");
+			return EXIT_FAILURE;
+		}
+
+		dbgprint("Opened fonts succesfully");
 	}
 
 	{
@@ -224,6 +247,9 @@ error_invalid:
 	run(&client_);
 
 	term_destroy(client_.term);
+	fontset_destroy(fontset);
+	renderer_shutdown();
+	server_shutdown();
 
 	return 0;
 }
@@ -243,7 +269,7 @@ run(Client *client)
 	const int ptyfd = term_exec(term, config.shell);
 
 	do {
-		renderer_draw_frame(term_generate_frame(term));
+		renderer_draw_frame(term_generate_frame(term), fontset);
 		window_update(client->win);
 	} while (window_poll_events(client->win));
 
@@ -287,11 +313,13 @@ run(Client *client)
 			break;
 		}
 
-		if (draw) {
-			renderer_draw_frame(term_generate_frame(client->term));
+		if (draw && window_online(client->win)) {
+			renderer_draw_frame(term_generate_frame(client->term), fontset);
 			window_update(client->win);
 		}
 	}
+
+	window_destroy(client->win);
 }
 
 void

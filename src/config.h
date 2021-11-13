@@ -3,10 +3,11 @@
 
 static Config config = {
 	.wm_class = "Temu",
-	.wm_instance = "win_floating",
+	.wm_instance = "temu",
 	.wm_title = "temu",
 	.geometry = NULL,
-	.font = "monospace:size=12.0",
+	.font = NULL,
+	.fontfile = NULL,
 	.colors = {
 		"#07070A", // default background
 		"#989898", // default foreground

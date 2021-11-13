@@ -5,7 +5,7 @@
 - [ ] Improve error handling/recovery everywhere
 - [ ] Standardized error messages
 - [ ] Standardized log levels/messages
-- [ ] Prepare the codebase for leak detection tools
+- [x] Prepare the codebase for leak detection tools
 - [ ] Cleanup the utilities and link as a static library
 - [ ] Implement the alt-screen
 - [ ] Signal-handling for CTRL-C/CTRL-D
