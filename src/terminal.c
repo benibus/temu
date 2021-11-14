@@ -632,7 +632,6 @@ cellslen(const Cell *cells, int lim)
     return 0;
 }
 
-void term_print_summary(const Term *term, uint flags) { return; }
 void term_print_history(const Term *term) { dbg_print_ring(term->ring); }
 
 void

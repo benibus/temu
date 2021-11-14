@@ -18,8 +18,8 @@ Currently, only X11 is supported but a Wayland build is planned - and the archit
 
 - [GCC], [Clang], or any C compiler with C11 support
 - [CMake] v3.7
+- [Mesa] and a GPU that supports [OpenGL ES] v3.2
 - [Xlib]
-- [OpenGL ES] v3.2
 - [FreeType] v2
 - [FontConfig]
 
@@ -36,19 +36,28 @@ or, manually:
 ```console
 $ mkdir build
 $ cd build
-$ cmake ..
+$ cmake ../
 $ make
 $ ./temu
 ```
 ## Key Bindings
 
-Actual key bindings have not been implemented yet, but you can scroll up/down with ALT-U/ALT-D, respectively.
+Proper key bindings have not been implemented yet, but you can scroll up/down with ALT-k/j, and page up/down with SHIFT-PageUp/PageDown.
+
+Note that the scrollback buffer is kept abnormally small by default for debugging purposes. You can configure the number of saved lines with the "-m" command-line option.
+
+## Resources
+
+- Overview of [terminal emulators](https://en.wikipedia.org/wiki/Terminal_emulator) and [their escape codes](https://en.wikipedia.org/wiki/ANSI_escape_code)
+- [State-machine diagram for a compliant ANSI escape sequence parser](https://vt100.net/emu/dec_ansi_parser)
+- [XTerm's supported escape sequences, with descriptions](https://www.xfree86.org/current/ctlseqs.html)
 
 [GCC]: https://gcc.gnu.org/
 [Clang]: https://clang.llvm.org/
 [CMake]: https://cmake.org/
-[Xlib]: https://www.x.org/wiki/
+[Mesa]: https://www.mesa3d.org/
 [OpenGL ES]: https://www.khronos.org/opengles/
+[Xlib]: https://www.x.org/wiki/
 [FreeType]: https://freetype.org/
 [FontConfig]: https://www.freedesktop.org/wiki/Software/fontconfig/
 

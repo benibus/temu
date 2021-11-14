@@ -10,6 +10,8 @@
 #include "renderer.h"
 
 #define MAX_CFG_COLORS (2+16)
+#define MIN_HISTLINES 128
+#define MAX_HISTLINES 4096
 
 typedef struct Config {
     char *wm_class;
@@ -24,7 +26,6 @@ typedef struct Config {
     uint border_px;
     uint histsize;
     uint columns, rows;
-    uint scrollinc;
     struct { int x, y; } position;
 } Config;
 // NOTE: must include *after* definitions
@@ -34,7 +35,6 @@ typedef struct {
     Win *win;
     Term *term;
     FontSet *fontset;
-    int scrollinc;
     int width;
     int height;
     int borderpx;
@@ -104,12 +104,7 @@ main(int argc, char **argv)
         case 'm':
             arg.n = strtol(optarg, &errp, 10);
             if (arg.n > 0 && !*errp)
-                config.histsize = arg.n;
-            break;
-        case 's':
-            arg.n = strtol(optarg, &errp, 10);
-            if (arg.n > 0 && !*errp)
-                config.scrollinc = arg.n;
+                config.histsize = CLAMP(arg.n, MIN_HISTLINES, MAX_HISTLINES);
             break;
         case '?':
         case ':':
@@ -231,7 +226,6 @@ error_invalid:
     app->win = win;
     app->cols = (app->width - 2 * app->borderpx) / app->colpx;
     app->rows = (app->height - 2 * app->borderpx) / app->rowpx;
-    app->scrollinc = DEFAULT(config.scrollinc, 1);
 
     dbgprint(
         "Window displayed\n"
@@ -416,21 +410,32 @@ event_keypress(void *param, int key, int mod, char *buf, int len)
     char seq[64];
     int seqlen = 0;
 
-    if (mod == ModAlt) {
+    switch (mod) {
+    case ModAlt:
         switch (key) {
         case KeyF9:
             term_print_history(app->term);
             return;
-        case KeyF10:
-            term_print_summary(app->term, ~0);
+        case 'k':
+            term_scroll(app->term, -1);
             return;
-        case 'u':
-            term_scroll(app->term, -app->scrollinc);
-            return;
-        case 'd':
-            term_scroll(app->term, +app->scrollinc);
+        case 'j':
+            term_scroll(app->term, +1);
             return;
         }
+        break;
+    case ModShift:
+        switch (key) {
+        case KeyPageUp:
+            term_scroll(app->term, -app->term->rows);
+            return;
+        case KeyPageDown:
+            term_scroll(app->term, +app->term->rows);
+            return;
+        }
+        break;
+    default:
+        break;
     }
 
     if ((seqlen = term_make_key_string(app->term, key, mod, seq, LEN(seq)))) {

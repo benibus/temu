@@ -80,7 +80,6 @@ size_t term_make_key_string(const Term *, uint, uint, char *, size_t);
 Cell *term_get_framebuffer(Term *);
 Frame *term_generate_frame(Term *);
 
-void term_print_summary(const Term *, uint);
 void term_print_history(const Term *);
 void term_print_stream(const Term *);
 

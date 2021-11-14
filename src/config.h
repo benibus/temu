@@ -9,34 +9,35 @@ static Config config = {
     .font = NULL,
     .fontfile = NULL,
     .colors = {
-        "#07070A", // default background
-        "#989898", // default foreground
+        "#18191B", // background
+        "#BCBFBD", // foreground
 
-        "#27272A", // user colors (0-16)
-        "#803A41",
-        "#38574D",
-        "#785C46",
-        "#3A4D5C",
-        "#5F495A",
-        "#406262",
-        "#888888",
+        // Normal colors
+        "#282A2E", // black
+        "#A54242", // red
+        "#448D65", // green
+        "#DE935F", // yellow
+        "#4A7096", // blue
+        "#85678F", // magenta
+        "#558D86", // cyan
+        "#747C84", // white
 
-        "#4D4D4D",
-        "#93484F",
-        "#3D6354",
-        "#7A6E52",
-        "#495E68",
-        "#725463",
-        "#537676",
-        "#A4A4A4"
+        // Bright colors
+        "#41464D", // black
+        "#CC6666", // red
+        "#55A679", // green
+        "#F0B674", // yellow
+        "#638EB3", // blue
+        "#A884BB", // magenta
+        "#70AFAB", // cyan
+        "#C5C8C6"  // white
     },
     .shell = NULL,
     .tablen = 8,
     .border_px = 0,
-    .histsize = 120,
+    .histsize = 128,
     .columns = 140,
     .rows = 40,
-    .scrollinc = 1,
     .position = { .x = 0, .y = 0 }
 };
 
