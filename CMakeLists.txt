@@ -54,11 +54,15 @@ target_compile_definitions(${BIN}
     $<$<CONFIG:Debug>:BUILD_DEBUG=1>
     $<$<CONFIG:Release>:BUILD_RELEASE=1>
 )
+if(DEFINED GLES_VERSION)
+    message(STATUS "Overriding default GLES_VERSION to ${GLES_VERSION}")
+    target_compile_definitions(${BIN} PRIVATE GLES_VERSION=${GLES_VERSION})
+endif()
+
 target_compile_options(${BIN}
     PRIVATE
     $<$<CONFIG:Debug>:-g3>
     $<$<CONFIG:Debug>:-O0>
-    $<$<CONFIG:Debug>:-no-pie>
     -Wall -Wextra -Wpedantic
     -Wno-unused-parameter
     $<$<CONFIG:Debug>:-Wno-unused-variable>
