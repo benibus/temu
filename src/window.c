@@ -231,8 +231,8 @@ server_setup(void)
             EGL_NO_CONTEXT,
             (EGLint []){
                 EGL_CONTEXT_CLIENT_VERSION, 2,
-#if BUILD_DEBUG
-            EGL_CONTEXT_OPENGL_DEBUG, EGL_TRUE,
+#if (defined(GL_ES_VERSION_3_2) && BUILD_DEBUG)
+                EGL_CONTEXT_OPENGL_DEBUG, EGL_TRUE,
 #endif
                 EGL_NONE
             }
@@ -445,13 +445,14 @@ server_create_window(struct WinConfig config)
         ASSERT(result & EGL_WINDOW_BIT);
     }
 
-    if (!window_make_current(win)) {
+    if (window_make_current(win)) {
+        gl_set_debug_object(win);
+        egl_print_info(server.egl.dpy);
+    } else {
         dbgprint("Failed to set current window");
         return NULL;
     }
-    egl_print_info(server.egl.dpy);
 
-    glDebugMessageCallback(gl_message_callback, (void *)win);
     eglSwapInterval(server.egl.dpy, 0);
 
     return win;

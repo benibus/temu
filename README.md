@@ -18,7 +18,7 @@ Currently, only X11 is supported but a Wayland build is planned - and the archit
 
 - [GCC], [Clang], or any C compiler with C11 support
 - [CMake] v3.7
-- [Mesa] and a GPU that supports [OpenGL ES] v3.2
+- [Mesa] and a GPU that supports [OpenGL ES] v3.0 or higher
 - [Xlib]
 - [FreeType] v2
 - [FontConfig]

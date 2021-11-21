@@ -39,8 +39,8 @@ struct Instance_ {
     Vec4F color_fg;
 };
 
-static const char *shader_vert =
-"#version 320 es\n"
+static const char shader_vert[] =
+"#version " OPENGL_SHADER_HEADER "\n"
 "\n"
 "#define EXTENTS (gl_VertexID >> 1), (gl_VertexID & 1)\n"
 "\n"
@@ -51,7 +51,7 @@ static const char *shader_vert =
 "layout (location = 4) in vec4  a_color_bg;\n"
 "layout (location = 5) in vec4  a_color_fg;\n"
 "\n"
-"out flat int texid;\n"
+"flat out int texid;\n"
 "out vec2 coords;\n"
 "out vec4 color_bg;\n"
 "out vec4 color_fg;\n"
@@ -71,12 +71,12 @@ static const char *shader_vert =
 "}\n"
 ;
 
-static const char *shader_frag =
-"#version 320 es\n"
+static const char shader_frag[] =
+"#version " OPENGL_SHADER_HEADER "\n"
 "\n"
 "precision highp float;\n"
 "\n"
-"in flat int texid;\n"
+"flat in int texid;\n"
 "in vec2 coords;\n"
 "in vec4 color_bg;\n"
 "in vec4 color_fg;\n"

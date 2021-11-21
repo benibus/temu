@@ -74,16 +74,33 @@ gl_link_shaders(GLuint *shaders, uint count)
 }
 
 void
-gl_message_callback(GLenum source_,
-                    GLenum type_,
-                    GLuint id,
-                    GLenum severity_,
-                    GLsizei length,
-                    const GLchar *message,
-                    const void *param)
+gl__get_error(const char *file, const char *func, int line)
+{
+    GLenum error = GL_NO_ERROR;
+    int count = 0;
+
+    while ((error = glGetError()) != GL_NO_ERROR) {
+        fprintf(stderr, "glGetError(%s:%d/%s): %d (%#.04x)", file, line, func, error, error);
+        count++;
+    }
+
+    if (count) {
+        OPENGL_FAIL();
+    }
+}
+
+#ifdef GL_ES_VERSION_3_2
+static void
+gl__message_callback(GLenum source_,
+                     GLenum type_,
+                     GLuint id,
+                     GLenum severity_,
+                     GLsizei length,
+                     const GLchar *message,
+                     const void *param)
 {
     const char *source, *type, *severity;
-    (void)param;
+    UNUSED(param);
 
     switch (source_) {
     case GL_DEBUG_SOURCE_API:             source = "API";            break;
@@ -132,17 +149,14 @@ gl_message_callback(GLenum source_,
     }
 
     if (type_ == GL_DEBUG_TYPE_ERROR) {
-        abort();
+        OPENGL_FAIL();
     }
 }
 
 void
-gl__get_error(const char *file, const char *func, int line)
+gl__set_debug_object(const void *obj)
 {
-    GLenum error = GL_NO_ERROR;
-    while ((error = glGetError()) != GL_NO_ERROR) {
-        dbgprint("GLerror(%s:%d/%s): %d (%#.04x)", file, line, func, error, error);
-        dbgbreak();
-    }
+    glDebugMessageCallback(gl__message_callback, obj);
 }
+#endif
 
