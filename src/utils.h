@@ -24,6 +24,9 @@ while (0)
 #define memequal(s1,s2,n)  (memcmp((s1), (s2), (n)) == 0)
 #define memclear(p,n,sz)   (memset((p), 0, (n) * (sz)))
 
+#define printout(...) fprintf(stdout, __VA_ARGS__)
+#define printerr(...) fprintf(stderr, __VA_ARGS__)
+
 int dbgprint__(const char *, int, const char *, const char *, ...)
   attribute__((format(printf, 4, 5)));
 #define DBGPRINT_ARG __FILE__, __LINE__, __func__
