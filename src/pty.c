@@ -17,9 +17,17 @@
 #include <pty.h>
 #endif
 
-#define fatal(s) (perror(s), exit((errno) ? errno : EXIT_FAILURE))
+#define FATAL(...) do {    \
+    const int e__ = errno; \
+    printerr("SYS ERROR (%d) %s: ", e__, strerror(e__)); \
+    printerr(__VA_ARGS__); \
+    printerr("\n");        \
+    exit(1);               \
+} while (0)
 
 static void sys_sigchld(int);
+static void signal_reset(int signo);
+static void signal_handle(int signo, siginfo_t *info, void *context);
 
 int
 pty_init(const char *shell, int *mfd_, int *sfd_)
@@ -28,13 +36,15 @@ pty_init(const char *shell, int *mfd_, int *sfd_)
     int mfd = 0;
     int sfd = 0;
 
+    errno = 0;
+
     if (openpty(&mfd, &sfd, NULL, NULL, NULL) < 0) {
-        fatal("openpty()");
+        FATAL("openpty");
     }
 
     switch ((pid = fork())) {
     case -1: // fork failed
-        fatal("fork()");
+        FATAL("fork()");
     case 0: { // child process
         setsid();
 
@@ -43,7 +53,7 @@ pty_init(const char *shell, int *mfd_, int *sfd_)
         dup2(sfd, 2);
 
         if (ioctl(sfd, TIOCSCTTY, NULL) < 0) {
-            fatal("ioctl");
+            FATAL("ioctl TIOCSCTTY");
         }
 
         close(sfd);
@@ -51,7 +61,7 @@ pty_init(const char *shell, int *mfd_, int *sfd_)
 
         const struct passwd *pwd = getpwuid(getuid());
         if (!pwd) {
-            fatal("getpwuid()");
+            FATAL("getpwuid()");
         }
 
         if (!shell || !*shell) {
@@ -70,13 +80,10 @@ pty_init(const char *shell, int *mfd_, int *sfd_)
         setenv("LOGNAME", pwd->pw_name, 1);
         setenv("HOME",    pwd->pw_dir, 1);
 
-        // TODO(ben): Move to non-deprecated sigaction API
-        signal(SIGCHLD, SIG_DFL);
-        signal(SIGHUP,  SIG_DFL);
-        signal(SIGINT,  SIG_DFL);
-        signal(SIGQUIT, SIG_DFL);
-        signal(SIGTERM, SIG_DFL);
-        signal(SIGALRM, SIG_DFL);
+        static const int signals[] = { SIGCHLD, SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGALRM };
+        for (uint i = 0; i < LEN(signals); i++) {
+            signal_reset(signals[i]);
+        }
 
         execlp(shell, shell, (char *)NULL);
 
@@ -85,7 +92,16 @@ pty_init(const char *shell, int *mfd_, int *sfd_)
     }
     default: // parent process
         close(sfd);
-        signal(SIGCHLD, sys_sigchld);
+
+        struct sigaction sa = {
+            .sa_sigaction = signal_handle,
+            .sa_flags = SA_SIGINFO|SA_RESTART|SA_NOCLDSTOP
+        };
+        if (sigaction(SIGCHLD, &sa, NULL) < 0) {
+            FATAL("Failed to install SIGCHLD handler");
+        }
+        signal_reset(SIGINT);
+        signal_reset(SIGQUIT);
         break;
     }
 
@@ -93,6 +109,14 @@ pty_init(const char *shell, int *mfd_, int *sfd_)
     *sfd_ = sfd;
 
     return pid;
+}
+
+void
+pty_hangup(int pid)
+{
+    if (pid) {
+        kill(pid, SIGHUP);
+    }
 }
 
 size_t
@@ -105,13 +129,13 @@ pty_read(int mfd, uchar *buf, size_t len, uint32 msec)
     FD_SET(mfd, &rset);
 
     switch (select(mfd + 1, &rset, NULL, NULL, &(struct timeval){ 0, msec * 1E3 })) {
-    case -1: fatal("select()");
+    case -1: FATAL("select");
     case  0: return 0;
     }
 
     ssize_t nread = read(mfd, buf, len);
     switch (nread) {
-    case -1: fatal("read()");
+    case -1: FATAL("read");
     case  0: exit(0);
     }
 
@@ -131,13 +155,13 @@ pty_write(int mfd, const uchar *buf, size_t len)
         FD_SET(mfd, &wset);
 
         if (pselect(mfd + 1, NULL, &wset, NULL, NULL, NULL) < 0) {
-            fatal("pselect()");
+            FATAL("pselect");
         }
 
         if (FD_ISSET(mfd, &wset)) {
             ssize_t result = write(mfd, buf + idx, len - idx);
             if (result < 0) {
-                fatal("write()");
+                FATAL("write");
             }
 
             idx += result;
@@ -160,16 +184,45 @@ pty_resize(int mfd, int cols, int rows, int colsize, int rowsize)
     };
 
     if (ioctl(mfd, TIOCSWINSZ, &spec) < 0) {
-        perror("ioctl()");
+        FATAL("ioctl TIOCSWINSZ");
     }
 }
 
 void
-sys_sigchld(int arg)
+signal_reset(int signo)
 {
-    (void)arg;
-    // TODO(ben): Actually implement this. Right now it just prevents returning an error code
-    // as a result of normal shell termination (via "$ exit")
-    _exit(0);
+    if (sigaction(signo, &(struct sigaction){ .sa_handler = SIG_DFL }, NULL) < 0) {
+        FATAL("Failed to install signal(%d) handler", signo);
+    }
+
 }
+
+void
+signal_handle(int signo, siginfo_t *info, void *context)
+{
+    UNUSED(context);
+
+    switch (signo) {
+    case SIGCHLD: {
+        int status;
+        waitpid(info->si_pid, &status, WNOHANG);
+
+        /* FIXME(ben):
+         * The forked process exits with 1 after manually sending SIGHUP (i.e. after window close)
+         * so we can't reliably pass-on the child's return value.
+         * There's probably something I'm missing here...
+         */
+        dbgprint("Handling SIGCHLD (pid = %hd), status = %d", info->si_pid, status);
+        if (WIFEXITED(status) && WEXITSTATUS(status)) {
+            dbgprint("Child exited with code %d", WEXITSTATUS(status));
+        }
+
+        _exit(0);
+    }
+    default:
+        break;
+    }
+}
+
+#undef FATAL
 

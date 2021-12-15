@@ -34,7 +34,7 @@ static struct Atom emit_utf8b3(uchar);
 
 static const struct StateInfo state_table[StateCount] = {
     [StateGround]    = { "Ground",    emit_ground,     ActionNone,     ActionNone },
-    [StateEsc1]      = { "Esc1",      emit_esc1,       ActionNone,     ActionNone },
+    [StateEsc1]      = { "Esc1",      emit_esc1,       ActionClear,    ActionNone },
     [StateEsc2]      = { "Esc2",      emit_esc2,       ActionNone,     ActionNone },
     [StateCsi1]      = { "Csi1",      emit_csi1,       ActionClear,    ActionNone },
     [StateCsi2]      = { "Csi2",      emit_csi2,       ActionNone,     ActionNone },
@@ -179,7 +179,7 @@ emit_esc1(uchar c)
     } else if (c < '0') {
         EMIT(StateEsc2, ActionCollect);
     } else if (c < 'P' || c == 'Y' || c == 'Z') {
-        EMIT(same, ActionEscDispatch);
+        EMIT(StateGround, ActionEscDispatch);
     } else if (c < 0x7f) {
         switch (c) {
             case '[': EMIT(StateCsi1, 0);

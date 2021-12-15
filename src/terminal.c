@@ -167,6 +167,7 @@ term_destroy(Term *term)
         free(term->tabstops);
     }
     ring_destroy(term->ring);
+    pty_hangup(term->pid);
     free(term);
 
 #if DEBUG_PRINT_INPUT
@@ -603,6 +604,14 @@ static void emu_osc(Term *, const char *, const int *, int);
     X_(C1,  DECSC,    NULL) \
     X_(C1,  DECRC,    NULL) \
     X_(C1,  DECFI,    NULL) \
+    X_(C1,  DECPAM,   NULL) \
+    X_(C1,  DECPNM,   NULL) \
+    X_(C1,  RIS,      NULL) \
+    X_(C1,  LS2,      NULL) \
+    X_(C1,  LS3,      NULL) \
+    X_(C1,  LS3R,     NULL) \
+    X_(C1,  LS2R,     NULL) \
+    X_(C1,  LS1R,     NULL) \
     X_(CSI, ICH,      emu_csi_ich) \
     X_(CSI, CUU,      emu_csi_cuu) \
     X_(CSI, CUD,      emu_csi_cud) \
@@ -692,15 +701,24 @@ static const struct HandlerInfo dispatch_table[] = {
 static void dispatch_static(Term *term, uint8 opcode);
 static void dispatch_osc(Term *term);
 
+#include <unistd.h> // for isatty()
+
 static inline void
-print_sequence(const char *group,
-               const char *name,
-               const char *prefix,
-               const int *argv, int argc,
-               const uchar *data,
-               const char *suffix)
+dbg_print_sequence(const char *group,
+                   const char *name,
+                   const char *prefix,
+                   const int *argv, int argc,
+                   const uchar *data,
+                   const char *suffix,
+                   bool implemented)
 {
-    printerr("* %-3s %-8s \\e%s",
+    if (isatty(2)) {
+        printerr("\033[1;%dm*\033[m ", 30 + ((implemented) ? 6 : 3));
+    } else {
+        printerr("%c ", (implemented) ? '+' : '-');
+    }
+
+    printerr("%-3s %-8s \\e%s",
         DEFAULT(group, "---"),
         DEFAULT(name, "---"),
         DEFAULT(prefix, "")
@@ -733,22 +751,24 @@ dispatch_static(Term *term, uint8 opcode)
         char suffix[2] = { "" };
 
         if (parser->depth > 1) {
-            ASSERT(parser->depth == 2);
             prefix[1] = parser->tokens[0];
             suffix[0] = parser->tokens[1];
         } else {
             suffix[0] = parser->tokens[0];
         }
 
-        print_sequence(
+        dbg_print_sequence(
             info.group,
             info.name,
             prefix,
             parser->argv,
             parser->argi + 1,
             parser->data,
-            suffix
+            suffix,
+            !!info.func
         );
+
+        ASSERT(parser->depth <= 1 || parser->depth == 2);
     }
 #endif
 
@@ -764,11 +784,30 @@ dispatch_osc(Term *term)
 
 #if DEBUG_PRINT_ESC
     {
-        print_sequence("OSC", NULL, "]", parser->argv, parser->argi, parser->data, NULL);
+        dbg_print_sequence(
+            "OSC",
+            NULL,
+            "]",
+            parser->argv,
+            parser->argi,
+            parser->data,
+            NULL,
+            true
+        );
     }
 #endif
 
     emu_osc(term, (char *)parser->data, parser->argv, parser->argi);
+}
+
+static inline void
+parser_clear(struct Parser *parser)
+{
+    memset(parser->tokens, 0, sizeof(parser->tokens));
+    parser->depth = 0;
+    memset(parser->argv, 0, sizeof(parser->argv));
+    parser->argi = 0;
+    arr_clear(parser->data);
 }
 
 void
@@ -777,6 +816,7 @@ do_action(Term *term, StateCode state, ActionCode action, uchar c)
     if (!action) return;
 
     struct Parser *parser = &term->parser;
+
 #if 0
     dbgprint("FSM(%s|%#.02x): State%s -> State%s ... %s()",
       charstring(c), c,
@@ -871,11 +911,7 @@ do_action(Term *term, StateCode state, ActionCode action, uchar c)
         }
         break;
     case ActionClear:
-        memset(parser->tokens, 0, sizeof(parser->tokens));
-        memset(parser->argv, 0, sizeof(parser->argv));
-        parser->depth = 0;
-        parser->argi = 0;
-        arr_clear(parser->data);
+        parser_clear(parser);
         break;
     case ActionEscDispatch: {
         parser->tokens[parser->depth++] = c;
@@ -883,14 +919,25 @@ do_action(Term *term, StateCode state, ActionCode action, uchar c)
         uint8 opcode = NOOP;
 
         switch (c) {
-        case 'E':  opcode = OPNEL;   break;
-        case 'H':  opcode = OPHTS;   break;
-        case 'M':  opcode = OPRI;    break;
-        case '\\': opcode = OPST;    break;
-        case '6':  opcode = OPDECBI; break;
-        case '7':  opcode = OPDECSC; break;
-        case '8':  opcode = OPDECRC; break;
-        case '9':  opcode = OPDECFI; break;
+        case 'E':  opcode = OPNEL;    break;
+        case 'H':  opcode = OPHTS;    break;
+        case 'M':  opcode = OPRI;     break;
+        case '\\': opcode = OPST;     break;
+        case '6':  opcode = OPDECBI;  break;
+        case '7':  opcode = OPDECSC;  break;
+        case '8':  opcode = OPDECRC;  break;
+        case '9':  opcode = OPDECFI;  break;
+        case '=':  opcode = OPDECPAM; break;
+        case '>':  opcode = OPDECPNM; break;
+        case 'F':  break; // cursor lower-left
+        case 'c':  opcode = OPRIS;    break;
+        case 'l':  break; // memory lock
+        case 'm':  break; // memory unlock
+        case 'n':  opcode = OPLS2;    break;
+        case 'o':  opcode = OPLS3;    break;
+        case '|':  opcode = OPLS3R;   break;
+        case '}':  opcode = OPLS2R;   break;
+        case '~':  opcode = OPLS1R;   break;
         }
 
         dispatch_static(term, opcode);

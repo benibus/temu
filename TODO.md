@@ -9,7 +9,7 @@
 - [ ] Cleanup the utilities and link as a static library
 - [ ] Implement the alt-screen
 - [ ] Fix bug where cursor doesn't move when scrolling up if it wasn't at the bottom of the screen (i.e. after clearing)
-- [ ] Signal-handling for CTRL-C/CTRL-D
+- [x] Signal-handling for CTRL-C/CTRL-D
 - [ ] Signal-handling for external program queries
 - [ ] Second pass on keypress-triggered escape strings
 - [ ] Move the entry point and cleanup the mess in main.c
