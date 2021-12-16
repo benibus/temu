@@ -120,7 +120,9 @@ term_init(Term *term, struct TermConfig config)
     term->max_rows = term->rows;
     term->histlines = round_pow2(config.histlines);
 
-    term->ring = ring_create(term->histlines, term->cols, term->rows);
+    term->ring_prim = ring_create(term->histlines, term->cols, term->rows);
+    term->ring_alt  = ring_create(term->rows, term->cols, term->rows);
+    term->ring = term->ring_prim;
     term->frame.cells = xcalloc(term->cols * term->rows, sizeof(*term->frame.cells));
 
     term->tabcols = config.tabcols;
@@ -166,7 +168,9 @@ term_destroy(Term *term)
     if (term->tabstops) {
         free(term->tabstops);
     }
-    ring_destroy(term->ring);
+    ring_destroy(term->ring_prim);
+    ring_destroy(term->ring_alt);
+    term->ring = NULL;
     pty_hangup(term->pid);
     free(term);
 
@@ -278,18 +282,19 @@ term_resize(Term *term, int cols, int rows)
 
         // Compress the screen vertically.
         if (rows <= term->y) {
-            ring_move_screen_head(term->ring, term->rows - rows);
+            ring_move_screen_head(term->ring_prim, term->rows - rows);
             term->y -= term->rows - rows;
         }
 
         // Expand the screen vertically while history lines exist.
         if (rows > term->rows) {
-            int delta = imin(rows - term->rows, ring_histlines(term->ring));
-            ring_move_screen_head(term->ring, -delta);
+            int delta = imin(rows - term->rows, ring_histlines(term->ring_prim));
+            ring_move_screen_head(term->ring_prim, -delta);
             term->y += delta;
         }
 
-        ring_set_dimensions(term->ring, cols, rows);
+        ring_set_dimensions(term->ring_prim, cols, rows);
+        ring_set_dimensions(term->ring_alt, cols, rows);
 
         term->cols = cols;
         term->rows = rows;
@@ -491,6 +496,28 @@ set_cursor_style(Term *term, int style)
 }
 
 void
+cursor_save(Term *term)
+{
+    term->saved_crs = (CursorDesc){
+        .col     = term->x,
+        .row     = term->y,
+        .style   = term->crs_style,
+        .color   = term->color_fg,
+        .visible = !term->hidecursor
+    };
+}
+
+void
+cursor_restore(Term *term)
+{
+    CursorDesc saved = term->saved_crs;
+    term->x          = saved.col;
+    term->y          = saved.row;
+    term->crs_style  = saved.style;
+    term->hidecursor = !saved.visible;
+}
+
+void
 set_active_bg(Term *term, uint8 idx)
 {
     term->cell.bg = (idx < 16) ? term->colors[idx] : VTCOLOR(idx);
@@ -512,6 +539,18 @@ void
 set_active_fg_rgb(Term *term, uint8 r, uint8 g, uint8 b)
 {
     term->cell.fg = pack_argb(r, g, b, 0xff);
+}
+
+void
+term_use_screen_alt(Term *term)
+{
+    term->ring = term->ring_alt;
+}
+
+void
+term_use_screen_primary(Term *term)
+{
+    term->ring = term->ring_prim;
 }
 
 void
@@ -576,18 +615,24 @@ void term_print_history(const Term *term) { dbg_print_ring(term->ring); }
 static void emu_c0_ctrl(Term *, char);
 // C1 control functions
 static void emu_c1_ri(Term *, const int *, int);
+static void emu_c1_decsc(Term *, const int *, int);
+static void emu_c1_decrc(Term *, const int *, int);
 // CSI functions
 static void emu_csi_ich(Term *, const int *, int);
 static void emu_csi_cuu(Term *, const int *, int);
 static void emu_csi_cud(Term *, const int *, int);
 static void emu_csi_cuf(Term *, const int *, int);
 static void emu_csi_cub(Term *, const int *, int);
+static void emu_csi_cnl(Term *, const int *, int);
+static void emu_csi_cpl(Term *, const int *, int);
+static void emu_csi_cha(Term *, const int *, int);
 static void emu_csi_cup(Term *, const int *, int);
 static void emu_csi_cht(Term *, const int *, int);
 static void emu_csi_dch(Term *, const int *, int);
 static void emu_csi_ed(Term *, const int *, int);
 static void emu_csi_el(Term *, const int *, int);
 static void emu_csi_sgr(Term *, const int *, int);
+static void emu_csi_dsr(Term *, const int *, int);
 static void emu_csi_decset(Term *, const int *, int);
 static void emu_csi_decrst(Term *, const int *, int);
 static void emu_csi_decscusr(Term *, const int *, int);
@@ -601,8 +646,8 @@ static void emu_osc(Term *, const char *, const int *, int);
     X_(C1,  RI,       emu_c1_ri) \
     X_(C1,  ST,       NULL) \
     X_(C1,  DECBI,    NULL) \
-    X_(C1,  DECSC,    NULL) \
-    X_(C1,  DECRC,    NULL) \
+    X_(C1,  DECSC,    emu_c1_decsc) \
+    X_(C1,  DECRC,    emu_c1_decrc) \
     X_(C1,  DECFI,    NULL) \
     X_(C1,  DECPAM,   NULL) \
     X_(C1,  DECPNM,   NULL) \
@@ -617,9 +662,9 @@ static void emu_osc(Term *, const char *, const int *, int);
     X_(CSI, CUD,      emu_csi_cud) \
     X_(CSI, CUF,      emu_csi_cuf) \
     X_(CSI, CUB,      emu_csi_cub) \
-    X_(CSI, CNL,      NULL) \
-    X_(CSI, CPL,      NULL) \
-    X_(CSI, CHA,      NULL) \
+    X_(CSI, CNL,      emu_csi_cnl) \
+    X_(CSI, CPL,      emu_csi_cpl) \
+    X_(CSI, CHA,      emu_csi_cha) \
     X_(CSI, CUP,      emu_csi_cup) \
     X_(CSI, CHT,      emu_csi_cht) \
     X_(CSI, ED,       emu_csi_ed) \
@@ -642,6 +687,7 @@ static void emu_osc(Term *, const char *, const int *, int);
     X_(CSI, RM,       NULL) \
     X_(CSI, DECSTBM,  NULL) \
     X_(CSI, SGR,      emu_csi_sgr) \
+    X_(CSI, DSR,      emu_csi_dsr) \
     X_(CSI, DA,       NULL) \
     X_(CSI, SCOSC,    NULL) \
     X_(CSI, XTERMWM,  NULL) \
@@ -980,6 +1026,7 @@ do_action(Term *term, StateCode state, ActionCode action, uchar c)
             case 'i': opcode = OPMC;      break;
             case 'l': opcode = OPRM;      break;
             case 'm': opcode = OPSGR;     break;
+            case 'n': opcode = OPDSR;     break;
             case 'r': opcode = OPDECSTBM; break;
             case 'c': opcode = OPDA;      break;
             case 's': opcode = OPSCOSC;   break;
@@ -1097,49 +1144,98 @@ emu_c1_ri(Term *term, const int *argv, int argc)
 {
     UNUSED(argv);
     UNUSED(argc);
-    move_cursor_rows(term, -1);
+
+    if (term->y > 0) {
+        move_cursor_rows(term, -1);
+    } else {
+        rows_move(term->ring, 0, term->rows, 1);
+    }
+}
+
+void
+emu_c1_decsc(Term *term, const int *argv, int argc)
+{
+    UNUSED(argv);
+    UNUSED(argc);
+    cursor_save(term);
+}
+
+void
+emu_c1_decrc(Term *term, const int *argv, int argc)
+{
+    UNUSED(argv);
+    UNUSED(argc);
+    cursor_restore(term);
 }
 
 void
 emu_csi_ich(Term *term, const int *argv, int argc)
 {
-    cells_insert(term->ring, CELLINIT(term), term->x, term->y, DEFAULT(argv[0], 1));
+    UNUSED(argc);
+    cells_insert(term->ring, CELLINIT(term), term->x, term->y, MAX(argv[0], 1));
 }
 
 void
 emu_csi_cuu(Term *term, const int *argv, int argc)
 {
-    move_cursor_rows(term, -DEFAULT(argv[0], 1));
+    UNUSED(argc);
+    move_cursor_rows(term, -MAX(argv[0], 1));
 }
 
 void
 emu_csi_cud(Term *term, const int *argv, int argc)
 {
-    move_cursor_rows(term, +DEFAULT(argv[0], 1));
+    UNUSED(argc);
+    move_cursor_rows(term, +MAX(argv[0], 1));
 }
 
 void
 emu_csi_cuf(Term *term, const int *argv, int argc)
 {
-    move_cursor_cols(term, +DEFAULT(argv[0], 1));
+    UNUSED(argc);
+    move_cursor_cols(term, +MAX(argv[0], 1));
 }
 
 void
 emu_csi_cub(Term *term, const int *argv, int argc)
 {
-    move_cursor_cols(term, -DEFAULT(argv[0], 1));
+    UNUSED(argc);
+    move_cursor_cols(term, -MAX(argv[0], 1));
+}
+
+static
+void emu_csi_cnl(Term *term, const int *argv, int argc)
+{
+    UNUSED(argc);
+    move_cursor_rows(term, +MAX(argv[0], 1));
+}
+
+static
+void emu_csi_cpl(Term *term, const int *argv, int argc)
+{
+    UNUSED(argc);
+    move_cursor_rows(term, -MAX(argv[0], 1));
+}
+
+void
+emu_csi_cha(Term *term, const int *argv, int argc)
+{
+    UNUSED(argc);
+    set_cursor_col(term, MAX(argv[0], 1) - 1);
 }
 
 void
 emu_csi_cup(Term *term, const int *argv, int argc)
 {
-    set_cursor_col(term, argv[1]);
-    set_cursor_row(term, argv[0]);
+    UNUSED(argc);
+    set_cursor_col(term, MAX(argv[1], 1) - 1);
+    set_cursor_row(term, MAX(argv[0], 1) - 1);
 }
 
 void
 emu_csi_cht(Term *term, const int *argv, int argc)
 {
+    UNUSED(argc);
     for (int n = DEFAULT(argv[0], 1); n > 0; n--) {
         write_tab(term);
     }
@@ -1148,6 +1244,7 @@ emu_csi_cht(Term *term, const int *argv, int argc)
 void
 emu_csi_dch(Term *term, const int *argv, int argc)
 {
+    UNUSED(argc);
     cells_delete(term->ring, term->x, term->y, argv[0]);
 }
 
@@ -1291,11 +1388,48 @@ emu_csi_sgr(Term *term, const int *argv, int argc)
     } while (++i < argc);
 }
 
+void
+emu_csi_dsr(Term *term, const int *argv, int argc)
+{
+    UNUSED(argc);
+
+    char str[64] = { 0 };
+    int len = 0;
+
+    switch (argv[0]) {
+    case 5: // Respond with an "OK" status
+        len = snprintf(str, sizeof(str), "\033[0n");
+        break;
+    case 6: // Respond with current cursor coordinates
+        len = snprintf(str, sizeof(str), "\033[%d;%dR", term->y + 1, term->x + 1);
+        break;
+    }
+
+    ASSERT(len < (int)sizeof(str));
+
+    if (len > 0) {
+        term_push(term, str, len);
+    }
+}
+
 static inline void
 emu__csi_decprv(Term *term, int mode, bool enable)
 {
     switch (mode) {
-    case 25: set_cursor_visibility(term, !enable); break; // DECTCEM
+    case 1: // DECCKM (application/normal cursor keys)
+        break;
+    case 25: // DECTCEM
+        set_cursor_visibility(term, !enable);
+        break;
+    case 1049: // DECSC/DECRC
+        if (enable) {
+            cursor_save(term);
+            term_use_screen_alt(term);
+        } else {
+            cursor_restore(term);
+            term_use_screen_primary(term);
+        }
+        break;
     }
 }
 
@@ -1303,6 +1437,7 @@ emu__csi_decprv(Term *term, int mode, bool enable)
 void
 emu_csi_decset(Term *term, const int *argv, int argc)
 {
+    UNUSED(argc);
     emu__csi_decprv(term, argv[0], true);
 }
 
@@ -1310,12 +1445,14 @@ emu_csi_decset(Term *term, const int *argv, int argc)
 void
 emu_csi_decrst(Term *term, const int *argv, int argc)
 {
+    UNUSED(argc);
     emu__csi_decprv(term, argv[0], false);
 }
 
 void
 emu_csi_decscusr(Term *term, const int *argv, int argc)
 {
+    UNUSED(argc);
     set_cursor_style(term, argv[0]);
 }
 

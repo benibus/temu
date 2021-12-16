@@ -23,6 +23,7 @@ void cells_insert(Ring *ring, Cell cell, int col, int row, int count);
 void row_set_wrap(Ring *ring, int row, bool enable);
 void rows_clear(Ring *ring, int row, int count);
 void rows_delete(Ring *ring, int row, int count);
+void rows_move(Ring *ring, int row, int count, int shift);
 bool check_visible(const Ring *ring, int col, int row);
 void dbg_print_ring(const Ring *ring);
 

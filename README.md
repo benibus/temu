@@ -6,7 +6,7 @@ A hardware-accelerated UTF-8 terminal emulator for POSIX environments
 
 This is a personal exploratory project that I intend to officially release (and use myself).
 As of now, you should be able to run rudimentary commands (with colored and bold/italic text), edit inline, scroll through the terminal's history, and load non-bitmap, scalable TTF/OTF fonts.
-However, many required features haven't been implemented yet - most notably, the alt-screen (for programs like "less" and "vim"), signal-handling, mouse selection, and a number of common escape sequences and modes. Additionally, the codebase is in constant flux.
+However, many required features haven't been implemented yet - most notably, mouse selection and a number of common escape sequences and terminal modes. Additionally, the codebase is in constant flux.
 As such, you shouldn't use this for anything resembling real work (yet).
 
 ## Platforms

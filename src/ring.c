@@ -91,7 +91,11 @@ ring_destroy(Ring *ring)
 void
 ring_set_dimensions(Ring *ring, int cols, int rows)
 {
-    if (cols != ring->cols) {
+    if (!ring) return;
+
+    if (cols != ring->cols || rows > ring->max) {
+        ring->max = MAX(ring->max, rows);
+
         uchar *data = xcalloc(LINESIZE(cols) * (ring->max + 1), 1);
         const int count = ring_histlines(ring) + ring->rows;
 
@@ -206,6 +210,29 @@ rows_delete(Ring *ring, int row, int count)
         } else {
             memset(LINE(ring, dstidx), 0, LINESIZE(ring->cols));
         }
+    }
+}
+
+void
+rows_move(Ring *ring, int row, int count, int shift)
+{
+    if (!ring || count <= 0 || shift <= 0) {
+        return;
+    }
+
+    const int beg = CLAMP(row, 0, ring->rows);
+    const int end = MIN(beg + (int)count, ring->rows);
+
+    for (int at = end - 1; at >= beg; at--) {
+        if (at + (int)shift >= ring->rows) {
+            continue;
+        }
+
+        const int srcln = get_writeable_index(ring, at);
+        const int dstln = get_writeable_index(ring, at + shift);
+
+        memmove(LINE(ring, dstln), LINE(ring, srcln), LINESIZE(ring->cols));
+        memset(LINE(ring, srcln), 0, LINESIZE(ring->cols));
     }
 }
 

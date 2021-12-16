@@ -25,6 +25,8 @@ typedef struct {
     uchar input[IOBUF_MAX]; // PTY input buffer
 
     Ring *ring;
+    Ring *ring_prim;
+    Ring *ring_alt;
     uint8 *tabstops;
 
     int cols;
@@ -42,11 +44,13 @@ typedef struct {
 
     bool wrapnext;
     bool hidecursor;
+    bool altscreen;
 
     Frame frame;
     Cell cell;
     CursorStyle crs_style;
     uint32 crs_color;
+    CursorDesc saved_crs;
 
     uint32 color_bg;
     uint32 color_fg;

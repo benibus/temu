@@ -2,12 +2,11 @@
 
 ## Short-term
 
-- [ ] Improve error handling/recovery everywhere
 - [ ] Standardized error messages
 - [ ] Standardized log levels/messages
 - [x] Prepare the codebase for leak detection tools
 - [ ] Cleanup the utilities and link as a static library
-- [ ] Implement the alt-screen
+- [x] Implement the alt-screen
 - [ ] Fix bug where cursor doesn't move when scrolling up if it wasn't at the bottom of the screen (i.e. after clearing)
 - [x] Signal-handling for CTRL-C/CTRL-D
 - [ ] Signal-handling for external program queries
@@ -22,16 +21,12 @@
 - [ ] Set window size after getting font metrics so we don't have to display the window before the terminal even starts
 - [ ] Robust keyboard -> keycode mappings for international/non-standard keyboard layouts
 - [ ] Mouse cursor, selection, and copy/paste
-- [ ] Signal-handling for external program queries
 - [ ] Integrate optparse.h for command line arguments
 - [ ] Re-integrate modifiable cursor shape/color
 - [ ] Key bindings
 - [ ] License preambles in source files
 - [ ] Serializer for history buffer to record sessions (for debugging)
 - [ ] Platform abstraction for window events
-
-## Mid-term
-
 - [ ] Dynamic line rewrapping
 - [ ] Switch to using the POSIX-compliant API for PTY creation
 - [ ] Acheive full xterm compatibility
