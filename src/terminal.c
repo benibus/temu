@@ -208,6 +208,8 @@ term_generate_frame(Term *term)
 
     if (!term->hidecursor && check_visible(term->ring, term->x, term->y)) {
         frame->cursor.visible = true;
+        frame->cursor.row += ring_get_scroll(term->ring);
+        ASSERT(frame->cursor.row < term->rows);
     } else {
         frame->cursor.visible = false;
     }
@@ -247,13 +249,17 @@ term_pull(Term *term, uint32 msec)
 void
 term_scroll(Term *term, int delta)
 {
-    ring_move_screen_offset(term->ring, -delta);
+    /*
+     * (delta < 0): scroll back in history
+     * (delta > 0): scroll forward in history
+    **/
+    ring_adjust_scroll(term->ring, -delta);
 }
 
 void
 term_reset_scroll(Term *term)
 {
-    ring_reset_screen_offset(term->ring);
+    ring_reset_scroll(term->ring);
 }
 
 void
@@ -282,14 +288,14 @@ term_resize(Term *term, int cols, int rows)
 
         // Compress the screen vertically.
         if (rows <= term->y) {
-            ring_move_screen_head(term->ring_prim, term->rows - rows);
+            ring_adjust_head(term->ring_prim, term->rows - rows);
             term->y -= term->rows - rows;
         }
 
         // Expand the screen vertically while history lines exist.
         if (rows > term->rows) {
             int delta = imin(rows - term->rows, ring_histlines(term->ring_prim));
-            ring_move_screen_head(term->ring_prim, -delta);
+            ring_adjust_head(term->ring_prim, -delta);
             term->y += delta;
         }
 
@@ -395,7 +401,7 @@ write_codepoint(Term *term, uint32 ucs4, CellType type)
         term->wrapnext = false;
         row_set_wrap(term->ring, term->y, true);
         if (term->y + 1 == term->rows) {
-            ring_move_screen_head(term->ring, 1);
+            ring_adjust_head(term->ring, 1);
         } else {
             term->y++;
         }
@@ -423,7 +429,7 @@ void
 write_newline(Term *term)
 {
     if (term->y + 1 == term->rows) {
-        ring_move_screen_head(term->ring, 1);
+        ring_adjust_head(term->ring, 1);
         rows_clear(term->ring, term->y, 1);
     } else {
         term->y++;

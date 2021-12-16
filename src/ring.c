@@ -23,7 +23,7 @@ struct Ring {
     int max;
     int cols;
     int rows;
-    int offset;
+    int scroll;
 };
 
 #define LINESIZE(n) (offsetof(Line, cells) + sizeof(Cell) * (n))
@@ -54,7 +54,7 @@ get_visible_index(const Ring *ring, int row)
 {
     row = CLAMP(row, 0, ring->rows - 1);
 
-    int result = uwrap(ring->head - ring->offset + row, ring->max + 1);
+    int result = uwrap(ring->head - ring->scroll + row, ring->max + 1);
 
     return result;
 }
@@ -126,21 +126,32 @@ ring_histlines(const Ring *ring)
     return count;
 }
 
-void
-ring_move_screen_offset(Ring *ring, int delta)
+int
+ring_get_scroll(const Ring *ring)
 {
-    const int max_offset = imax(0, ring_histlines(ring));
-    ring->offset = CLAMP(ring->offset + delta, 0, max_offset);
+    return ring->scroll;
+}
+
+int
+ring_adjust_scroll(Ring *ring, int delta)
+{
+    const int max_scroll = imax(0, ring_histlines(ring));
+
+    ring->scroll = CLAMP(ring->scroll + delta, 0, max_scroll);
+
+    return ring->scroll;
+}
+
+int
+ring_reset_scroll(Ring *ring)
+{
+    ring->scroll = 0;
+
+    return ring->scroll;
 }
 
 void
-ring_reset_screen_offset(Ring *ring)
-{
-    ring->offset = 0;
-}
-
-void
-ring_move_screen_head(Ring *ring, int delta)
+ring_adjust_head(Ring *ring, int delta)
 {
     if (delta < 0) {
         while (delta++ < 0) {
@@ -307,7 +318,7 @@ cells_insert(Ring *ring, Cell cell, int col, int row, int count)
 bool
 check_visible(const Ring *ring, int col, int row)
 {
-    bool result = (col < ring->cols && row < ring->rows - ring->offset);
+    bool result = (col < ring->cols && row < ring->rows - ring->scroll);
 
     return result;
 }
