@@ -158,6 +158,17 @@ term_init(Term *term, struct TermConfig config)
 }
 
 void
+term_setup_handlers(Term *term, void *param, struct TermHandlers handlers)
+{
+    if (!term) return;
+
+    term->param = param;
+    term->handlers.set_title    = DEFAULT(handlers.set_title,    NULL);
+    term->handlers.set_icon     = DEFAULT(handlers.set_icon,     NULL);
+    term->handlers.set_property = DEFAULT(handlers.set_property, NULL);
+}
+
+void
 term_destroy(Term *term)
 {
     ASSERT(term);
@@ -925,6 +936,7 @@ do_action(Term *term, StateCode state, ActionCode action, uchar c)
         // Semicolon-separated string parameters are handled by the OSC parser itself
         if (!parser->argi) {
             if (c >= '0' && c <= '9') {
+                ASSERT(INT_MAX / 10 > parser->argv[0]);
                 parser->argv[0] *= 10;
                 parser->argv[0] += c - '0';
             } else {
@@ -959,7 +971,7 @@ do_action(Term *term, StateCode state, ActionCode action, uchar c)
         } else {
             ASSERT(INT_MAX / 10 > parser->argv[parser->argi]);
             parser->argv[parser->argi] *= 10;
-            parser->argv[parser->argi] += (c - '0');
+            parser->argv[parser->argi] += c - '0';
         }
         break;
     case ActionClear:
@@ -1139,8 +1151,29 @@ emu_osc(Term *term, const char *str, const int *argv, int argc)
      *   3 - Set window property
      *   4 - Set following color specification
     **/
-    UNUSED(argv);
     UNUSED(argc);
+
+    switch (argv[0]) {
+    case 0:
+    case 1:
+        if (term->handlers.set_icon) {
+            term->handlers.set_icon(term->param, str, arr_count(str));
+        }
+        if (argv[0] != 0) {
+            break;
+        }
+        // fallthrough
+    case 2:
+        if (term->handlers.set_title) {
+            term->handlers.set_title(term->param, str, arr_count(str));
+        }
+        break;
+    case 3:
+        if (term->handlers.set_property) {
+            term->handlers.set_property(term->param, str, arr_count(str));
+        }
+        break;
+    }
 
     return;
 }

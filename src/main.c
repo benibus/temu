@@ -46,9 +46,11 @@ typedef struct {
 
 static App app_;
 
-static int run(App *);
-static void event_keypress(void *, int, int, char *, int);
-static void event_resize(void *, int, int);
+static void event_keypress(void *param, int key, int mod, char *buf, int len);
+static void event_resize(void *param, int width, int height);
+static void handler_set_title(void *param, const char *str, size_t len);
+static void handler_set_icon(void *param, const char *str, size_t len);
+static int run(App *app);
 
 int
 main(int argc, char **argv)
@@ -179,7 +181,6 @@ error_invalid:
         (struct WinConfig){
             .param = app,
             .smooth_resize = false,
-            .wm_title    = config.wm_title,
             .wm_instance = config.wm_instance,
             .wm_class    = config.wm_class,
             .cols        = config.columns,
@@ -197,6 +198,7 @@ error_invalid:
 
     if (win) {
         dbgprint("Window created");
+        window_set_title(win, config.wm_title, strlen(config.wm_title));
     } else {
         dbgprint("Failed to create window");
         return EXIT_FAILURE;
@@ -268,6 +270,12 @@ error_invalid:
         dbgprint("Failed to create virtual terminal");
         return EXIT_FAILURE;
     }
+
+    const struct TermHandlers handlers = {
+        .set_title = handler_set_title,
+        .set_icon  = handler_set_icon
+    };
+    term_setup_handlers(app->term, app, handlers);
 
     renderer_set_dimensions(
         app->width, app->height,
@@ -444,5 +452,31 @@ event_keypress(void *param, int key, int mod, char *buf, int len)
         term_reset_scroll(app->term);
         term_push(app->term, buf, len);
     }
+}
+
+void
+handler_set_title(void *param, const char *str, size_t len)
+{
+    const App *app = param;
+    ASSERT(app == &app_);
+
+    if (!str || !len) {
+        str = config.wm_title;
+        len = strlen(str);
+    }
+    window_set_title(app->win, str, len);
+}
+
+void
+handler_set_icon(void *param, const char *str, size_t len)
+{
+    const App *app = param;
+    ASSERT(app == &app_);
+
+    if (!str || !len) {
+        str = config.wm_title;
+        len = strlen(str);
+    }
+    window_set_icon(app->win, str, len);
 }
 

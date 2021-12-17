@@ -129,9 +129,7 @@ server_setup(void)
             bool found = false;
             if (!XGetIMValues(server.im, XNQueryInputStyle, &styles, NULL)) {
                 for (size_t i = 0; !found && i < styles->count_styles; i++) {
-                    if (styles->supported_styles[i] ==
-                        (XIMPreeditNothing|XIMStatusNothing))
-                    {
+                    if (styles->supported_styles[i] == (XIMPreeditNothing|XIMStatusNothing)) {
                         found = true;
                     }
                 }
@@ -266,13 +264,10 @@ server_create_window(struct WinConfig config)
         }
     }
 
-    config.wm_title    = DEFAULT(config.wm_title,    "WindowTitle");
-    config.wm_instance = DEFAULT(config.wm_instance, "WindowInstance");
-    config.wm_class    = DEFAULT(config.wm_class,    "WindowClass");
-    config.cols        = DEFAULT(config.cols,  1);
-    config.rows        = DEFAULT(config.rows,  1);
-    config.colpx       = DEFAULT(config.colpx, 1);
-    config.rowpx       = DEFAULT(config.rowpx, 1);
+    config.cols  = DEFAULT(config.cols,  1);
+    config.rows  = DEFAULT(config.rows,  1);
+    config.colpx = DEFAULT(config.colpx, 1);
+    config.rowpx = DEFAULT(config.rowpx, 1);
 
     const uint16 border     = config.border;
     const uint16 inc_width  = config.colpx;
@@ -323,7 +318,6 @@ server_create_window(struct WinConfig config)
             ATOM(_NET_WM_NAME),
             ATOM(_NET_WM_STATE)
         };
-
         XSetWMProtocols(server.dpy, win->xid, supported, LEN(supported));
 
         // link window to pid
@@ -354,7 +348,7 @@ server_create_window(struct WinConfig config)
     }
 
     // Set WM_CLASS hints
-    {
+    if (config.wm_instance && config.wm_class) {
         XClassHint *hintp = XAllocClassHint();
         hintp->res_name  = config.wm_instance;
         hintp->res_class = config.wm_class;
@@ -383,7 +377,9 @@ server_create_window(struct WinConfig config)
         }
 
         XSetNormalHints(server.dpy, win->xid, hintp);
-        XSetStandardProperties(server.dpy, win->xid, config.wm_title, NULL, None, NULL, 0, hintp);
+        if (config.wm_title) {
+            XSetStandardProperties(server.dpy, win->xid, config.wm_title, NULL, None, NULL, 0, hintp);
+        }
         XFree(hintp);
     }
 
@@ -545,6 +541,45 @@ window_get_dimensions(const Win *win, int *width, int *height, int *border)
     if (width)  *width  = win->width;
     if (height) *height = win->height;
     if (border) *border = win->border;
+}
+
+static void
+x11_set_utf8_property(Win *win,
+                      const char *str, size_t len,
+                      int atom_id,
+                      void (*func)(Display *, Window, XTextProperty *))
+{
+    if (!win) return;
+
+    ASSERT(str && *str && len);
+
+    char *name;
+    if (!(name = strndup(str, len))) {
+        printerr("ERROR strndup: %s", strerror(errno));
+        abort();
+    }
+
+    XTextProperty txtprop;
+    Xutf8TextListToTextProperty(server.dpy, &name, 1, XUTF8StringStyle, &txtprop);
+    XSetTextProperty(server.dpy, win->xid, &txtprop, ATOM(atom_id));
+    if (func) {
+        func(server.dpy, win->xid, &txtprop);
+    }
+
+    XFree(txtprop.value);
+    free(name);
+}
+
+void
+window_set_title(Win *win, const char *str, size_t len)
+{
+    x11_set_utf8_property(win, str, len, _NET_WM_NAME, XSetWMName);
+}
+
+void
+window_set_icon(Win *win, const char *str, size_t len)
+{
+    x11_set_utf8_property(win, str, len, _NET_WM_ICON_NAME, XSetWMIconName);
 }
 
 bool

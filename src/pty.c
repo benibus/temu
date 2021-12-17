@@ -212,10 +212,12 @@ signal_handle(int signo, siginfo_t *info, void *context)
          * so we can't reliably pass-on the child's return value.
          * There's probably something I'm missing here...
          */
+#if 0
         dbgprint("Handling SIGCHLD (pid = %hd), status = %d", info->si_pid, status);
         if (WIFEXITED(status) && WEXITSTATUS(status)) {
             dbgprint("Child exited with code %d", WEXITSTATUS(status));
         }
+#endif
 
         _exit(0);
     }

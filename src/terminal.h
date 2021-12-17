@@ -65,6 +65,13 @@ typedef struct {
         int argv[16];    // Numeric parameters
         int argi;        // Numeric parameter index
     } parser;
+
+    void *param;
+    struct TermHandlers {
+        void (*set_title)(void *param, const char *title, size_t len);
+        void (*set_icon)(void *param, const char *title, size_t len);
+        void (*set_property)(void *param, const char *title, size_t len);
+    } handlers;
 } Term;
 
 Term *term_create(struct TermConfig);
@@ -83,6 +90,7 @@ bool term_get_cursor(const Term *, CursorDesc *);
 size_t term_make_key_string(const Term *, uint, uint, char *, size_t);
 Cell *term_get_framebuffer(Term *);
 Frame *term_generate_frame(Term *);
+void term_setup_handlers(Term *term, void *param, struct TermHandlers handlers);
 
 void term_print_history(const Term *);
 void term_print_stream(const Term *);

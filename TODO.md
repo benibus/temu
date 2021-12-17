@@ -17,7 +17,7 @@
 - [ ] Use a better heuristic for estimating fixed font widths
 - [ ] Think of a better method of storing cell colors and passing them to renderer
 - [ ] Separate line and cell buffers in history ring for easier renderer access
-- [ ] API for setting window title/properties (exposed to the terminal)
+- [x] API for setting window title/properties (exposed to the terminal)
 - [ ] Set window size after getting font metrics so we don't have to display the window before the terminal even starts
 - [ ] Robust keyboard -> keycode mappings for international/non-standard keyboard layouts
 - [ ] Mouse cursor, selection, and copy/paste

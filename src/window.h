@@ -54,6 +54,8 @@ int server_get_fileno(void);
 bool window_online(const Win *);
 void window_destroy(Win *);
 void window_get_dimensions(const Win *, int *, int *, int *);
+void window_set_title(Win *win, const char *name, size_t len);
+void window_set_icon(Win *win, const char *name, size_t len);
 int window_poll_events(Win *);
 bool window_show(Win *);
 void window_update(const Win *);
