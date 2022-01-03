@@ -17,6 +17,9 @@ This application targets Linux, OpenBSD, and FreeBSD - however, I've only tested
 Currently, only X11 is supported but it appears to run fine under XWayland as well. That being said,
 a proper native Wayland backend will be implemented at some point.
 
+Note that you may encounter problems running this in a 3D-accelerated virtual environment due to limited
+driver support for OpenGL (irrespective of your hardware). This will be fixed in the future.
+
 ## Dependencies
 
 - [GCC], [Clang], or any C compiler with C11 support
@@ -45,9 +48,17 @@ $ ./temu
 ```
 ## Key Bindings
 
-Proper key bindings have not been implemented yet, but you can scroll up/down with ALT-k/j, and page up/down with SHIFT-PageUp/PageDown.
+Proper key bindings have not been implemented yet, but you can scroll up/down with ALT-k/j, and page
+up/down with SHIFT-PageUp/PageDown.
 
-Note that the scrollback buffer is kept abnormally small by default for debugging purposes. You can configure the number of saved lines with the "-m" command-line option.
+Note that the scrollback buffer is kept abnormally small by default for debugging purposes. You can
+configure the number of saved lines with the "-m" command-line option.
+
+## Licensing
+
+The core terminal implementation is licensed under the GPL-3. Any derived modules that become standalone
+libraries will likely be re-released under a permissive license. Such changes will be reflected in this
+repository.
 
 ## Resources
 

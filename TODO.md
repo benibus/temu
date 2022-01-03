@@ -24,7 +24,7 @@
 - [ ] Integrate optparse.h for command line arguments
 - [ ] Re-integrate modifiable cursor shape/color
 - [ ] Key bindings
-- [ ] License preambles in source files
+- [x] License notices in source files
 - [ ] Serializer for history buffer to record sessions (for debugging)
 - [ ] Platform abstraction for window events
 - [ ] Dynamic line rewrapping
