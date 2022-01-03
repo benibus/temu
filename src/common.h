@@ -103,6 +103,7 @@ typedef struct {
 #define DEFAULT(v1,v2)  ((!!(v1)) ? (v1) : (v2))
 #define ALIGN_DOWN(n,a) ((n) & ~((a) - 1))
 #define ALIGN_UP(n,a)   (((n) + ((a) - 1)) & ~((a) - 1))
+#define JOIN(a,b)       a##b
 
 #if STD_C11
   #define vecx(...) {{ __VA_ARGS__ }}

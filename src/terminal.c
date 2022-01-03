@@ -5,7 +5,7 @@
 #include "ring.h"
 
 #if BUILD_DEBUG
-  #define DEBUG_PRINT_INPUT 0
+  #define DEBUG_PRINT_INPUT 1
   #define DEBUG_PRINT_ESC   1
 #else
   #define DEBUG_PRINT_INPUT 0
@@ -25,7 +25,7 @@ static uchar *dbginput; // For human-readable printing
  * [0x10...0xe7] 6x6x6 color cube
  * [0xe8...0xff] Grayscale (dark -> light)
  *
-**/
+ */
 static const uint32 rgb_presets[256] = {
     0x000000, 0x800000, 0x008000, 0x808000, 0x000080, 0x800080, 0x008080, 0xc0c0c0,
     0x808080, 0xff0000, 0x00ff00, 0xffff00, 0x0000ff, 0xff00ff, 0x00ffff, 0xffffff,
@@ -263,7 +263,7 @@ term_scroll(Term *term, int delta)
     /*
      * (delta < 0): scroll back in history
      * (delta > 0): scroll forward in history
-    **/
+     */
     ring_adjust_scroll(term->ring, -delta);
 }
 
@@ -646,6 +646,8 @@ static void emu_csi_cha(Term *, const int *, int);
 static void emu_csi_cup(Term *, const int *, int);
 static void emu_csi_cht(Term *, const int *, int);
 static void emu_csi_dch(Term *, const int *, int);
+static void emu_csi_vpa(Term *, const int *, int);
+static void emu_csi_vpr(Term *, const int *, int);
 static void emu_csi_ed(Term *, const int *, int);
 static void emu_csi_el(Term *, const int *, int);
 static void emu_csi_sgr(Term *, const int *, int);
@@ -696,7 +698,8 @@ static void emu_osc(Term *, const char *, const int *, int);
     X_(CSI, HPA,      NULL) \
     X_(CSI, HPR,      NULL) \
     X_(CSI, REP,      NULL) \
-    X_(CSI, VPA,      NULL) \
+    X_(CSI, VPA,      emu_csi_vpa) \
+    X_(CSI, VPR,      emu_csi_vpr) \
     X_(CSI, HVP,      NULL) \
     X_(CSI, TBC,      NULL) \
     X_(CSI, SM,       NULL) \
@@ -728,12 +731,10 @@ static void emu_osc(Term *, const char *, const int *, int);
     X_(CSI, DECRST,   emu_csi_decrst) \
     X_(CSI, DECDSR,   NULL)
 
-#define SYMBOL(suffix) OP##suffix
-
 // Define opcodes for C1 and CSI escape sequences
 enum {
     NOOP,
-#define X_(group,opcode,...) SYMBOL(opcode),
+#define X_(group,opcode,...) JOIN(OP, opcode),
     HANDLER_TABLE
 #undef X_
 };
@@ -749,7 +750,7 @@ struct HandlerInfo {
 // Define table entries for C1 and CSI escape sequences
 static const struct HandlerInfo dispatch_table[] = {
     [NOOP] = { .group = "UNK" },
-#define X_(group_,opcode_,func_) [SYMBOL(opcode_)] = { \
+#define X_(group_,opcode_,func_) [JOIN(OP, opcode_)] = { \
     .group = #group_,  \
     .name  = #opcode_, \
     .func  = func_     \
@@ -758,7 +759,6 @@ static const struct HandlerInfo dispatch_table[] = {
 #undef X_
 };
 
-#undef SYMBOL
 #undef HANDLER_TABLE
 
 static void dispatch_static(Term *term, uint8 opcode);
@@ -1038,6 +1038,7 @@ do_action(Term *term, StateCode state, ActionCode action, uchar c)
             case 'a': opcode = OPHPR;     break;
             case 'b': opcode = OPREP;     break;
             case 'd': opcode = OPVPA;     break;
+            case 'e': opcode = OPVPR;     break;
             case 'f': opcode = OPHVP;     break;
             case 'g': opcode = OPTBC;     break;
             case 'h': opcode = OPSM;      break;
@@ -1150,7 +1151,7 @@ emu_osc(Term *term, const char *str, const int *argv, int argc)
      *   2 - Set window title
      *   3 - Set window property
      *   4 - Set following color specification
-    **/
+     */
     UNUSED(argc);
 
     switch (argv[0]) {
@@ -1285,6 +1286,20 @@ emu_csi_dch(Term *term, const int *argv, int argc)
 {
     UNUSED(argc);
     cells_delete(term->ring, term->x, term->y, argv[0]);
+}
+
+void
+emu_csi_vpa(Term *term, const int *argv, int argc)
+{
+    UNUSED(argc);
+    set_cursor_row(term, MAX(argv[1], 1) - 1);
+}
+
+void
+emu_csi_vpr(Term *term, const int *argv, int argc)
+{
+    UNUSED(argc);
+    move_cursor_rows(term, MAX(argv[1], 1) - 1);
 }
 
 void
