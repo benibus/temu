@@ -64,6 +64,7 @@ typedef struct {
         int depth;       // Intermediate token index
         int argv[16];    // Numeric parameters
         int argi;        // Numeric parameter index
+        bool overflow;   // Numeric paramater overflowed
     } parser;
 
     void *param;

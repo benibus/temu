@@ -626,7 +626,10 @@ cellslen(const Cell *cells, int lim)
     return 0;
 }
 
-void term_print_history(const Term *term) { dbg_print_ring(term->ring); }
+void term_print_history(const Term *term)
+{
+    dbg_print_ring(term->ring);
+}
 
 // C0 control functions
 static void emu_c0_ctrl(Term *, char);
@@ -761,11 +764,11 @@ static const struct HandlerInfo dispatch_table[] = {
 
 #undef HANDLER_TABLE
 
-static void dispatch_static(Term *term, uint8 opcode);
-static void dispatch_osc(Term *term);
-
 #include <unistd.h> // for isatty()
-
+/*
+ * Quick and dirty helper function for logging human-readable trace data
+ * Its primary purpose is to make unhandled/unknown escape sequences easy to spot
+ */
 static inline void
 dbg_print_sequence(const char *group,
                    const char *name,
@@ -800,7 +803,10 @@ dbg_print_sequence(const char *group,
     printerr("%s\n", DEFAULT(suffix, ""));
 }
 
-inline void
+/*
+ * Dispatch to the standard C1 and CSI functions that are implemented internally
+ */
+static inline void
 dispatch_static(Term *term, uint8 opcode)
 {
     ASSERT(opcode < LEN(dispatch_table));
@@ -840,7 +846,10 @@ dispatch_static(Term *term, uint8 opcode)
     }
 }
 
-inline void
+/*
+ * Dispatch to a secondary OSC parser that calls external platform-dependent handlers
+ */
+static inline void
 dispatch_osc(Term *term)
 {
     const struct Parser *const parser = &term->parser;
@@ -870,14 +879,51 @@ parser_clear(struct Parser *parser)
     parser->depth = 0;
     memset(parser->argv, 0, sizeof(parser->argv));
     parser->argi = 0;
+    parser->overflow = false;
     arr_clear(parser->data);
 }
 
+static inline int
+parser_add_digit(struct Parser *parser, int digit)
+{
+    ASSERT(digit >= 0 && digit < 10);
+
+    int *const argp = &parser->argv[parser->argi];
+
+    if (!parser->overflow) {
+        if (INT_MAX / 10 - digit > *argp) {
+            *argp = *argp * 10 + digit;
+        } else {
+            parser->overflow = true;
+            *argp = 0; // TODO(ben): Fallback to default param or abort the sequence?
+            dbgprint("warning: parameter integer overflow");
+        }
+    }
+
+    return *argp;
+}
+
+static inline bool
+parser_next_param(struct Parser *parser)
+{
+    if (parser->argi + 1 >= (int)LEN(parser->argv)) {
+        dbgprint("warning: ignoring excess parameter");
+        return false;
+    }
+
+    parser->argv[++parser->argi] = 0;
+    parser->overflow = false;
+
+    return true;
+}
+
+/*
+ * The central routine for performing actions emitted by the state machine - i.e. parsing,
+ * UTF-8 validation, writing to the ring buffer, and executing control sequences
+ */
 void
 do_action(Term *term, StateCode state, ActionCode action, uchar c)
 {
-    if (!action) return;
-
     struct Parser *parser = &term->parser;
 
 #if 0
@@ -890,8 +936,9 @@ do_action(Term *term, StateCode state, ActionCode action, uchar c)
 
     // TODO(ben): DCS functions
     switch (action) {
+    case ActionNone:
     case ActionIgnore:
-        break;
+        return;
     case ActionPrint:
         write_codepoint(term, parser->ucs4|(c & 0x7f), CellTypeNormal);
         parser->ucs4 = 0;
@@ -934,17 +981,15 @@ do_action(Term *term, StateCode state, ActionCode action, uchar c)
     case ActionOscPut:
         // All OSC sequences take a leading numeric parameter, which we consume in the arg buffer.
         // Semicolon-separated string parameters are handled by the OSC parser itself
-        if (!parser->argi) {
+        if (parser->argi == 0) {
             if (c >= '0' && c <= '9') {
-                ASSERT(INT_MAX / 10 > parser->argv[0]);
-                parser->argv[0] *= 10;
-                parser->argv[0] += c - '0';
+                parser_add_digit(parser, c - '0');
             } else {
                 // NOTE(ben): Assuming OSC sequences take a default '0' parameter
                 if (c != ';') {
-                    parser->argv[0] = 0;
+                    parser->argv[parser->argi] = 0;
                 }
-                parser->argv[++parser->argi] = 0;
+                parser_next_param(parser);
             }
         } else {
             arr_push(parser->data, c);
@@ -963,15 +1008,9 @@ do_action(Term *term, StateCode state, ActionCode action, uchar c)
         break;
     case ActionParam:
         if (c == ';') {
-            if (parser->argi + 1 == LEN(parser->argv)) {
-                dbgprint("warning: ignoring excess parameter");
-            } else {
-                parser->argv[++parser->argi] = 0;
-            }
+            parser_next_param(parser);
         } else {
-            ASSERT(INT_MAX / 10 > parser->argv[parser->argi]);
-            parser->argv[parser->argi] *= 10;
-            parser->argv[parser->argi] += c - '0';
+            parser_add_digit(parser, c - '0');
         }
         break;
     case ActionClear:
