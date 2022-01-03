@@ -1,17 +1,10 @@
 #include "utils.h"
-#include "window.h"
-#define OPENGL_INCLUDE_PLATFORM 1
-#include "opengl.h"
+#include "platform_x11.h"
 
 #include <errno.h>
 #include <locale.h>
 #include <poll.h>
 #include <unistd.h>
-
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#include <X11/keysym.h>
-#include <X11/Xatom.h>
 
 #define XW_EVENT_MASK \
   (StructureNotifyMask|KeyPressMask|KeyReleaseMask|     \
@@ -43,52 +36,7 @@ enum {
     NUM_ATOM
 };
 
-struct Server {
-    Display *dpy;
-    int screen;
-    Window root;
-    Visual *visual;
-    XIM im;
-    Colormap colormap;
-    int fd;
-    int dpy_width;
-    int dpy_height;
-    float dpi;
-    int depth;
-    struct {
-        EGLDisplay dpy;
-        EGLContext context;
-        EGLConfig config;
-        struct {
-            EGLint major;
-            EGLint minor;
-        } version;
-    } egl;
-};
-
 static struct Server server;
-
-struct Win_ {
-    void *param;
-    struct Server *server;
-    Window xid;
-    XIC ic;
-    GC gc;
-    EGLSurface surface;
-    bool online;
-    int pid;
-    int xpos;
-    int ypos;
-    int width;
-    int height;
-    int border;
-    struct {
-        EventFuncResize   resize;
-        EventFuncKeyPress keypress;
-        EventFuncExpose   expose;
-    } callbacks;
-};
-
 static Atom wm_atoms[NUM_ATOM];
 static Win clients[4];
 
@@ -96,7 +44,7 @@ static void x11_query_dimensions(Win *win, int *width, int *height, int *border)
 static void x11_query_coordinates(Win *win, int *xpos, int *ypos);
 
 bool
-server_setup(void)
+platform_setup(void)
 {
     if (server.dpy) {
         return true;
@@ -256,10 +204,10 @@ server_setup(void)
 }
 
 Win *
-server_create_window(struct WinConfig config)
+platform_create_window(struct WinConfig config)
 {
     if (!server.dpy) {
-        if (!server_setup()) {
+        if (!platform_setup()) {
             return false;
         }
     }
@@ -467,7 +415,7 @@ window_destroy(Win *win)
 }
 
 void
-server_shutdown()
+platform_shutdown()
 {
     window_make_current(NULL);
     eglDestroyContext(server.egl.dpy, server.egl.context);
@@ -476,25 +424,25 @@ server_shutdown()
 }
 
 float
-server_get_dpi(void)
+platform_get_dpi(void)
 {
     return server.dpi;
 }
 
 int
-server_events_pending(void)
+platform_events_pending(void)
 {
     return XPending(server.dpy);
 }
 
 int
-server_get_fileno(void)
+platform_get_fileno(void)
 {
     return server.fd;
 }
 
 bool
-server_parse_color_string(const char *name, uint32 *result)
+platform_parse_color_string(const char *name, uint32 *result)
 {
     XColor xcolor = { 0 };
 
@@ -784,7 +732,6 @@ window_poll_events(Win *win)
         case ClientMessage: {
             XClientMessageEvent *e = (void *)&event;
             if ((Atom)e->data.l[0] == ATOM(WM_DELETE_WINDOW)) {
-                /* server_destroy_window(win); */
                 win->online = false;
             }
             break;

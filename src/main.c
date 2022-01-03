@@ -5,7 +5,7 @@
 
 #include "utils.h"
 #include "terminal.h"
-#include "window.h"
+#include "platform.h"
 #include "fonts.h"
 #include "renderer.h"
 
@@ -119,7 +119,7 @@ error_invalid:
         exit(1);
     }
 
-    if (server_setup()) {
+    if (platform_setup()) {
         dbgprint("Window server initialized");
     } else {
         dbgprint("Failed to initialize window server");
@@ -138,7 +138,7 @@ error_invalid:
         case 1:  dst = &termcfg.color_fg;  break;
         default: dst = &termcfg.colors[i-2]; break;
         }
-        if (!server_parse_color_string(config.colors[i], dst)) {
+        if (!platform_parse_color_string(config.colors[i], dst)) {
             dbgprint("Failed to parse RGB string: %s", config.colors[i]);
             exit(EXIT_FAILURE);
         }
@@ -147,7 +147,7 @@ error_invalid:
 
     App *const app = &app_;
 
-    if (!fontmgr_init(server_get_dpi())) {
+    if (!fontmgr_init(platform_get_dpi())) {
         dbgprint("Failed to initialize font manager");
         return EXIT_FAILURE;
     } else {
@@ -177,7 +177,7 @@ error_invalid:
 
     fontset_get_metrics(app->fontset, &app->colpx, &app->rowpx, NULL, NULL);
 
-    Win *win = server_create_window(
+    Win *win = platform_create_window(
         (struct WinConfig){
             .param = app,
             .smooth_resize = false,
@@ -292,7 +292,7 @@ error_invalid:
     term_destroy(app->term);
     fontset_destroy(app->fontset);
     renderer_shutdown();
-    server_shutdown();
+    platform_shutdown();
 
     return result;
 }
@@ -309,7 +309,7 @@ run(App *app)
     }
 
     int result = 0;
-    const int srvfd = server_get_fileno();
+    const int srvfd = platform_get_fileno();
     const int ptyfd = term_exec(term, config.shell);
 
     if (ptyfd && srvfd) {

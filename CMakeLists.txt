@@ -19,13 +19,13 @@ set(SOURCES
     src/keys.c
     src/main.c
     src/opengl.c
+    src/platform_x11.c
     src/pty.c
     src/renderer.c
     src/ring.c
     src/terminal.c
     src/utf8.c
     src/utils.c
-    src/window.c
     src/cells.h
     src/config.h
     src/common.h
@@ -33,11 +33,12 @@ set(SOURCES
     src/fsm.h
     src/keymap.h
     src/opengl.h
+    src/platform.h
+    src/platform_x11.h
     src/pty.h
     src/renderer.h
     src/ring.h
     src/terminal.h
-    src/window.h
     src/utf8.h
     src/utils.h
 )

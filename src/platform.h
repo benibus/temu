@@ -1,5 +1,5 @@
-#ifndef WINDOW_H__
-#define WINDOW_H__
+#ifndef PLATFORM_H__
+#define PLATFORM_H__
 
 #include "common.h"
 #include "keymap.h"
@@ -42,14 +42,13 @@ struct WinConfig {
     } callbacks;
 };
 
-bool server_setup(void);
-void server_shutdown(void);
-Win *server_create_window(struct WinConfig);
-float server_get_dpi(void);
-int server_get_fileno(void);
-bool server_parse_color_string(const char *, uint32 *);
-int server_events_pending(void);
-int server_get_fileno(void);
+bool platform_setup(void);
+void platform_shutdown(void);
+Win *platform_create_window(struct WinConfig);
+float platform_get_dpi(void);
+int platform_get_fileno(void);
+bool platform_parse_color_string(const char *, uint32 *);
+int platform_events_pending(void);
 
 bool window_online(const Win *);
 void window_destroy(Win *);

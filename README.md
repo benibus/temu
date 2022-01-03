@@ -5,14 +5,17 @@ A hardware-accelerated UTF-8 terminal emulator for POSIX environments
 ## About
 
 This is a personal exploratory project that I intend to officially release (and use myself).
-As of now, you should be able to run rudimentary commands (with colored and bold/italic text), edit inline, scroll through the terminal's history, and load non-bitmap, scalable TTF/OTF fonts.
-However, many required features haven't been implemented yet - most notably, mouse selection and a number of common escape sequences and terminal modes. Additionally, the codebase is in constant flux.
+As of now, you should be able to run most commands (with colored and bold/italic text), edit inline,
+scroll through the terminal's history, and load scalable TTF/OTF fonts.
+However, many required features haven't been implemented yet - most notably, mouse selection and a
+number of common escape sequences and terminal modes - especially with regard to TUI programs.
 As such, you shouldn't use this for anything resembling real work (yet).
 
 ## Platforms
 
 This application targets Linux, OpenBSD, and FreeBSD - however, I've only tested it on Linux.
-Currently, only X11 is supported but a Wayland build is planned - and the architecture was designed with that in mind.
+Currently, only X11 is supported but it appears to run fine under XWayland as well. That being said,
+a proper native Wayland backend will be implemented at some point.
 
 ## Dependencies
 

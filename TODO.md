@@ -19,7 +19,7 @@
 - [ ] Separate line and cell buffers in history ring for easier renderer access
 - [x] API for setting window title/properties (exposed to the terminal)
 - [ ] Set window size after getting font metrics so we don't have to display the window before the terminal even starts
-- [ ] Robust keyboard -> keycode mappings for international/non-standard keyboard layouts
+- [ ] Keycodes for international/non-standard keyboard layouts
 - [ ] Mouse cursor, selection, and copy/paste
 - [ ] Integrate optparse.h for command line arguments
 - [ ] Re-integrate modifiable cursor shape/color
@@ -36,5 +36,4 @@
 - [ ] Zoom functionality (i.e. glyph scaling)
 - [ ] Find out how to minimize frames when PTY input is still pending
 - [ ] Integrate standardized VT tests
-- [ ] Testing on non-Linux platforms
 
