@@ -73,16 +73,13 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <wchar.h>
 #include <limits.h>
-
-typedef long long llong;
-typedef long double ldouble;
 
 typedef unsigned char byte;
 typedef unsigned short ushort;
 typedef unsigned int uint;
 typedef unsigned long ulong;
+typedef long long llong;
 typedef unsigned long long ullong;
 
 typedef int8_t    int8;
@@ -101,9 +98,6 @@ typedef uint8_t   u8;
 typedef uint16_t  u16;
 typedef uint32_t  u32;
 typedef uint64_t  u64;
-
-typedef uint32_t UTF8;
-typedef uint32_t UCS4;
 
 typedef struct {
     char *data;
