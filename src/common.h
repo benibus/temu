@@ -79,7 +79,7 @@
 typedef long long llong;
 typedef long double ldouble;
 
-typedef unsigned char uchar;
+typedef unsigned char byte;
 typedef unsigned short ushort;
 typedef unsigned int uint;
 typedef unsigned long ulong;

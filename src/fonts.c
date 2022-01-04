@@ -119,7 +119,7 @@ typedef struct {
     uint num_glyphs;
     uint num_mapped;
 
-    uchar *bitmap;
+    byte *bitmap;
 
     uint16 attrs;
     float pixsize;
@@ -196,7 +196,7 @@ static void dbg_print_freetype_bitmap(const FT_FaceRec *face);
 
 static Atlas *atlas_match_pixelmode(FT_Pixel_Mode pixelmode);
 static Atlas *atlas_match_depth(int depth);
-static AtlasNode *atlas_cache_glyph_bitmap(Atlas *atlas, Glyph *glyph, uchar *bitmap);
+static AtlasNode *atlas_cache_glyph_bitmap(Atlas *atlas, Glyph *glyph, byte *bitmap);
 static AtlasNode *atlas_reference_glyph(Atlas *atlas, Glyph *glyph);
 
 inline float norm_x(int x) { return x / (float)ATLAS_WIDTH;  }
@@ -947,8 +947,8 @@ font_render_glyph(Font *font, uint32 idx)
 
     memset(font->bitmap, 0, font->max_width * font->max_height);
 
-    const uchar *srcptr = slot->bitmap.buffer + ysrc * slot->bitmap.pitch;
-    uchar *dstptr = font->bitmap + (ydst + atlas->vpad) * atlas->dx;
+    const byte *srcptr = slot->bitmap.buffer + ysrc * slot->bitmap.pitch;
+    byte *dstptr = font->bitmap + (ydst + atlas->vpad) * atlas->dx;
 
     // Do the copy (alpha-to-alpha for now)
     for (int y = ydst; y - ydst < height; y++) {
@@ -1012,7 +1012,7 @@ atlas_reference_glyph(Atlas *atlas, Glyph *glyph)
 }
 
 AtlasNode *
-atlas_cache_glyph_bitmap(Atlas *atlas, Glyph *glyph, uchar *bitmap)
+atlas_cache_glyph_bitmap(Atlas *atlas, Glyph *glyph, byte *bitmap)
 {
     AtlasNode *node = NULL;
 
@@ -1172,7 +1172,7 @@ dbg_print_freetype_bitmap(const FT_FaceRec *face)
         slot->metrics.vertBearingY >> 6
     );
 
-    const uchar *pixels = slot->bitmap.buffer;
+    const byte *pixels = slot->bitmap.buffer;
     const uint8 startcolor = 235;
 
     for (int y = 0; y < height; y++) {

@@ -115,10 +115,10 @@ static inline int uwrap(int n, int m) { return ((n %= m) < 0) ? m + n : n; }
 struct ArrHdr_ {
     size_t count;
     size_t max;
-    uchar data[];
+    byte data[];
 };
 
-#define arr__(p) ((struct ArrHdr_ *)((uchar *)(p) - offsetof(struct ArrHdr_, data)))
+#define arr__(p) ((struct ArrHdr_ *)((byte *)(p) - offsetof(struct ArrHdr_, data)))
 
 #define arr_count(p)     ((p) ? arr__(p)->count : 0)
 #define arr_max(p)       ((p) ? arr__(p)->max : 0)

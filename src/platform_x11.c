@@ -111,7 +111,7 @@ platform_setup(void)
     {
         INTERN_ATOM(_NET_SUPPORTED);
 
-        uchar *supported;
+        byte *supported;
         {
             Atom type_;
             int format_;
@@ -294,7 +294,7 @@ platform_create_window(struct WinConfig config)
             XA_CARDINAL,
             32,
             PropModeReplace,
-            (uchar *)&win->pid, 1
+            (byte *)&win->pid, 1
         );
     }
 

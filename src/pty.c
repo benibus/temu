@@ -137,7 +137,7 @@ pty_hangup(int pid)
 }
 
 size_t
-pty_read(int mfd, uchar *buf, size_t len, uint32 msec)
+pty_read(int mfd, byte *buf, size_t len, uint32 msec)
 {
     ASSERT(mfd > 0);
 
@@ -160,7 +160,7 @@ pty_read(int mfd, uchar *buf, size_t len, uint32 msec)
 }
 
 size_t
-pty_write(int mfd, const uchar *buf, size_t len)
+pty_write(int mfd, const byte *buf, size_t len)
 {
     ASSERT(mfd > 0);
 

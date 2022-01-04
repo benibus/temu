@@ -30,7 +30,7 @@
 #endif
 
 #if DEBUG_PRINT_INPUT
-static uchar *dbginput; // For human-readable printing
+static byte *dbginput; // For human-readable printing
 #endif
 
 /*
@@ -110,7 +110,7 @@ static void set_cursor_row(Term *, int);
 static void set_cursor_visibility(Term *, bool);
 static void set_cursor_style(Term *, int);
 
-static void do_action(Term *, StateCode, ActionCode, uchar);
+static void do_action(Term *, StateCode, ActionCode, byte);
 
 Term *
 term_create(struct TermConfig config)
@@ -248,7 +248,7 @@ term_generate_frame(Term *term)
 size_t
 term_push(Term *term, const char *str, size_t len)
 {
-    return pty_write(term->mfd, (const uchar *)str, len);
+    return pty_write(term->mfd, (const byte *)str, len);
 }
 
 size_t
@@ -381,7 +381,7 @@ term_get_cursor(const Term *term, CursorDesc *cursor)
 }
 
 size_t
-term_consume(Term *term, const uchar *str, size_t len)
+term_consume(Term *term, const byte *str, size_t len)
 {
     uint i = 0;
 
@@ -791,7 +791,7 @@ dbg_print_sequence(const char *group,
                    const char *name,
                    const char *prefix,
                    const int *argv, int argc,
-                   const uchar *data,
+                   const byte *data,
                    const char *suffix,
                    bool implemented)
 {
@@ -939,7 +939,7 @@ parser_next_param(struct Parser *parser)
  * UTF-8 validation, writing to the ring buffer, and executing control sequences
  */
 void
-do_action(Term *term, StateCode state, ActionCode action, uchar c)
+do_action(Term *term, StateCode state, ActionCode action, byte c)
 {
     struct Parser *parser = &term->parser;
 

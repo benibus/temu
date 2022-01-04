@@ -68,7 +68,7 @@ typedef struct {
     ActionCode actions[3]; // actions to complete before transition (in order)
 } StateTrans;
 
-StateTrans fsm_next_state(StateCode, uchar);
+StateTrans fsm_next_state(StateCode, byte);
 
 // return a human-readable debug string
 const char *fsm_get_state_string(StateCode);

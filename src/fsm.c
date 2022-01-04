@@ -26,28 +26,28 @@ struct Atom {
 
 struct StateInfo {
     const char *name;
-    struct Atom (*emit)(uchar);
+    struct Atom (*emit)(byte);
     ActionCode on_enter;
     ActionCode on_exit;
 };
 
-static struct Atom emit_ground(uchar);
-static struct Atom emit_esc1(uchar);
-static struct Atom emit_esc2(uchar);
-static struct Atom emit_csi1(uchar);
-static struct Atom emit_csi2(uchar);
-static struct Atom emit_csi_param(uchar);
-static struct Atom emit_csi_ignore(uchar);
-static struct Atom emit_osc(uchar);
-static struct Atom emit_dcs1(uchar);
-static struct Atom emit_dcs2(uchar);
-static struct Atom emit_dcs_param(uchar);
-static struct Atom emit_dcs_ignore(uchar);
-static struct Atom emit_dcs_pass(uchar);
-static struct Atom emit_sos_pm_apc(uchar);
-static struct Atom emit_utf8b1(uchar);
-static struct Atom emit_utf8b2(uchar);
-static struct Atom emit_utf8b3(uchar);
+static struct Atom emit_ground(byte);
+static struct Atom emit_esc1(byte);
+static struct Atom emit_esc2(byte);
+static struct Atom emit_csi1(byte);
+static struct Atom emit_csi2(byte);
+static struct Atom emit_csi_param(byte);
+static struct Atom emit_csi_ignore(byte);
+static struct Atom emit_osc(byte);
+static struct Atom emit_dcs1(byte);
+static struct Atom emit_dcs2(byte);
+static struct Atom emit_dcs_param(byte);
+static struct Atom emit_dcs_ignore(byte);
+static struct Atom emit_dcs_pass(byte);
+static struct Atom emit_sos_pm_apc(byte);
+static struct Atom emit_utf8b1(byte);
+static struct Atom emit_utf8b2(byte);
+static struct Atom emit_utf8b3(byte);
 
 static const struct StateInfo state_table[StateCount] = {
     [StateGround]    = { "Ground",    emit_ground,     ActionNone,     ActionNone },
@@ -102,7 +102,7 @@ static const char *action_names[ActionCount] = {
 #define ESC 0x1b
 
 StateTrans
-fsm_next_state(StateCode state, uchar c)
+fsm_next_state(StateCode state, byte c)
 {
     StateTrans result = { 0 };
     struct Atom atom;
@@ -140,7 +140,7 @@ fsm_get_action_string(ActionCode action)
 #define EMIT(state,action) return (struct Atom){ (state), (action) }
 
 struct Atom
-emit_ground(uchar c)
+emit_ground(byte c)
 {
     static const StateCode same = StateGround;
 
@@ -157,7 +157,7 @@ emit_ground(uchar c)
 }
 
 struct Atom
-emit_utf8b1(uchar c)
+emit_utf8b1(byte c)
 {
     if (utf8_check_cont(c)) {
         EMIT(StateGround, ActionPrint);
@@ -167,7 +167,7 @@ emit_utf8b1(uchar c)
 }
 
 struct Atom
-emit_utf8b2(uchar c)
+emit_utf8b2(byte c)
 {
     if (utf8_check_cont(c)) {
         EMIT(StateUtf8B1, ActionUtf8Cont);
@@ -177,7 +177,7 @@ emit_utf8b2(uchar c)
 }
 
 struct Atom
-emit_utf8b3(uchar c)
+emit_utf8b3(byte c)
 {
     if (utf8_check_cont(c)) {
         EMIT(StateUtf8B2, ActionUtf8Cont);
@@ -187,7 +187,7 @@ emit_utf8b3(uchar c)
 }
 
 struct Atom
-emit_esc1(uchar c)
+emit_esc1(byte c)
 {
     static const StateCode same = StateEsc1;
 
@@ -209,7 +209,7 @@ emit_esc1(uchar c)
 }
 
 struct Atom
-emit_esc2(uchar c)
+emit_esc2(byte c)
 {
     static const StateCode same = StateEsc2;
 
@@ -225,7 +225,7 @@ emit_esc2(uchar c)
 }
 
 struct Atom
-emit_csi1(uchar c)
+emit_csi1(byte c)
 {
     static const StateCode same = StateCsi1;
 
@@ -249,7 +249,7 @@ emit_csi1(uchar c)
 }
 
 struct Atom
-emit_csi2(uchar c)
+emit_csi2(byte c)
 {
     static const StateCode same = StateCsi2;
 
@@ -267,7 +267,7 @@ emit_csi2(uchar c)
 }
 
 struct Atom
-emit_csi_ignore(uchar c)
+emit_csi_ignore(byte c)
 {
     static const StateCode same = StateCsiIgnore;
 
@@ -281,7 +281,7 @@ emit_csi_ignore(uchar c)
 }
 
 struct Atom
-emit_csi_param(uchar c)
+emit_csi_param(byte c)
 {
     static const StateCode same = StateCsiParam;
 
@@ -305,7 +305,7 @@ emit_csi_param(uchar c)
 }
 
 struct Atom
-emit_dcs1(uchar c)
+emit_dcs1(byte c)
 {
     static const StateCode same = StateDcs1;
 
@@ -329,7 +329,7 @@ emit_dcs1(uchar c)
 }
 
 struct Atom
-emit_dcs2(uchar c)
+emit_dcs2(byte c)
 {
     static const StateCode same = StateDcs2;
 
@@ -347,7 +347,7 @@ emit_dcs2(uchar c)
 }
 
 struct Atom
-emit_dcs_ignore(uchar c)
+emit_dcs_ignore(byte c)
 {
     static const StateCode same = StateDcsIgnore;
 
@@ -361,7 +361,7 @@ emit_dcs_ignore(uchar c)
 }
 
 struct Atom
-emit_dcs_param(uchar c)
+emit_dcs_param(byte c)
 {
     static const StateCode same = StateDcsParam;
 
@@ -385,7 +385,7 @@ emit_dcs_param(uchar c)
 }
 
 struct Atom
-emit_dcs_pass(uchar c)
+emit_dcs_pass(byte c)
 {
     static const StateCode same = StateDcsPass;
 
@@ -399,7 +399,7 @@ emit_dcs_pass(uchar c)
 }
 
 struct Atom
-emit_osc(uchar c)
+emit_osc(byte c)
 {
     static const StateCode same = StateOsc;
 
@@ -414,7 +414,7 @@ emit_osc(uchar c)
 }
 
 struct Atom
-emit_sos_pm_apc(uchar c)
+emit_sos_pm_apc(byte c)
 {
     static const StateCode same = StateSosPmApc;
 
