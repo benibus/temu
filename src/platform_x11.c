@@ -697,7 +697,7 @@ window_poll_events(Win *win)
     for (; XPending(server.dpy); count++) {
         XEvent event = { 0 };
         XNextEvent(server.dpy, &event);
-        if (XFilterEvent(&event, None)) {
+        if (XFilterEvent(&event, None) || event.xany.window != win->xid) {
             continue;
         }
 

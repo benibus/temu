@@ -27,7 +27,6 @@
 #define ESC "\033"
 #define CSI ESC"["
 #define SS3 ESC"O"
-#define MDC "\377"
 
 typedef struct KeyString {
     char *prefix[2];
@@ -79,7 +78,7 @@ static KeyString keys_normal[KeyCount] = {
     [KeyF20]         = { { CSI"34", NULL   }, "~" }
 };
 
-static KeyString keys_appkeypad[] = {
+static KeyString keys_appkeypad[KeyCount] = {
     [KeyKPTab]       = { { SS3, NULL }, "I" },
     [KeyKPEnter]     = { { SS3, NULL }, "M" },
     [KeyKPSpace]     = { { SS3, NULL }, " " },
@@ -122,7 +121,7 @@ static KeyString keys_appcursor[KeyCount] = {
 static inline KeyString *
 key_lookup(int key, KeyString *table)
 {
-    KeyString *item = table + key;
+    KeyString *item = &table[key];
 
     if (!item->prefix[0]) return NULL;
 
@@ -132,10 +131,13 @@ key_lookup(int key, KeyString *table)
 size_t
 term_make_key_string(const Term *term, uint key, uint mod, char *buf, size_t size)
 {
-    (void)term;
+    UNUSED(term);
 
-    if (key > KeyCount - 1 || mod > ModCount - 1)
+    static_assert(ModCount <= 9, "Key modifier masks cannot exceed 8");
+
+    if (key >= KeyCount || mod >= ModCount) {
         return 0;
+    }
 
     KeyString *item = NULL;
     size_t len = 0;
@@ -197,13 +199,14 @@ term_make_key_string(const Term *term, uint key, uint mod, char *buf, size_t siz
     }
 
     if (item) {
-        char *prefix = item->prefix[(mod > 0) ? 1 : 0];
+        char *prefix = item->prefix[(mod) ? 1 : 0];
         char *suffix = item->suffix;
 
         len = snprintf(buf, size - 1, "%s%s%s",
             (prefix) ? prefix : item->prefix[0],
-            (mod && suffix) ? (char []){ ';', '0' + mod + 1 } : "",
-            (suffix) ? suffix : "");
+            (mod && suffix) ? (char [3]){ ';', '0' + mod + 1 } : "",
+            (suffix) ? suffix : ""
+        );
     }
 
     ASSERT(!len || len < size);
