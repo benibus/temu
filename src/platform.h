@@ -23,20 +23,6 @@
 
 typedef struct Win_ Win;
 
-typedef enum {
-    EventTypeNone,
-    EventTypeDestroy,
-    EventTypeResize,
-    EventTypeTextInput,
-    EventTypeKeyPress,
-    EventTypeKeyRelease,
-    EventTypeButtonPress,
-    EventTypeButtonRelease,
-    EventTypePointerMove,
-    EventTypeExpose,
-    EventTypeCount
-} EventType;
-
 typedef void (*EventFuncResize)(void *, int, int);
 typedef void (*EventFuncKeyPress)(void *, int, int, char *, int);
 typedef void (*EventFuncExpose)(void *);
@@ -59,22 +45,22 @@ struct WinConfig {
     } callbacks;
 };
 
-bool platform_setup(void);
-void platform_shutdown(void);
-Win *platform_create_window(struct WinConfig);
+bool  platform_setup(void);
+void  platform_shutdown(void);
 float platform_get_dpi(void);
-int platform_get_fileno(void);
-bool platform_parse_color_string(const char *, uint32 *);
-int platform_events_pending(void);
+int   platform_get_fileno(void);
+bool  platform_parse_color_string(const char *name, uint32 *color);
+int   platform_events_pending(void);
 
-bool window_online(const Win *);
-void window_destroy(Win *);
-void window_get_dimensions(const Win *, int *, int *, int *);
-void window_set_title(Win *win, const char *name, size_t len);
-void window_set_icon(Win *win, const char *name, size_t len);
-int window_poll_events(Win *);
-bool window_show(Win *);
-void window_update(const Win *);
-bool window_make_current(const Win *);
+Win*  window_create(struct WinConfig config);
+void  window_destroy(Win *win);
+bool  window_online(const Win *win);
+void  window_get_dimensions(const Win *win, int *width, int *height, int *border);
+void  window_set_title(Win *win, const char *name, size_t len);
+void  window_set_icon(Win *win, const char *name, size_t len);
+int   window_poll_events(Win *win);
+bool  window_show(Win *win);
+void  window_update(const Win *win);
+bool  window_make_current(const Win *win);
 
 #endif

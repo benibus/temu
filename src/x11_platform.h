@@ -15,8 +15,8 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  *------------------------------------------------------------------------------*/
 
-#ifndef PLATFORM_X11_H__
-#define PLATFORM_X11_H__
+#ifndef X11_PLATFORM_H__
+#define X11_PLATFORM_H__
 
 #include "common.h"
 #define OPENGL_INCLUDE_PLATFORM 1
@@ -28,7 +28,30 @@
 #include <X11/keysym.h>
 #include <X11/Xatom.h>
 
-struct Server {
+typedef struct Server_ Server;
+
+struct Win_ {
+    void *param;
+    Server *server;
+    Window xid;
+    XIC ic;
+    GC gc;
+    EGLSurface surface;
+    bool online;
+    int pid;
+    int xpos;
+    int ypos;
+    int width;
+    int height;
+    int border;
+    struct {
+        EventFuncResize   resize;
+        EventFuncKeyPress keypress;
+        EventFuncExpose   expose;
+    } callbacks;
+};
+
+struct Server_ {
     Display *dpy;
     int screen;
     Window root;
@@ -49,27 +72,7 @@ struct Server {
             EGLint minor;
         } version;
     } egl;
-};
-
-struct Win_ {
-    void *param;
-    struct Server *server;
-    Window xid;
-    XIC ic;
-    GC gc;
-    EGLSurface surface;
-    bool online;
-    int pid;
-    int xpos;
-    int ypos;
-    int width;
-    int height;
-    int border;
-    struct {
-        EventFuncResize   resize;
-        EventFuncKeyPress keypress;
-        EventFuncExpose   expose;
-    } callbacks;
+    Win clients[4];
 };
 
 #endif

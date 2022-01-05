@@ -16,20 +16,72 @@
  *------------------------------------------------------------------------------*/
 
 #include "utils.h"
-#include "platform_x11.h"
+#include "x11_platform.h"
 
 #include <errno.h>
 #include <locale.h>
 #include <poll.h>
 #include <unistd.h>
 
-#define XW_EVENT_MASK \
+#define X11_EVENT_MASK \
   (StructureNotifyMask|KeyPressMask|KeyReleaseMask|     \
    PointerMotionMask|ButtonPressMask|ButtonReleaseMask| \
    ExposureMask|FocusChangeMask|VisibilityChangeMask|   \
    EnterWindowMask|LeaveWindowMask|PropertyChangeMask)
 
-#define ATOM(atom_) wm_atoms[(atom_)]
+#define X11_EVENT_TABLE \
+    X_(KeyPress,         xhandler_key_press) \
+    X_(KeyRelease,       NULL) \
+    X_(ButtonPress,      NULL) \
+    X_(ButtonRelease,    NULL) \
+    X_(MotionNotify,     NULL) \
+    X_(EnterNotify,      NULL) \
+    X_(LeaveNotify,      NULL) \
+    X_(FocusIn,          NULL) \
+    X_(FocusOut,         NULL) \
+    X_(KeymapNotify,     NULL) \
+    X_(Expose,           NULL) \
+    X_(GraphicsExpose,   NULL) \
+    X_(NoExpose,         NULL) \
+    X_(VisibilityNotify, NULL) \
+    X_(CreateNotify,     NULL) \
+    X_(DestroyNotify,    NULL) \
+    X_(UnmapNotify,      NULL) \
+    X_(MapNotify,        NULL) \
+    X_(MapRequest,       NULL) \
+    X_(ReparentNotify,   NULL) \
+    X_(ConfigureNotify,  xhandler_configure_notify ) \
+    X_(ConfigureRequest, NULL) \
+    X_(GravityNotify,    NULL) \
+    X_(ResizeRequest,    NULL) \
+    X_(CirculateNotify,  NULL) \
+    X_(CirculateRequest, NULL) \
+    X_(PropertyNotify,   NULL) \
+    X_(SelectionClear,   NULL) \
+    X_(SelectionRequest, NULL) \
+    X_(SelectionNotify,  NULL) \
+    X_(ColormapNotify,   NULL) \
+    X_(ClientMessage,    xhandler_client_message) \
+    X_(MappingNotify,    NULL) \
+    X_(GenericEvent,     NULL)
+
+static void xhandler_client_message(XEvent *, Win *, uint32);
+static void xhandler_configure_notify(XEvent *, Win *, uint32);
+static void xhandler_key_press(XEvent *, Win *, uint32);
+
+struct X11Event {
+    const char *name;
+    void (*handler)(XEvent *, Win *, uint32);
+};
+
+static const struct X11Event xevent_table[] = {
+#define X_(symbol_,handler_) [symbol_] = { .name = #symbol_, .handler = handler_ },
+    X11_EVENT_TABLE
+#undef X_
+    { 0 }
+};
+#undef X11_EVENT_TABLE
+
 enum {
     WM_PROTOCOLS,
     WM_STATE,
@@ -53,16 +105,20 @@ enum {
     NUM_ATOM
 };
 
-static struct Server server;
+#define ATOM(atom_) wm_atoms[(atom_)]
 static Atom wm_atoms[NUM_ATOM];
-static Win clients[4];
 
-static void x11_query_dimensions(Win *win, int *width, int *height, int *border);
-static void x11_query_coordinates(Win *win, int *xpos, int *ypos);
+static Server server;
+
+static void query_dimensions(Win *, int *, int *, int *);
+static void query_coordinates(Win *, int *, int *);
+static int translate_key(uint, uint, int *, int *);
 
 bool
 platform_setup(void)
 {
+    static_assert(LEN(xevent_table) >= LASTEvent, "Insufficient table size");
+
     if (server.dpy) {
         return true;
     }
@@ -220,8 +276,90 @@ platform_setup(void)
     return true;
 }
 
+void
+platform_shutdown()
+{
+    window_make_current(NULL);
+    eglDestroyContext(server.egl.dpy, server.egl.context);
+    eglTerminate(server.egl.dpy);
+    XCloseDisplay(server.dpy);
+}
+
+float
+platform_get_dpi(void)
+{
+    return server.dpi;
+}
+
+int
+platform_events_pending(void)
+{
+    return XPending(server.dpy);
+}
+
+int
+platform_get_fileno(void)
+{
+    return server.fd;
+}
+
+bool
+platform_parse_color_string(const char *name, uint32 *color)
+{
+    XColor xcolor = { 0 };
+
+    if (!XParseColor(server.dpy, server.colormap, name, &xcolor)) {
+        return false;
+    }
+
+    if (color) {
+        *color = pack_argb(
+            xcolor.red   >> 8,
+            xcolor.green >> 8,
+            xcolor.blue  >> 8,
+            0x00
+        );
+    }
+
+    return true;
+}
+
+void
+query_dimensions(Win *win, int *width, int *height, int *border)
+{
+    ASSERT(win);
+
+    XWindowAttributes attr;
+    XGetWindowAttributes(server.dpy, win->xid, &attr);
+
+    if (width)  *width  = attr.width;
+    if (height) *height = attr.height;
+    if (border) *border = attr.border_width;
+}
+
+void
+query_coordinates(Win *win, int *xpos, int *ypos)
+{
+    ASSERT(win);
+
+    Window dummy_;
+    int xpos_, ypos_;
+
+    XTranslateCoordinates(
+        server.dpy,
+        win->xid,
+        server.root,
+        0, 0,
+        &xpos_, &ypos_,
+        &dummy_
+    );
+
+    if (xpos) *xpos = xpos_;
+    if (ypos) *ypos = ypos_;
+}
+
 Win *
-platform_create_window(struct WinConfig config)
+window_create(struct WinConfig config)
 {
     if (!server.dpy) {
         if (!platform_setup()) {
@@ -241,9 +379,10 @@ platform_create_window(struct WinConfig config)
     const uint16 height     = 2 * config.border + config.rows * config.rowpx;
 
     Win *win = NULL;
-    for (uint i = 0; i < LEN(clients); i++) {
-        if (!clients[i].server) {
-            win = &clients[i];
+    for (uint i = 0; i < LEN(server.clients); i++) {
+        if (!server.clients[i].server) {
+            win = &server.clients[i];
+            memset(win, 0, sizeof(*win));
             win->server = &server;
             break;
         }
@@ -268,7 +407,7 @@ platform_create_window(struct WinConfig config)
             .background_pixel = 0xff00ff,
 #endif
             .colormap    = server.colormap,
-            .event_mask  = XW_EVENT_MASK,
+            .event_mask  = X11_EVENT_MASK,
             .bit_gravity = NorthWestGravity
         }
     );
@@ -364,7 +503,7 @@ platform_create_window(struct WinConfig config)
         if (win->ic) {
             uint64 filter = 0;
             if (!XGetICValues(win->ic, XNFilterEvents, &filter, NULL)) {
-                XSelectInput(server.dpy, win->xid, XW_EVENT_MASK|filter);
+                XSelectInput(server.dpy, win->xid, X11_EVENT_MASK|filter);
             }
         }
     }
@@ -375,8 +514,8 @@ platform_create_window(struct WinConfig config)
         win->gc = XCreateGC(server.dpy, server.root, GCGraphicsExposures, &gcvals);
     }
 
-    x11_query_dimensions(win, &win->width, &win->height, &win->border);
-    x11_query_coordinates(win, &win->xpos, &win->ypos);
+    query_dimensions(win, &win->width, &win->height, &win->border);
+    query_coordinates(win, &win->xpos, &win->ypos);
 
     win->param = config.param;
     win->callbacks.resize   = config.callbacks.resize;
@@ -431,52 +570,42 @@ window_destroy(Win *win)
     win->online = false;
 }
 
-void
-platform_shutdown()
+bool
+window_show(Win *win)
 {
-    window_make_current(NULL);
-    eglDestroyContext(server.egl.dpy, server.egl.context);
-    eglTerminate(server.egl.dpy);
-    XCloseDisplay(server.dpy);
-}
+    if (win->online) {
+        return true;
+    }
 
-float
-platform_get_dpi(void)
-{
-    return server.dpi;
-}
+    XMapWindow(server.dpy, win->xid);
+    XSync(server.dpy, False);
 
-int
-platform_events_pending(void)
-{
-    return XPending(server.dpy);
-}
+    struct pollfd pollset = { server.fd, POLLIN, 0 };
+    const int timeout = 100;
 
-int
-platform_get_fileno(void)
-{
-    return server.fd;
+    XEvent dummy_;
+    while (!XCheckTypedWindowEvent(server.dpy, win->xid, VisibilityNotify, &dummy_)) {
+        int result = 0;
+        if ((result = poll(&pollset, 1, timeout)) <= 0) {
+            if (result && errno) {
+                perror("poll()");
+            }
+            goto done;
+        } else if (pollset.revents & POLLHUP) {
+            goto done;
+        }
+    }
+
+    query_coordinates(win, &win->xpos, &win->ypos);
+    win->online = true;
+done:
+    return win->online;
 }
 
 bool
-platform_parse_color_string(const char *name, uint32 *result)
+window_online(const Win *win)
 {
-    XColor xcolor = { 0 };
-
-    if (!XParseColor(server.dpy, server.colormap, name, &xcolor)) {
-        return false;
-    }
-
-    if (result) {
-        *result = pack_argb(
-            xcolor.red   >> 8,
-            xcolor.green >> 8,
-            xcolor.blue  >> 8,
-            0x00
-        );
-    }
-
-    return true;
+    return win->online;
 }
 
 void
@@ -509,7 +638,7 @@ window_get_dimensions(const Win *win, int *width, int *height, int *border)
 }
 
 static void
-x11_set_utf8_property(Win *win,
+set_utf8_property(Win *win,
                       const char *str, size_t len,
                       int atom_id,
                       void (*func)(Display *, Window, XTextProperty *))
@@ -538,49 +667,17 @@ x11_set_utf8_property(Win *win,
 void
 window_set_title(Win *win, const char *str, size_t len)
 {
-    x11_set_utf8_property(win, str, len, _NET_WM_NAME, XSetWMName);
+    set_utf8_property(win, str, len, _NET_WM_NAME, XSetWMName);
 }
 
 void
 window_set_icon(Win *win, const char *str, size_t len)
 {
-    x11_set_utf8_property(win, str, len, _NET_WM_ICON_NAME, XSetWMIconName);
-}
-
-bool
-window_show(Win *win)
-{
-    if (win->online) {
-        return true;
-    }
-
-    XMapWindow(server.dpy, win->xid);
-    XSync(server.dpy, False);
-
-    struct pollfd pollset = { server.fd, POLLIN, 0 };
-    const int timeout = 100;
-
-    XEvent dummy_;
-    while (!XCheckTypedWindowEvent(server.dpy, win->xid, VisibilityNotify, &dummy_)) {
-        int result = 0;
-        if ((result = poll(&pollset, 1, timeout)) <= 0) {
-            if (result && errno) {
-                perror("poll()");
-            }
-            goto done;
-        } else if (pollset.revents & POLLHUP) {
-            goto done;
-        }
-    }
-
-    x11_query_coordinates(win, &win->xpos, &win->ypos);
-    win->online = true;
-done:
-    return win->online;
+    set_utf8_property(win, str, len, _NET_WM_ICON_NAME, XSetWMIconName);
 }
 
 int
-x11_translate_key(uint ksym, uint mask, int *id_, int *mod_)
+translate_key(uint ksym, uint mask, int *id_, int *mod_)
 {
     int id = KeyNone;
     int mod = ModNone;
@@ -697,64 +794,12 @@ window_poll_events(Win *win)
     for (; XPending(server.dpy); count++) {
         XEvent event = { 0 };
         XNextEvent(server.dpy, &event);
-        if (XFilterEvent(&event, None) || event.xany.window != win->xid) {
-            continue;
-        }
 
-        switch (event.type) {
-        case ConfigureNotify: {
-            XConfigureEvent *e = (void *)&event;
-            if (win->callbacks.resize) {
-                win->callbacks.resize(win->param, e->width, e->height);
+        if (!XFilterEvent(&event, None) && event.xany.window == win->xid) {
+            const struct X11Event entry = xevent_table[event.type];
+            if (entry.handler) {
+                entry.handler(&event, win, 0);
             }
-            win->width  = e->width;
-            win->height = e->height;
-            break;
-        }
-        case KeyPress: {
-            XKeyEvent *e = (void *)&event;
-            KeySym ksym;
-            struct {
-                int id;
-                int mod;
-                char buf[128];
-                int len;
-            } k;
-            char *buf = k.buf;
-
-            if (!win->ic) {
-                k.len = XLookupString(e, k.buf, LEN(k.buf) - 1, &ksym, NULL);
-            } else {
-                Status status;
-                for (int n = 0;; n++) {
-                    k.len = XmbLookupString(win->ic, e, k.buf, LEN(k.buf) - 1, &ksym, &status);
-                    if (status != XBufferOverflow) {
-                        break;
-                    }
-                    assert(!n);
-                    buf = xcalloc(k.len + 1, 1);
-                }
-            }
-
-            buf[k.len] = 0;
-            x11_translate_key(ksym, e->state, &k.id, &k.mod);
-
-            if (win->callbacks.keypress && k.id != KeyNone) {
-                win->callbacks.keypress(win->param, k.id, k.mod, buf, k.len);
-            }
-
-            if (buf != k.buf) free(buf);
-            break;
-        }
-        case ClientMessage: {
-            XClientMessageEvent *e = (void *)&event;
-            if ((Atom)e->data.l[0] == ATOM(WM_DELETE_WINDOW)) {
-                win->online = false;
-            }
-            break;
-        }
-        default:
-            break;
         }
     }
 
@@ -763,43 +808,69 @@ window_poll_events(Win *win)
     return count;
 }
 
-bool
-window_online(const Win *win)
+inline void
+xhandler_configure_notify(XEvent *event_, Win *win, uint32 time)
 {
-    return win->online;
+    UNUSED(time);
+    XConfigureEvent *event = &event_->xconfigure;
+
+    if (win->callbacks.resize) {
+        win->callbacks.resize(win->param, event->width, event->height);
+    }
+
+    win->width  = event->width;
+    win->height = event->height;
 }
 
-void
-x11_query_dimensions(Win *win, int *width, int *height, int *border)
+inline void
+xhandler_key_press(XEvent *event_, Win *win, uint32 time)
 {
-    ASSERT(win);
+    UNUSED(time);
+    XKeyEvent *event = &event_->xkey;
 
-    XWindowAttributes attr;
-    XGetWindowAttributes(server.dpy, win->xid, &attr);
+    char local[128] = { 0 };
+    char *data = local;
+    int max = LEN(local);
+    int len = 0;
+    KeySym keysym;
 
-    if (width)  *width  = attr.width;
-    if (height) *height = attr.height;
-    if (border) *border = attr.border_width;
+    if (!win->ic) {
+        len = XLookupString(event, data, max - 1, &keysym, NULL);
+    } else {
+        Status status;
+        for (;;) {
+            len = XmbLookupString(win->ic, event, data, max - 1, &keysym, &status);
+            if (status != XBufferOverflow) {
+                break;
+            } else if (data != local) { // paranoia
+                return;
+            } else {
+                max = len + 1;
+                data = xcalloc(max, 1);
+            }
+        }
+    }
+
+    int key, mod;
+    translate_key(keysym, event->state, &key, &mod);
+
+    if (win->callbacks.keypress && key != KeyNone) {
+        win->callbacks.keypress(win->param, key, mod, data, len);
+    }
+
+    if (data != local) {
+        free(data);
+    }
 }
 
-void
-x11_query_coordinates(Win *win, int *xpos, int *ypos)
+inline void
+xhandler_client_message(XEvent *event_, Win *win, uint32 time)
 {
-    ASSERT(win);
+    UNUSED(time);
+    XClientMessageEvent *event = &event_->xclient;
 
-    Window dummy_;
-    int xpos_, ypos_;
-
-    XTranslateCoordinates(
-        server.dpy,
-        win->xid,
-        server.root,
-        0, 0,
-        &xpos_, &ypos_,
-        &dummy_
-    );
-
-    if (xpos) *xpos = xpos_;
-    if (ypos) *ypos = ypos_;
+    if ((Atom)event->data.l[0] == ATOM(WM_DELETE_WINDOW)) {
+        win->online = false;
+    }
 }
 

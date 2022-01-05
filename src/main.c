@@ -194,7 +194,7 @@ error_invalid:
 
     fontset_get_metrics(app->fontset, &app->colpx, &app->rowpx, NULL, NULL);
 
-    Win *win = platform_create_window(
+    Win *win = window_create(
         (struct WinConfig){
             .param = app,
             .smooth_resize = false,
