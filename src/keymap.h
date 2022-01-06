@@ -19,6 +19,7 @@
 #define KEYS_H__
 
 #define KEYCODE_TABLE \
+    X_(None,        0)   \
     X_(Escape,      256) \
     X_(Return,      257) \
     X_(Tab,         258) \
@@ -90,14 +91,13 @@
     X_(KPEnd,       349)
 
 enum {
-    KeyNone = -1,
 #define X_(key,val) Key##key = val,
     KEYCODE_TABLE
 #undef  X_
     KeyCount
 };
 
-static char *keyname[] = {
+static const char *keycode_names[] = {
 #define X_(key,val) [Key##key] = #key,
     KEYCODE_TABLE
 #undef  X_
@@ -105,13 +105,28 @@ static char *keyname[] = {
 
 #undef KEYCODE_TABLE
 
-enum {
-    ModNone  = (0),
-    ModShift = (1 << 0),
-    ModAlt   = (1 << 1),
-    ModCtrl  = (1 << 2),
-    ModAny   = (1 << 3),
-    ModCount
+#define MOD_NONE  (0)
+#define MOD_SHIFT (1 << 0)
+#define MOD_ALT   (1 << 1)
+#define MOD_CTRL  (1 << 2)
+#define MOD_MASK  (MOD_CTRL|MOD_ALT|MOD_SHIFT)
+/* enum { */
+/*     ModNone  = (0), */
+/*     ModShift = (1 << 0), */
+/*     ModAlt   = (1 << 1), */
+/*     ModCtrl  = (1 << 2), */
+/*     ModCount */
+/* }; */
+
+static const char *modmask_names[] = {
+    [MOD_NONE]                   = "None",
+    [MOD_SHIFT]                  = "Shift",
+    [MOD_ALT]                    = "Alt",
+    [MOD_ALT|MOD_SHIFT]          = "AltShift",
+    [MOD_CTRL]                   = "Ctrl",
+    [MOD_CTRL|MOD_SHIFT]         = "CtrlShift",
+    [MOD_CTRL|MOD_ALT]           = "CtrlAlt",
+    [MOD_CTRL|MOD_ALT|MOD_SHIFT] = "CtrlAltShift"
 };
 
 #endif

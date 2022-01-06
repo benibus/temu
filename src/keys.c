@@ -133,9 +133,9 @@ term_make_key_string(const Term *term, uint key, uint mod, char *buf, size_t siz
 {
     UNUSED(term);
 
-    static_assert(ModCount <= 9, "Key modifier masks cannot exceed 8");
+    static_assert(MOD_MASK <= 8, "Key modifier masks cannot exceed 8");
 
-    if (key >= KeyCount || mod >= ModCount) {
+    if (key >= KeyCount || (mod & ~MOD_MASK)) {
         return 0;
     }
 
@@ -155,39 +155,23 @@ term_make_key_string(const Term *term, uint key, uint mod, char *buf, size_t siz
         case KeyReturn:
         case KeyKPEnter:
             switch (mod) {
-            case ModAlt:
-                str = ESC"\r";
-                break;
-            case ModCtrl:
-                str = CSI"27;5;13~";
-                break;
-            default:
-                str = "\r";
-                break;
+            case MOD_ALT:  str = ESC"\r";       break;
+            case MOD_CTRL: str = CSI"27;5;13~"; break;
+            default:       str = "\r";          break;
             }
             break;
         case KeyTab:
         case KeyKPTab:
             switch (mod) {
-            case ModAlt:
-                str = ESC"\t";
-                break;
-            case ModCtrl:
-                str = CSI"27;5;13~";
-                break;
-            default:
-                str = "\t";
-                break;
+            case MOD_ALT:  str = ESC"\t";       break;
+            case MOD_CTRL: str = CSI"27;5;13~"; break;
+            default:       str = "\t";          break;
             }
             break;
         case KeyBackspace:
             switch (mod) {
-            case ModAlt:
-                str = ESC"\177";
-                break;
-            default:
-                str = "\177";
-                break;
+            case MOD_ALT: str = ESC"\177"; break;
+            default:      str = "\177";    break;
             }
             break;
         }

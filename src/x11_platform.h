@@ -44,11 +44,7 @@ struct Win_ {
     int width;
     int height;
     int border;
-    struct {
-        EventFuncResize   resize;
-        EventFuncKeyPress keypress;
-        EventFuncExpose   expose;
-    } callbacks;
+    WinCallbacks callbacks;
 };
 
 struct Server_ {

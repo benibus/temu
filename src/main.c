@@ -63,8 +63,8 @@ typedef struct {
 
 static App app_;
 
-static void event_keypress(void *param, int key, int mod, char *buf, int len);
 static void event_resize(void *param, int width, int height);
+static void event_key_press(void *param, uint key, uint mod, const byte *data, int len);
 static void handler_set_title(void *param, const char *str, size_t len);
 static void handler_set_icon(void *param, const char *str, size_t len);
 static int run(App *app);
@@ -195,7 +195,7 @@ error_invalid:
     fontset_get_metrics(app->fontset, &app->colpx, &app->rowpx, NULL, NULL);
 
     Win *win = window_create(
-        (struct WinConfig){
+        (WinConfig){
             .param = app,
             .smooth_resize = false,
             .wm_instance = config.wm_instance,
@@ -206,9 +206,10 @@ error_invalid:
             .rowpx       = app->rowpx,
             .border      = config.border_px,
             .callbacks = {
-                .resize   = event_resize,
-                .keypress = event_keypress,
-                .expose   = NULL
+                .resize     = event_resize,
+                .key_press  = event_key_press,
+                /* .text_input = event_text_input, */
+                .expose     = NULL
             }
         }
     );
@@ -428,15 +429,12 @@ event_resize(void *param, int width, int height)
 }
 
 void
-event_keypress(void *param, int key, int mod, char *buf, int len)
+event_key_press(void *param, uint key, uint mod, const byte *data, int len)
 {
     App *const app = param;
 
-    char seq[64];
-    int seqlen = 0;
-
     switch (mod) {
-    case ModAlt:
+    case MOD_ALT:
         switch (key) {
         case KeyF9:
             term_print_history(app->term);
@@ -449,7 +447,7 @@ event_keypress(void *param, int key, int mod, char *buf, int len)
             return;
         }
         break;
-    case ModShift:
+    case MOD_SHIFT:
         switch (key) {
         case KeyPageUp:
             term_scroll(app->term, -app->term->rows);
@@ -463,11 +461,8 @@ event_keypress(void *param, int key, int mod, char *buf, int len)
         break;
     }
 
-    if ((seqlen = term_make_key_string(app->term, key, mod, seq, LEN(seq)))) {
-        term_push(app->term, seq, seqlen);
-    } else if (len == 1) {
+    if (term_push_input(app->term, key, mod, data, len)) {
         term_reset_scroll(app->term);
-        term_push(app->term, buf, len);
     }
 }
 

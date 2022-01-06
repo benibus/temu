@@ -23,11 +23,19 @@
 
 typedef struct Win_ Win;
 
-typedef void (*EventFuncResize)(void *, int, int);
-typedef void (*EventFuncKeyPress)(void *, int, int, char *, int);
-typedef void (*EventFuncExpose)(void *);
+typedef void (*WinFuncResize)(void *, int, int);
+typedef void (*WinFuncKeyPress)(void *, uint, uint, const byte *, int);
+typedef void (*WinFuncKeyRelease)(void *, uint, uint);
+typedef void (*WinFuncExpose)(void *);
 
-struct WinConfig {
+typedef struct {
+    WinFuncResize     resize;
+    WinFuncKeyPress   key_press;
+    WinFuncKeyRelease key_release;
+    WinFuncExpose     expose;
+} WinCallbacks;
+
+typedef struct {
     void *param;
     char *wm_title;
     char *wm_instance;
@@ -38,12 +46,8 @@ struct WinConfig {
     uint16 rowpx;
     uint16 border;
     bool smooth_resize;
-    struct {
-        EventFuncResize resize;
-        EventFuncKeyPress keypress;
-        EventFuncExpose expose;
-    } callbacks;
-};
+    WinCallbacks callbacks;
+} WinConfig;
 
 bool  platform_setup(void);
 void  platform_shutdown(void);
@@ -52,7 +56,7 @@ int   platform_get_fileno(void);
 bool  platform_parse_color_string(const char *name, uint32 *color);
 int   platform_events_pending(void);
 
-Win*  window_create(struct WinConfig config);
+Win*  window_create(WinConfig config);
 void  window_destroy(Win *win);
 bool  window_online(const Win *win);
 void  window_get_dimensions(const Win *win, int *width, int *height, int *border);

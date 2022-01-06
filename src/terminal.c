@@ -246,9 +246,24 @@ term_generate_frame(Term *term)
 }
 
 size_t
-term_push(Term *term, const char *str, size_t len)
+term_push(Term *term, const void *data, size_t len)
 {
-    return pty_write(term->mfd, (const byte *)str, len);
+    return pty_write(term->mfd, data, len);
+}
+
+size_t
+term_push_input(Term *term, uint key, uint mod, const byte *data, size_t len)
+{
+    char escbuf[64];
+    const int esclen = term_make_key_string(term, key, mod, escbuf, LEN(escbuf));
+
+    if (esclen) {
+        return term_push(term, escbuf, esclen);
+    } else if (len) {
+        return term_push(term, data, len);
+    }
+
+    return 0;
 }
 
 size_t
@@ -1518,7 +1533,7 @@ emu_csi_dsr(Term *term, const int *argv, int argc)
     ASSERT(len < (int)sizeof(str));
 
     if (len > 0) {
-        term_push(term, str, len);
+        term_push(term, (byte *)str, len);
     }
 }
 

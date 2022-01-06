@@ -359,7 +359,7 @@ query_coordinates(Win *win, int *xpos, int *ypos)
 }
 
 Win *
-window_create(struct WinConfig config)
+window_create(WinConfig config)
 {
     if (!server.dpy) {
         if (!platform_setup()) {
@@ -518,9 +518,7 @@ window_create(struct WinConfig config)
     query_coordinates(win, &win->xpos, &win->ypos);
 
     win->param = config.param;
-    win->callbacks.resize   = config.callbacks.resize;
-    win->callbacks.keypress = config.callbacks.keypress;
-    win->callbacks.expose   = config.callbacks.expose;
+    win->callbacks = config.callbacks;
 
     // OpenGL surface initialization
     win->surface = eglCreateWindowSurface(
@@ -676,108 +674,97 @@ window_set_icon(Win *win, const char *str, size_t len)
     set_utf8_property(win, str, len, _NET_WM_ICON_NAME, XSetWMIconName);
 }
 
-int
-translate_key(uint ksym, uint mask, int *id_, int *mod_)
+static uint convert_mod(uint);
+static uint convert_key(uint);
+
+uint
+convert_mod(uint xmod)
 {
-    int id = KeyNone;
-    int mod = ModNone;
+    uint mod = 0;
+    mod |= (xmod & ShiftMask)   ? MOD_SHIFT : 0;
+    mod |= (xmod & Mod1Mask)    ? MOD_ALT   : 0;
+    mod |= (xmod & ControlMask) ? MOD_CTRL  : 0;
 
-    // X11's printable Latin range (keysymdef.h)
-    if ((ksym > 0x01f && ksym < 0x07f) ||
-        (ksym > 0x09f && ksym < 0x100)) {
-        id = ksym;
-    } else if (ksym & 0x100) {
-#define SETKEY(k1,k2) case (k1): { id = (k2); }; break
-        switch (ksym) {
-        SETKEY(XK_Escape,       KeyEscape);
-        SETKEY(XK_Return,       KeyReturn);
-        SETKEY(XK_Tab,          KeyTab);
-        SETKEY(XK_BackSpace,    KeyBackspace);
-        SETKEY(XK_Insert,       KeyInsert);
-        SETKEY(XK_Delete,       KeyDelete);
-        SETKEY(XK_Right,        KeyRight);
-        SETKEY(XK_Left,         KeyLeft);
-        SETKEY(XK_Down,         KeyDown);
-        SETKEY(XK_Up,           KeyUp);
-        SETKEY(XK_Page_Up,      KeyPageUp);
-        SETKEY(XK_Page_Down,    KeyPageDown);
-        SETKEY(XK_Home,         KeyHome);
-        SETKEY(XK_End,          KeyEnd);
+    return mod;
+}
 
-        SETKEY(XK_F1,           KeyF1);
-        SETKEY(XK_F2,           KeyF2);
-        SETKEY(XK_F3,           KeyF3);
-        SETKEY(XK_F4,           KeyF4);
-        SETKEY(XK_F5,           KeyF5);
-        SETKEY(XK_F6,           KeyF6);
-        SETKEY(XK_F7,           KeyF7);
-        SETKEY(XK_F8,           KeyF8);
-        SETKEY(XK_F9,           KeyF9);
-        SETKEY(XK_F10,          KeyF10);
-        SETKEY(XK_F11,          KeyF11);
-        SETKEY(XK_F12,          KeyF12);
-        SETKEY(XK_F13,          KeyF13);
-        SETKEY(XK_F14,          KeyF14);
-        SETKEY(XK_F15,          KeyF15);
-        SETKEY(XK_F16,          KeyF16);
-        SETKEY(XK_F17,          KeyF17);
-        SETKEY(XK_F18,          KeyF18);
-        SETKEY(XK_F19,          KeyF19);
-        SETKEY(XK_F20,          KeyF20);
-        SETKEY(XK_F21,          KeyF21);
-        SETKEY(XK_F22,          KeyF22);
-        SETKEY(XK_F23,          KeyF23);
-        SETKEY(XK_F24,          KeyF24);
-        SETKEY(XK_F25,          KeyF25);
-
-        SETKEY(XK_KP_0,         KeyKP0);
-        SETKEY(XK_KP_1,         KeyKP1);
-        SETKEY(XK_KP_2,         KeyKP2);
-        SETKEY(XK_KP_3,         KeyKP3);
-        SETKEY(XK_KP_4,         KeyKP4);
-        SETKEY(XK_KP_5,         KeyKP5);
-        SETKEY(XK_KP_6,         KeyKP6);
-        SETKEY(XK_KP_7,         KeyKP7);
-        SETKEY(XK_KP_8,         KeyKP8);
-        SETKEY(XK_KP_9,         KeyKP9);
-
-        SETKEY(XK_KP_Decimal,   KeyKPDecimal);
-        SETKEY(XK_KP_Divide,    KeyKPDivide);
-        SETKEY(XK_KP_Multiply,  KeyKPMultiply);
-        SETKEY(XK_KP_Subtract,  KeyKPSubtract);
-        SETKEY(XK_KP_Add,       KeyKPAdd);
-        SETKEY(XK_KP_Enter,     KeyKPEnter);
-        SETKEY(XK_KP_Equal,     KeyKPEqual);
-        SETKEY(XK_KP_Tab,       KeyKPTab);
-        SETKEY(XK_KP_Space,     KeyKPSpace);
-        SETKEY(XK_KP_Insert,    KeyKPInsert);
-        SETKEY(XK_KP_Delete,    KeyKPDelete);
-        SETKEY(XK_KP_Right,     KeyKPRight);
-        SETKEY(XK_KP_Left,      KeyKPLeft);
-        SETKEY(XK_KP_Down,      KeyKPDown);
-        SETKEY(XK_KP_Up,        KeyKPUp);
-        SETKEY(XK_KP_Page_Up,   KeyKPPageUp);
-        SETKEY(XK_KP_Page_Down, KeyKPPageDown);
-        SETKEY(XK_KP_Home,      KeyKPHome);
-        SETKEY(XK_KP_End,       KeyKPEnd);
-
-        default: goto done;
+uint
+convert_key(uint xkey)
+{
+    if ((xkey & 0xff00) && !(xkey & ~0xffff)) {
+        switch (xkey) {
+        case XK_Escape:       return KeyEscape;
+        case XK_Return:       return KeyReturn;
+        case XK_Tab:          return KeyTab;
+        case XK_BackSpace:    return KeyBackspace;
+        case XK_Insert:       return KeyInsert;
+        case XK_Delete:       return KeyDelete;
+        case XK_Right:        return KeyRight;
+        case XK_Left:         return KeyLeft;
+        case XK_Down:         return KeyDown;
+        case XK_Up:           return KeyUp;
+        case XK_Page_Up:      return KeyPageUp;
+        case XK_Page_Down:    return KeyPageDown;
+        case XK_Home:         return KeyHome;
+        case XK_End:          return KeyEnd;
+        case XK_F1:           return KeyF1;
+        case XK_F2:           return KeyF2;
+        case XK_F3:           return KeyF3;
+        case XK_F4:           return KeyF4;
+        case XK_F5:           return KeyF5;
+        case XK_F6:           return KeyF6;
+        case XK_F7:           return KeyF7;
+        case XK_F8:           return KeyF8;
+        case XK_F9:           return KeyF9;
+        case XK_F10:          return KeyF10;
+        case XK_F11:          return KeyF11;
+        case XK_F12:          return KeyF12;
+        case XK_F13:          return KeyF13;
+        case XK_F14:          return KeyF14;
+        case XK_F15:          return KeyF15;
+        case XK_F16:          return KeyF16;
+        case XK_F17:          return KeyF17;
+        case XK_F18:          return KeyF18;
+        case XK_F19:          return KeyF19;
+        case XK_F20:          return KeyF20;
+        case XK_F21:          return KeyF21;
+        case XK_F22:          return KeyF22;
+        case XK_F23:          return KeyF23;
+        case XK_F24:          return KeyF24;
+        case XK_F25:          return KeyF25;
+        case XK_KP_0:         return KeyKP0;
+        case XK_KP_1:         return KeyKP1;
+        case XK_KP_2:         return KeyKP2;
+        case XK_KP_3:         return KeyKP3;
+        case XK_KP_4:         return KeyKP4;
+        case XK_KP_5:         return KeyKP5;
+        case XK_KP_6:         return KeyKP6;
+        case XK_KP_7:         return KeyKP7;
+        case XK_KP_8:         return KeyKP8;
+        case XK_KP_9:         return KeyKP9;
+        case XK_KP_Decimal:   return KeyKPDecimal;
+        case XK_KP_Divide:    return KeyKPDivide;
+        case XK_KP_Multiply:  return KeyKPMultiply;
+        case XK_KP_Subtract:  return KeyKPSubtract;
+        case XK_KP_Add:       return KeyKPAdd;
+        case XK_KP_Enter:     return KeyKPEnter;
+        case XK_KP_Equal:     return KeyKPEqual;
+        case XK_KP_Tab:       return KeyKPTab;
+        case XK_KP_Space:     return KeyKPSpace;
+        case XK_KP_Insert:    return KeyKPInsert;
+        case XK_KP_Delete:    return KeyKPDelete;
+        case XK_KP_Right:     return KeyKPRight;
+        case XK_KP_Left:      return KeyKPLeft;
+        case XK_KP_Down:      return KeyKPDown;
+        case XK_KP_Up:        return KeyKPUp;
+        case XK_KP_Page_Up:   return KeyKPPageUp;
+        case XK_KP_Page_Down: return KeyKPPageDown;
+        case XK_KP_Home:      return KeyKPHome;
+        case XK_KP_End:       return KeyKPEnd;
         }
-#undef  SETKEY
-
-        mod |= (mask & ShiftMask) ? ModShift : 0;
     }
 
-done:
-    if (id >= 0) {
-        mod |= (mask & Mod1Mask)    ? ModAlt  : 0;
-        mod |= (mask & ControlMask) ? ModCtrl : 0;
-    }
-
-    *id_  = id;
-    *mod_ = mod;
-
-    return id;
+    return 0;
 }
 
 int
@@ -828,18 +815,18 @@ xhandler_key_press(XEvent *event_, Win *win, uint32 time)
     UNUSED(time);
     XKeyEvent *event = &event_->xkey;
 
-    char local[128] = { 0 };
-    char *data = local;
+    byte local[128] = { 0 };
+    byte *data = local;
     int max = LEN(local);
     int len = 0;
-    KeySym keysym;
+    KeySym xkey;
 
     if (!win->ic) {
-        len = XLookupString(event, data, max - 1, &keysym, NULL);
+        len = XLookupString(event, (char *)data, max - 1, &xkey, NULL);
     } else {
         Status status;
         for (;;) {
-            len = XmbLookupString(win->ic, event, data, max - 1, &keysym, &status);
+            len = XmbLookupString(win->ic, event, (char *)data, max - 1, &xkey, &status);
             if (status != XBufferOverflow) {
                 break;
             } else if (data != local) { // paranoia
@@ -851,11 +838,13 @@ xhandler_key_press(XEvent *event_, Win *win, uint32 time)
         }
     }
 
-    int key, mod;
-    translate_key(keysym, event->state, &key, &mod);
+    const uint key = convert_key(xkey);
+    const uint mod = convert_mod(event->state);
 
-    if (win->callbacks.keypress && key != KeyNone) {
-        win->callbacks.keypress(win->param, key, mod, data, len);
+    if (key || mod || len) {
+        if (win->callbacks.key_press) {
+            win->callbacks.key_press(win->param, key, mod, data, len);
+        }
     }
 
     if (data != local) {
