@@ -64,7 +64,7 @@ typedef struct {
 static App app_;
 
 static void event_resize(void *param, int width, int height);
-static void event_key_press(void *param, uint key, uint mods, const byte *text, int len);
+static void event_key_press(void *param, uint key, uint mods, const uchar *text, int len);
 static void handler_set_title(void *param, const char *str, size_t len);
 static void handler_set_icon(void *param, const char *str, size_t len);
 static int run(App *app);
@@ -429,7 +429,7 @@ event_resize(void *param, int width, int height)
 }
 
 void
-event_key_press(void *param, uint key, uint mods, const byte *text, int len)
+event_key_press(void *param, uint key, uint mods, const uchar *text, int len)
 {
     App *const app = param;
 

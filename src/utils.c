@@ -350,8 +350,8 @@ memshift(void *base, ptrdiff_t shift, size_t count, size_t stride)
         return base;
     stride = DEFAULT(stride, 1);
 
-    byte *p1 = (byte *)base;
-    byte *p2 = p1 + (shift * (ptrdiff_t)stride);
+    uchar *p1 = (uchar *)base;
+    uchar *p2 = p1 + (shift * (ptrdiff_t)stride);
 
     return memmove(p2, p1, count * stride);
 }
@@ -366,9 +366,9 @@ memcshift(void *base, ptrdiff_t shift, size_t count, size_t stride)
     ptrdiff_t offset = shift * (ptrdiff_t)stride;
     size_t bytes = count * stride;
 
-    byte *p1 = (byte *)base;
-    byte *p2 = p1 + offset;
-    byte *vacant = (offset < 0) ? p2 + bytes : p1;
+    uchar *p1 = (uchar *)base;
+    uchar *p2 = p1 + offset;
+    uchar *vacant = (offset < 0) ? p2 + bytes : p1;
 
     void *res = memmove(p2, p1, bytes);
     if (res != NULL) {

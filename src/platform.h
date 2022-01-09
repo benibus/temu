@@ -24,7 +24,7 @@
 typedef struct Win_ Win;
 
 typedef void (*WinFuncResize)(void *, int, int);
-typedef void (*WinFuncKeyPress)(void *, uint, uint, const byte *, int);
+typedef void (*WinFuncKeyPress)(void *, uint, uint, const uchar *, int);
 typedef void (*WinFuncKeyRelease)(void *, uint, uint);
 typedef void (*WinFuncExpose)(void *);
 

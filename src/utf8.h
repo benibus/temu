@@ -70,20 +70,20 @@ static const uint8 utf8_lut256_cont[256] = {
 };
 
 static inline uint8
-utf8_check_first(byte c)
+utf8_check_first(uchar c)
 {
     return utf8_lut256_lead[c];
 }
 
 static inline uint8
-utf8_check_cont(byte c)
+utf8_check_cont(uchar c)
 {
     return utf8_lut256_cont[c];
 }
 
 // returns the expected codepoint size based on the leading byte
 static inline uint8
-utf8_get_size(byte c)
+utf8_get_size(uchar c)
 {
     static const uint8 size_table[32] = {
         1, 1, 1, 1, 1, 1, 1, 1,

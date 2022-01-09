@@ -34,7 +34,7 @@ typedef struct {
 } Line;
 
 struct Ring {
-    byte *data;
+    uchar *data;
     int base;
     int head;
     int max;
@@ -113,7 +113,7 @@ ring_set_dimensions(Ring *ring, int cols, int rows)
     if (cols != ring->cols || rows > ring->max) {
         ring->max = MAX(ring->max, rows);
 
-        byte *data = xcalloc(LINESIZE(cols) * (ring->max + 1), 1);
+        uchar *data = xcalloc(LINESIZE(cols) * (ring->max + 1), 1);
         const int count = ring_histlines(ring) + ring->rows;
 
         for (int n = 0; n < count; n++) {

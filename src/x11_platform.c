@@ -169,7 +169,7 @@ platform_setup(void)
     {
         INTERN_ATOM(_NET_SUPPORTED);
 
-        byte *supported;
+        uchar *supported;
         {
             Atom type_;
             int format_;
@@ -435,7 +435,7 @@ window_create(WinConfig config)
             XA_CARDINAL,
             32,
             PropModeReplace,
-            (byte *)&win->pid, 1
+            (uchar *)&win->pid, 1
         );
     }
 
@@ -834,8 +834,8 @@ xhandler_key_press(XEvent *event_, Win *win, uint32 time)
     UNUSED(time);
     XKeyEvent *event = &event_->xkey;
 
-    byte local[128] = { 0 };
-    byte *text = local;
+    uchar local[128] = { 0 };
+    uchar *text = local;
     int len = 0;
     KeySym xkey;
 

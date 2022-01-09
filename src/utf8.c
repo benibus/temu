@@ -21,7 +21,7 @@
 uint8
 utf8_decode(const void *data, size_t max, uint32 *res, uint *err)
 {
-    const byte *s = data;
+    const uchar *s = data;
     uint8 size = utf8_get_size(s[0]);
     uint8 n = 0, mask = 0x00;
     uint32 c = '\0';

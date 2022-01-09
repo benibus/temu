@@ -169,7 +169,7 @@ query_substitute(uint key, uint mods, uint flags)
 #undef P
 
 static size_t
-parse_sequence(const char *restrict str, uint mods, byte *restrict buf, size_t max)
+parse_sequence(const char *restrict str, uint mods, uchar *restrict buf, size_t max)
 {
     if (!str || !buf) {
         return 0;
@@ -204,7 +204,7 @@ parse_sequence(const char *restrict str, uint mods, byte *restrict buf, size_t m
 }
 
 size_t
-term_push_input(Term *term, uint key, uint mods, const byte *text, size_t len)
+term_push_input(Term *term, uint key, uint mods, const uchar *text, size_t len)
 {
     static_assert(PARAM_MASK <= 8, "Key modifier masks cannot exceed 8");
     ASSERT(key < KeyCount);
@@ -215,14 +215,14 @@ term_push_input(Term *term, uint key, uint mods, const byte *text, size_t len)
 
     // Handle pre-defined sequence
     if (subst) {
-        byte buf[KEYBUF_MAX] = { 0 };
+        uchar buf[KEYBUF_MAX] = { 0 };
         const size_t n = parse_sequence(subst, mods, buf, sizeof(buf));
         if (n && n <= sizeof(buf)) {
             return term_push(term, buf, n);
         }
     // Fall back to the raw input (either standard text or an unknown function key)
     } else if (len == 1 && (mods & KEYMOD_ALT)) {
-        return term_push(term, (byte [2]){ '\x1b', text[0] }, 2);
+        return term_push(term, (uchar [2]){ '\x1b', text[0] }, 2);
     } else if (len) {
         return term_push(term, text, len);
     }

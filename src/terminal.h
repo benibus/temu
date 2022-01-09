@@ -39,7 +39,7 @@ typedef struct {
     int pid;                // PTY PID
     int mfd;                // PTY master file descriptor
     int sfd;                // PTY slave file descriptor
-    byte input[IOBUF_MAX]; // PTY input buffer
+    uchar input[IOBUF_MAX]; // PTY input buffer
 
     Ring *ring;
     Ring *ring_prim;
@@ -74,14 +74,14 @@ typedef struct {
     uint32 colors[16];
 
     struct Parser {
-        uint state;     // Current FSM state
-        uint32 ucs4;    // Current codepoint being decoded
-        byte *data;     // Dynamic buffer for OSC/DCS/APC string sequences
-        byte tokens[2]; // Stashed intermediate tokens
-        int depth;      // Intermediate token index
-        int argv[16];   // Numeric parameters
-        int argi;       // Numeric parameter index
-        bool overflow;  // Numeric paramater overflowed
+        uint state;      // Current FSM state
+        uint32 ucs4;     // Current codepoint being decoded
+        uchar *data;     // Dynamic buffer for OSC/DCS/APC string sequences
+        uchar tokens[2]; // Stashed intermediate tokens
+        int depth;       // Intermediate token index
+        int argv[16];    // Numeric parameters
+        int argi;        // Numeric parameter index
+        bool overflow;   // Numeric paramater overflowed
     } parser;
 
     void *param;
@@ -98,8 +98,8 @@ bool term_init(Term *, struct TermConfig);
 int term_exec(Term *, const char *);
 size_t term_pull(Term *, uint32);
 size_t term_push(Term *, const void *, size_t);
-size_t term_push_input(Term *term, uint key, uint mod, const byte *text, size_t len);
-size_t term_consume(Term *, const byte *, size_t);
+size_t term_push_input(Term *term, uint key, uint mod, const uchar *text, size_t len);
+size_t term_consume(Term *, const uchar *, size_t);
 void term_scroll(Term *, int);
 void term_reset_scroll(Term *);
 void term_resize(Term *, int, int);
