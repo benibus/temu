@@ -112,7 +112,9 @@ static Server server;
 
 static void query_dimensions(Win *, int *, int *, int *);
 static void query_coordinates(Win *, int *, int *);
-static int translate_key(uint, uint, int *, int *);
+static bool is_literal_ascii(KeySym);
+static uint convert_keysym(KeySym);
+static uint convert_modmask(uint);
 
 bool
 platform_setup(void)
@@ -674,28 +676,52 @@ window_set_icon(Win *win, const char *str, size_t len)
     set_utf8_property(win, str, len, _NET_WM_ICON_NAME, XSetWMIconName);
 }
 
-static uint convert_mod(uint);
-static uint convert_key(uint);
-
-uint
-convert_mod(uint xmod)
+int
+window_poll_events(Win *win)
 {
-    uint mod = 0;
-    mod |= (xmod & ShiftMask)   ? MOD_SHIFT : 0;
-    mod |= (xmod & Mod1Mask)    ? MOD_ALT   : 0;
-    mod |= (xmod & ControlMask) ? MOD_CTRL  : 0;
+    ASSERT(win);
 
-    return mod;
+    if (!win->online) {
+        return 0;
+    }
+
+    int count = 0;
+
+    for (; XPending(server.dpy); count++) {
+        XEvent event = { 0 };
+        XNextEvent(server.dpy, &event);
+
+        if (!XFilterEvent(&event, None) && event.xany.window == win->xid) {
+            const struct X11Event entry = xevent_table[event.type];
+            if (entry.handler) {
+                entry.handler(&event, win, 0);
+            }
+        }
+    }
+
+    XFlush(server.dpy);
+
+    return count;
+}
+
+inline bool
+is_literal_ascii(KeySym xkey)
+{
+    return ((xkey >= 0x20 && xkey <= 0x7e) || (xkey >= 0xa0 && xkey <= 0xff));
 }
 
 uint
-convert_key(uint xkey)
+convert_keysym(KeySym xkey)
 {
-    if ((xkey & 0xff00) && !(xkey & ~0xffff)) {
+    if (is_literal_ascii(xkey)) {
+        return xkey;
+    } else if ((xkey >> 8) == 0xff) {
+        // Recognized function keys
         switch (xkey) {
         case XK_Escape:       return KeyEscape;
         case XK_Return:       return KeyReturn;
         case XK_Tab:          return KeyTab;
+        case XK_ISO_Left_Tab: return KeyTab;
         case XK_BackSpace:    return KeyBackspace;
         case XK_Insert:       return KeyInsert;
         case XK_Delete:       return KeyDelete;
@@ -703,9 +729,10 @@ convert_key(uint xkey)
         case XK_Left:         return KeyLeft;
         case XK_Down:         return KeyDown;
         case XK_Up:           return KeyUp;
-        case XK_Page_Up:      return KeyPageUp;
-        case XK_Page_Down:    return KeyPageDown;
+        case XK_Page_Up:      return KeyPgUp;
+        case XK_Page_Down:    return KeyPgDown;
         case XK_Home:         return KeyHome;
+        case XK_Begin:        return KeyBegin;
         case XK_End:          return KeyEnd;
         case XK_F1:           return KeyF1;
         case XK_F2:           return KeyF2;
@@ -757,42 +784,34 @@ convert_key(uint xkey)
         case XK_KP_Left:      return KeyKPLeft;
         case XK_KP_Down:      return KeyKPDown;
         case XK_KP_Up:        return KeyKPUp;
-        case XK_KP_Page_Up:   return KeyKPPageUp;
-        case XK_KP_Page_Down: return KeyKPPageDown;
+        case XK_KP_Page_Up:   return KeyKPPgUp;
+        case XK_KP_Page_Down: return KeyKPPgDown;
         case XK_KP_Home:      return KeyKPHome;
+        case XK_KP_Begin:     return KeyKPBegin;
         case XK_KP_End:       return KeyKPEnd;
+        }
+    } else if ((xkey >> 16) == 0x1008) {
+        // Commonly confused multimedia keys
+        switch (xkey) {
+        case XF86XK_Back:    return KeyPgUp;
+        case XF86XK_Forward: return KeyPgDown;
         }
     }
 
     return 0;
 }
 
-int
-window_poll_events(Win *win)
+uint
+convert_modmask(uint xmods)
 {
-    ASSERT(win);
+    uint mods = 0;
 
-    if (!win->online) {
-        return 0;
-    }
+    mods |= (xmods & ShiftMask)   ? KEYMOD_SHIFT : 0;
+    mods |= (xmods & Mod1Mask)    ? KEYMOD_ALT   : 0;
+    mods |= (xmods & ControlMask) ? KEYMOD_CTRL  : 0;
+    mods |= (xmods & Mod2Mask)    ? KEYMOD_NUMLK : 0;
 
-    int count = 0;
-
-    for (; XPending(server.dpy); count++) {
-        XEvent event = { 0 };
-        XNextEvent(server.dpy, &event);
-
-        if (!XFilterEvent(&event, None) && event.xany.window == win->xid) {
-            const struct X11Event entry = xevent_table[event.type];
-            if (entry.handler) {
-                entry.handler(&event, win, 0);
-            }
-        }
-    }
-
-    XFlush(server.dpy);
-
-    return count;
+    return mods;
 }
 
 inline void
@@ -816,39 +835,32 @@ xhandler_key_press(XEvent *event_, Win *win, uint32 time)
     XKeyEvent *event = &event_->xkey;
 
     byte local[128] = { 0 };
-    byte *data = local;
-    int max = LEN(local);
+    byte *text = local;
     int len = 0;
     KeySym xkey;
 
     if (!win->ic) {
-        len = XLookupString(event, (char *)data, max - 1, &xkey, NULL);
+        len = XLookupString(event, (char *)text, sizeof(local) - 1, &xkey, NULL);
     } else {
         Status status;
-        for (;;) {
-            len = XmbLookupString(win->ic, event, (char *)data, max - 1, &xkey, &status);
-            if (status != XBufferOverflow) {
-                break;
-            } else if (data != local) { // paranoia
-                return;
-            } else {
-                max = len + 1;
-                data = xcalloc(max, 1);
-            }
+        len = XmbLookupString(win->ic, event, (char *)text, sizeof(local) - 1, &xkey, &status);
+        if (status == XBufferOverflow) {
+            text = xcalloc(len + 1, sizeof(*text));
+            len = XmbLookupString(win->ic, event, (char *)text, len, &xkey, &status);
         }
     }
 
-    const uint key = convert_key(xkey);
-    const uint mod = convert_mod(event->state);
+    const uint key = convert_keysym(xkey);
+    const uint mods = convert_modmask(event->state);
 
-    if (key || mod || len) {
+    if (key || mods || len) {
         if (win->callbacks.key_press) {
-            win->callbacks.key_press(win->param, key, mod, data, len);
+            win->callbacks.key_press(win->param, key, mods, text, len);
         }
     }
 
-    if (data != local) {
-        free(data);
+    if (text != local) {
+        free(text);
     }
 }
 

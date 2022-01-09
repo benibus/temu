@@ -98,7 +98,7 @@ bool term_init(Term *, struct TermConfig);
 int term_exec(Term *, const char *);
 size_t term_pull(Term *, uint32);
 size_t term_push(Term *, const void *, size_t);
-size_t term_push_input(Term *term, uint key, uint mod, const byte *data, size_t len);
+size_t term_push_input(Term *term, uint key, uint mod, const byte *text, size_t len);
 size_t term_consume(Term *, const byte *, size_t);
 void term_scroll(Term *, int);
 void term_reset_scroll(Term *);

@@ -17,6 +17,7 @@
 
 #include "utils.h"
 #include "terminal.h"
+#include "keymap.h"
 #include "pty.h"
 #include "fsm.h"
 #include "ring.h"
@@ -249,21 +250,6 @@ size_t
 term_push(Term *term, const void *data, size_t len)
 {
     return pty_write(term->mfd, data, len);
-}
-
-size_t
-term_push_input(Term *term, uint key, uint mod, const byte *data, size_t len)
-{
-    char escbuf[64];
-    const int esclen = term_make_key_string(term, key, mod, escbuf, LEN(escbuf));
-
-    if (esclen) {
-        return term_push(term, escbuf, esclen);
-    } else if (len) {
-        return term_push(term, data, len);
-    }
-
-    return 0;
 }
 
 size_t

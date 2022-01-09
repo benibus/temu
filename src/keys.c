@@ -15,6 +15,8 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  *------------------------------------------------------------------------------*/
 
+#include <ctype.h>
+
 #include "utils.h"
 #include "terminal.h"
 #include "keymap.h"
@@ -22,179 +24,211 @@
 // temporary
 #define MODE_APPKEYPAD 0
 #define MODE_APPCURSOR 0
-#define MODE_NUMLOCK 0
 
-#define ESC "\033"
+#define PARAM_MASK (KEYMOD_SHIFT|KEYMOD_ALT|KEYMOD_CTRL)
+#define KEYBUF_MAX 128
+
+static inline uint8
+mods_to_param(uint mods)
+{
+    return (mods &= PARAM_MASK) ? mods + 1 : 0;
+}
+
+#if 0
+static inline bool
+resolve_shift(uint mods)
+{
+    const bool shift = (mods & KEYMOD_SHIFT);
+    const bool numlk = (mods & KEYMOD_NUMLK);
+
+    return (numlk) ? shift : !shift;
+}
+#endif
+
+static bool
+resolve_appkeypad(uint mods, uint flags)
+{
+    const bool shift = (mods & KEYMOD_SHIFT);
+    const bool numlk = (mods & KEYMOD_NUMLK);
+
+    return !numlk && (flags & MODE_APPKEYPAD) ? !shift : shift;
+}
+
+static uint
+remap_keypad(uint key, bool appkp)
+{
+    switch (key) {
+    case KeyKPUp:     return (appkp) ? KeyKP8 : KeyUp;
+    case KeyKPDown:   return (appkp) ? KeyKP2 : KeyDown;
+    case KeyKPRight:  return (appkp) ? KeyKP6 : KeyRight;
+    case KeyKPLeft:   return (appkp) ? KeyKP4 : KeyLeft;
+    case KeyKPBegin:  return (appkp) ? KeyKP5 : KeyBegin;
+    case KeyKPEnd:    return (appkp) ? KeyKP1 : KeyEnd;
+    case KeyKPHome:   return (appkp) ? KeyKP7 : KeyHome;
+    case KeyKPInsert: return (appkp) ? KeyKP0 : KeyInsert;
+    case KeyKPDelete: return (appkp) ? KeyKPDecimal : KeyDelete;
+    case KeyKPPgUp:   return (appkp) ? KeyKP9 : KeyPgUp;
+    case KeyKPPgDown: return (appkp) ? KeyKP3 : KeyPgDown;
+    case KeyKPTab:    return (appkp) ? key : KeyTab;
+    case KeyKPEnter:  return (appkp) ? key : KeyReturn;
+    case KeyKPSpace:  return (appkp) ? key : ' ';
+    case KeyKPEqual:  return (appkp) ? key : '=';
+    }
+
+    return key;
+}
+
+#define ESC "\x1b"
 #define CSI ESC"["
 #define SS3 ESC"O"
 
-typedef struct KeyString {
-    char *prefix[2];
-    char *suffix;
-} KeyString;
+#define PARAM_BYTE '\1'
+#define P "\1" /* Expands to parameters in post-processing */
 
-static KeyString keys_normal[KeyCount] = {
-    [KeyUp]          = { { CSI,     CSI"1" }, "A" },
-    [KeyDown]        = { { CSI,     CSI"1" }, "B" },
-    [KeyRight]       = { { CSI,     CSI"1" }, "C" },
-    [KeyLeft]        = { { CSI,     CSI"1" }, "D" },
-    [KeyEnd]         = { { CSI,     CSI"1" }, "F" },
-    [KeyHome]        = { { CSI,     CSI"1" }, "H" },
-    [KeyInsert]      = { { CSI"2",  NULL   }, "~" },
-    [KeyDelete]      = { { CSI"3",  NULL   }, "~" },
-    [KeyPageUp]      = { { CSI"5",  NULL   }, "~" },
-    [KeyPageDown]    = { { CSI"6",  NULL   }, "~" },
-
-    [KeyKPUp]        = { { CSI,     CSI"1" }, "A" },
-    [KeyKPDown]      = { { CSI,     CSI"1" }, "B" },
-    [KeyKPRight]     = { { CSI,     CSI"1" }, "C" },
-    [KeyKPLeft]      = { { CSI,     CSI"1" }, "D" },
-    [KeyKPEnd]       = { { CSI,     CSI"1" }, "F" },
-    [KeyKPHome]      = { { CSI,     CSI"1" }, "H" },
-    [KeyKPInsert]    = { { CSI"2",  NULL   }, "~" },
-    [KeyKPDelete]    = { { CSI"3",  NULL   }, "~" },
-    [KeyKPPageUp]    = { { CSI"5",  NULL   }, "~" },
-    [KeyKPPageDown]  = { { CSI"6",  NULL   }, "~" },
-
-    [KeyF1]          = { { CSI,     SS3"1" }, "P" },
-    [KeyF2]          = { { CSI,     SS3"1" }, "Q" },
-    [KeyF3]          = { { CSI,     SS3"1" }, "R" },
-    [KeyF4]          = { { CSI,     SS3"1" }, "S" },
-    [KeyF5]          = { { CSI"15", NULL   }, "~" },
-    [KeyF6]          = { { CSI"17", NULL   }, "~" },
-    [KeyF7]          = { { CSI"18", NULL   }, "~" },
-    [KeyF8]          = { { CSI"19", NULL   }, "~" },
-    [KeyF9]          = { { CSI"20", NULL   }, "~" },
-    [KeyF10]         = { { CSI"21", NULL   }, "~" },
-    [KeyF11]         = { { CSI"23", NULL   }, "~" },
-    [KeyF12]         = { { CSI"24", NULL   }, "~" },
-    [KeyF13]         = { { CSI"25", NULL   }, "~" },
-    [KeyF14]         = { { CSI"26", NULL   }, "~" },
-    [KeyF15]         = { { CSI"28", NULL   }, "~" },
-    [KeyF16]         = { { CSI"29", NULL   }, "~" },
-    [KeyF17]         = { { CSI"31", NULL   }, "~" },
-    [KeyF18]         = { { CSI"32", NULL   }, "~" },
-    [KeyF19]         = { { CSI"33", NULL   }, "~" },
-    [KeyF20]         = { { CSI"34", NULL   }, "~" }
-};
-
-static KeyString keys_appkeypad[KeyCount] = {
-    [KeyKPTab]       = { { SS3, NULL }, "I" },
-    [KeyKPEnter]     = { { SS3, NULL }, "M" },
-    [KeyKPSpace]     = { { SS3, NULL }, " " },
-    [KeyKPMultiply]  = { { SS3, NULL }, "j" },
-    [KeyKPAdd]       = { { SS3, NULL }, "k" },
-    [KeyKPSeparator] = { { SS3, NULL }, "l" },
-    [KeyKPSubtract]  = { { SS3, NULL }, "m" },
-    [KeyKPDecimal]   = { { SS3, NULL }, "n" },
-    [KeyKPDivide]    = { { SS3, NULL }, "o" },
-    [KeyKPEqual]     = { { SS3, NULL }, "X" },
-
-    [KeyKP0]         = { { SS3, NULL }, "p" },
-    [KeyKP1]         = { { SS3, NULL }, "q" },
-    [KeyKP2]         = { { SS3, NULL }, "r" },
-    [KeyKP3]         = { { SS3, NULL }, "s" },
-    [KeyKP4]         = { { SS3, NULL }, "t" },
-    [KeyKP5]         = { { SS3, NULL }, "u" },
-    [KeyKP6]         = { { SS3, NULL }, "v" },
-    [KeyKP7]         = { { SS3, NULL }, "w" },
-    [KeyKP8]         = { { SS3, NULL }, "x" },
-    [KeyKP9]         = { { SS3, NULL }, "y" }
-};
-
-static KeyString keys_appcursor[KeyCount] = {
-    [KeyUp]          = { { SS3"A", NULL }, NULL },
-    [KeyDown]        = { { SS3"B", NULL }, NULL },
-    [KeyRight]       = { { SS3"C", NULL }, NULL },
-    [KeyLeft]        = { { SS3"D", NULL }, NULL },
-    [KeyHome]        = { { SS3"H", NULL }, NULL },
-    [KeyEnd]         = { { SS3"F", NULL }, NULL },
-
-    [KeyKPUp]        = { { SS3"A", NULL }, NULL },
-    [KeyKPDown]      = { { SS3"B", NULL }, NULL },
-    [KeyKPRight]     = { { SS3"C", NULL }, NULL },
-    [KeyKPLeft]      = { { SS3"D", NULL }, NULL },
-    [KeyKPHome]      = { { SS3"H", NULL }, NULL },
-    [KeyKPEnd]       = { { SS3"F", NULL }, NULL }
-};
-
-static inline KeyString *
-key_lookup(int key, KeyString *table)
+static const char *
+query_substitute(uint key, uint mods, uint flags)
 {
-    KeyString *item = &table[key];
+    const bool appkp = resolve_appkeypad(mods, flags);
+    key = remap_keypad(key, appkp);
 
-    if (!item->prefix[0]) return NULL;
+    if (appkp) {
+        switch (key) {
+        case KeyKPSpace:     return SS3 " ";
+        case KeyKPTab:       return SS3 "I";
+        case KeyKPEnter:     return SS3 "M";
+        case KeyKPMultiply:  return SS3 "j";
+        case KeyKPAdd:       return SS3 "k";
+        case KeyKPSeparator: return SS3 "l";
+        case KeyKPSubtract:  return SS3 "m";
+        case KeyKPDecimal:   return SS3 "n";
+        case KeyKPDivide:    return SS3 "o";
+        case KeyKP0:         return SS3 "p";
+        case KeyKP1:         return SS3 "q";
+        case KeyKP2:         return SS3 "r";
+        case KeyKP3:         return SS3 "s";
+        case KeyKP4:         return SS3 "t";
+        case KeyKP5:         return SS3 "u";
+        case KeyKP6:         return SS3 "v";
+        case KeyKP7:         return SS3 "w";
+        case KeyKP8:         return SS3 "x";
+        case KeyKP9:         return SS3 "y";
+        case KeyKPEqual:     return SS3 "X";
+        }
+    }
 
-    return item;
+    const bool appcrs = (flags & MODE_APPCURSOR);
+
+    switch (key) {
+    case KeyUp:    return (appcrs) ? SS3 "A" : CSI P "A";
+    case KeyDown:  return (appcrs) ? SS3 "B" : CSI P "B";
+    case KeyRight: return (appcrs) ? SS3 "C" : CSI P "C";
+    case KeyLeft:  return (appcrs) ? SS3 "D" : CSI P "D";
+    case KeyBegin: return (appcrs) ? SS3 "E" : CSI P "E";
+    case KeyEnd:   return (appcrs) ? SS3 "F" : CSI P "F";
+    case KeyHome:  return (appcrs) ? SS3 "H" : CSI P "H";
+
+    case KeyInsert: return CSI "2" P "~";
+    case KeyDelete: return CSI "3" P "~";
+    case KeyPgUp:   return CSI "5" P "~";
+    case KeyPgDown: return CSI "6" P "~";
+
+    case KeyF1:  return SS3 P "P";
+    case KeyF2:  return SS3 P "Q";
+    case KeyF3:  return SS3 P "R";
+    case KeyF4:  return SS3 P "S";
+    case KeyF5:  return CSI "15" P "~";
+    case KeyF6:  return CSI "17" P "~";
+    case KeyF7:  return CSI "18" P "~";
+    case KeyF8:  return CSI "19" P "~";
+    case KeyF9:  return CSI "20" P "~";
+    case KeyF10: return CSI "21" P "~";
+    case KeyF11: return CSI "23" P "~";
+    case KeyF12: return CSI "24" P "~";
+    case KeyF13: return CSI "25" P "~";
+    case KeyF14: return CSI "26" P "~";
+    case KeyF15: return CSI "28" P "~";
+    case KeyF16: return CSI "29" P "~";
+    case KeyF17: return CSI "31" P "~";
+    case KeyF18: return CSI "32" P "~";
+    case KeyF19: return CSI "33" P "~";
+    case KeyF20: return CSI "34" P "~";
+    }
+
+    if (mods && !(mods & KEYMOD_ALT) && (key == KeyReturn || key == KeyTab)) {
+        return CSI "27" P ";13~";
+    } else if (!(mods & KEYMOD_CTRL) && key == KeyBackspace) {
+        return "\x7f"; // Delete
+    }
+
+    return NULL;
 }
 
-size_t
-term_make_key_string(const Term *term, uint key, uint mod, char *buf, size_t size)
+#undef ESC
+#undef CSI
+#undef SS3
+#undef P
+
+static size_t
+parse_sequence(const char *restrict str, uint mods, byte *restrict buf, size_t max)
 {
-    UNUSED(term);
-
-    static_assert(MOD_MASK <= 8, "Key modifier masks cannot exceed 8");
-
-    if (key >= KeyCount || (mod & ~MOD_MASK)) {
+    if (!str || !buf) {
         return 0;
     }
 
-    KeyString *item = NULL;
+    const uint8 param = mods_to_param(mods);
     size_t len = 0;
 
-    if (!item && MODE_APPKEYPAD) {
-        item = key_lookup(key, keys_appkeypad);
-    }
-    if (!item && MODE_APPCURSOR) {
-        item = key_lookup(key, keys_appcursor);
-    }
-    if (!item) {
-        char *str = NULL;
-
-        switch (key) {
-        case KeyReturn:
-        case KeyKPEnter:
-            switch (mod) {
-            case MOD_ALT:  str = ESC"\r";       break;
-            case MOD_CTRL: str = CSI"27;5;13~"; break;
-            default:       str = "\r";          break;
+    // Copy while expanding modifier parameters
+#define PUSH(c) ((++len <= max) ? (buf[len-1] = (c)) : 0)
+    for (size_t i = 0; str[i]; i++) {
+        if (str[i] != PARAM_BYTE) {
+            PUSH(str[i]);
+        } else if (param) {
+            ASSERT(i > 0);
+            if (!isdigit(str[i-1])) {
+                PUSH('1');
             }
-            break;
-        case KeyTab:
-        case KeyKPTab:
-            switch (mod) {
-            case MOD_ALT:  str = ESC"\t";       break;
-            case MOD_CTRL: str = CSI"27;5;13~"; break;
-            default:       str = "\t";          break;
-            }
-            break;
-        case KeyBackspace:
-            switch (mod) {
-            case MOD_ALT: str = ESC"\177"; break;
-            default:      str = "\177";    break;
-            }
-            break;
-        }
-        if (str) {
-            len = snprintf(buf, size-1, "%s", str);
-        } else {
-            item = key_lookup(key, keys_normal);
+            PUSH(';');
+            PUSH('0' + param);
         }
     }
+#undef PUSH
 
-    if (item) {
-        char *prefix = item->prefix[(mod) ? 1 : 0];
-        char *suffix = item->suffix;
-
-        len = snprintf(buf, size - 1, "%s%s%s",
-            (prefix) ? prefix : item->prefix[0],
-            (mod && suffix) ? (char [3]){ ';', '0' + mod + 1 } : "",
-            (suffix) ? suffix : ""
-        );
+    // Special handling of ALT for single-byte sequences
+    if (len == 1 && (mods & KEYMOD_ALT) && ++len <= max) {
+        buf[1] = buf[0];
+        buf[0] = '\x1b';
     }
-
-    ASSERT(!len || len < size);
 
     return len;
 }
+
+size_t
+term_push_input(Term *term, uint key, uint mods, const byte *text, size_t len)
+{
+    static_assert(PARAM_MASK <= 8, "Key modifier masks cannot exceed 8");
+    ASSERT(key < KeyCount);
+    ASSERT(!(mods & ~KEYMOD_MASK));
+
+    // Check for a pre-defined function key sequence before anything else
+    const char *subst = query_substitute(key, mods, 0);
+
+    // Handle pre-defined sequence
+    if (subst) {
+        byte buf[KEYBUF_MAX] = { 0 };
+        const size_t n = parse_sequence(subst, mods, buf, sizeof(buf));
+        if (n && n <= sizeof(buf)) {
+            return term_push(term, buf, n);
+        }
+    // Fall back to the raw input (either standard text or an unknown function key)
+    } else if (len == 1 && (mods & KEYMOD_ALT)) {
+        return term_push(term, (byte [2]){ '\x1b', text[0] }, 2);
+    } else if (len) {
+        return term_push(term, text, len);
+    }
+
+    return 0;
+}
+
+#undef PARAM_BYTE
 

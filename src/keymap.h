@@ -24,16 +24,17 @@
     X_(Return,      257) \
     X_(Tab,         258) \
     X_(Backspace,   259) \
-    X_(Insert,      260) \
-    X_(Delete,      261) \
+    X_(Up,          260) \
+    X_(Down,        261) \
     X_(Right,       262) \
     X_(Left,        263) \
-    X_(Down,        264) \
-    X_(Up,          265) \
-    X_(PageUp,      266) \
-    X_(PageDown,    267) \
-    X_(Home,        268) \
-    X_(End,         269) \
+    X_(Begin,       364) \
+    X_(End,         265) \
+    X_(Home,        266) \
+    X_(Insert,      267) \
+    X_(Delete,      268) \
+    X_(PgUp,        269) \
+    X_(PgDown,      270) \
     X_(F1,          290) \
     X_(F2,          291) \
     X_(F3,          292) \
@@ -59,36 +60,37 @@
     X_(F23,         312) \
     X_(F24,         313) \
     X_(F25,         314) \
-    X_(KP0,         320) \
-    X_(KP1,         321) \
-    X_(KP2,         322) \
-    X_(KP3,         323) \
-    X_(KP4,         324) \
-    X_(KP5,         325) \
-    X_(KP6,         326) \
-    X_(KP7,         327) \
-    X_(KP8,         328) \
-    X_(KP9,         329) \
-    X_(KPDecimal,   330) \
-    X_(KPDivide,    331) \
-    X_(KPMultiply,  332) \
-    X_(KPSubtract,  333) \
-    X_(KPAdd,       334) \
-    X_(KPSeparator, 335) \
-    X_(KPEnter,     336) \
-    X_(KPEqual,     337) \
-    X_(KPTab,       338) \
-    X_(KPSpace,     339) \
-    X_(KPInsert,    340) \
-    X_(KPDelete,    341) \
+    X_(KPSpace,     320) \
+    X_(KPTab,       321) \
+    X_(KPEnter,     322) \
+    X_(KPMultiply,  323) \
+    X_(KPAdd,       324) \
+    X_(KPSeparator, 325) \
+    X_(KPSubtract,  326) \
+    X_(KPDecimal,   327) \
+    X_(KPDivide,    328) \
+    X_(KP0,         329) \
+    X_(KP1,         330) \
+    X_(KP2,         331) \
+    X_(KP3,         332) \
+    X_(KP4,         333) \
+    X_(KP5,         334) \
+    X_(KP6,         335) \
+    X_(KP7,         336) \
+    X_(KP8,         337) \
+    X_(KP9,         338) \
+    X_(KPEqual,     339) \
+    X_(KPUp,        340) \
+    X_(KPDown,      341) \
     X_(KPRight,     342) \
     X_(KPLeft,      343) \
-    X_(KPDown,      344) \
-    X_(KPUp,        345) \
-    X_(KPPageUp,    346) \
-    X_(KPPageDown,  347) \
-    X_(KPHome,      348) \
-    X_(KPEnd,       349)
+    X_(KPBegin,     344) \
+    X_(KPEnd,       345) \
+    X_(KPHome,      346) \
+    X_(KPInsert,    347) \
+    X_(KPDelete,    348) \
+    X_(KPPgUp,      349) \
+    X_(KPPgDown,    350) \
 
 enum {
 #define X_(key,val) Key##key = val,
@@ -105,28 +107,11 @@ static const char *keycode_names[] = {
 
 #undef KEYCODE_TABLE
 
-#define MOD_NONE  (0)
-#define MOD_SHIFT (1 << 0)
-#define MOD_ALT   (1 << 1)
-#define MOD_CTRL  (1 << 2)
-#define MOD_MASK  (MOD_CTRL|MOD_ALT|MOD_SHIFT)
-/* enum { */
-/*     ModNone  = (0), */
-/*     ModShift = (1 << 0), */
-/*     ModAlt   = (1 << 1), */
-/*     ModCtrl  = (1 << 2), */
-/*     ModCount */
-/* }; */
-
-static const char *modmask_names[] = {
-    [MOD_NONE]                   = "None",
-    [MOD_SHIFT]                  = "Shift",
-    [MOD_ALT]                    = "Alt",
-    [MOD_ALT|MOD_SHIFT]          = "AltShift",
-    [MOD_CTRL]                   = "Ctrl",
-    [MOD_CTRL|MOD_SHIFT]         = "CtrlShift",
-    [MOD_CTRL|MOD_ALT]           = "CtrlAlt",
-    [MOD_CTRL|MOD_ALT|MOD_SHIFT] = "CtrlAltShift"
-};
+#define KEYMOD_NONE  (0)
+#define KEYMOD_SHIFT (1 << 0)
+#define KEYMOD_ALT   (1 << 1)
+#define KEYMOD_CTRL  (1 << 2)
+#define KEYMOD_NUMLK (1 << 3)
+#define KEYMOD_MASK  (KEYMOD_CTRL|KEYMOD_ALT|KEYMOD_SHIFT|KEYMOD_NUMLK)
 
 #endif

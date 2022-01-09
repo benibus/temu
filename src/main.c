@@ -64,7 +64,7 @@ typedef struct {
 static App app_;
 
 static void event_resize(void *param, int width, int height);
-static void event_key_press(void *param, uint key, uint mod, const byte *data, int len);
+static void event_key_press(void *param, uint key, uint mods, const byte *text, int len);
 static void handler_set_title(void *param, const char *str, size_t len);
 static void handler_set_icon(void *param, const char *str, size_t len);
 static int run(App *app);
@@ -429,31 +429,31 @@ event_resize(void *param, int width, int height)
 }
 
 void
-event_key_press(void *param, uint key, uint mod, const byte *data, int len)
+event_key_press(void *param, uint key, uint mods, const byte *text, int len)
 {
     App *const app = param;
 
-    switch (mod) {
-    case MOD_ALT:
+    switch (mods & ~KEYMOD_NUMLK) {
+    case KEYMOD_SHIFT:
         switch (key) {
-        case KeyF9:
-            term_print_history(app->term);
+        case KeyPgUp:
+            term_scroll(app->term, -app->term->rows);
             return;
+        case KeyPgDown:
+            term_scroll(app->term, +app->term->rows);
+            return;
+        }
+        break;
+    case KEYMOD_ALT:
+        switch (key) {
         case 'k':
             term_scroll(app->term, -1);
             return;
         case 'j':
             term_scroll(app->term, +1);
             return;
-        }
-        break;
-    case MOD_SHIFT:
-        switch (key) {
-        case KeyPageUp:
-            term_scroll(app->term, -app->term->rows);
-            return;
-        case KeyPageDown:
-            term_scroll(app->term, +app->term->rows);
+        case KeyF9:
+            term_print_history(app->term);
             return;
         }
         break;
@@ -461,7 +461,7 @@ event_key_press(void *param, uint key, uint mod, const byte *data, int len)
         break;
     }
 
-    if (term_push_input(app->term, key, mod, data, len)) {
+    if (term_push_input(app->term, key, mods, text, len)) {
         term_reset_scroll(app->term);
     }
 }
