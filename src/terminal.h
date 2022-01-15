@@ -22,7 +22,14 @@
 #include "cells.h"
 #include "ring.h"
 
-struct TermConfig {
+typedef struct {
+    void (*set_title)(void *param, const char *title, size_t len);
+    void (*set_icon)(void *param, const char *title, size_t len);
+    void (*set_property)(void *param, const char *title, size_t len);
+} TermHandlers;
+
+typedef struct {
+    void *param;
     char *shell;
     uint16 cols, rows;
     uint16 colsize, rowsize;
@@ -31,7 +38,8 @@ struct TermConfig {
     uint32 color_bg;
     uint32 color_fg;
     uint32 colors[16];
-};
+    TermHandlers handlers;
+} TermConfig;
 
 #define IOBUF_MAX (4096)
 
@@ -85,16 +93,20 @@ typedef struct {
     } parser;
 
     void *param;
+#if 1
+    TermHandlers handlers;
+#else
     struct TermHandlers {
         void (*set_title)(void *param, const char *title, size_t len);
         void (*set_icon)(void *param, const char *title, size_t len);
         void (*set_property)(void *param, const char *title, size_t len);
     } handlers;
+#endif
 } Term;
 
-Term *term_create(struct TermConfig);
-void term_destroy(Term *);
-bool term_init(Term *, struct TermConfig);
+Term *term_create(const TermConfig *cfg);
+void term_destroy(Term *term);
+bool term_init(Term *term, const TermConfig *cfg);
 int term_exec(Term *, const char *);
 size_t term_pull(Term *, uint32);
 size_t term_push(Term *, const void *, size_t);
@@ -103,13 +115,15 @@ size_t term_consume(Term *, const uchar *, size_t);
 void term_scroll(Term *, int);
 void term_reset_scroll(Term *);
 void term_resize(Term *, int, int);
+int term_cols(const Term *term);
+int term_rows(const Term *term);
 Cell *term_get_row(const Term *, int);
 Cell term_get_cell(const Term *, int, int);
 bool term_get_cursor(const Term *, CursorDesc *);
 size_t term_make_key_string(const Term *, uint, uint, char *, size_t);
 Cell *term_get_framebuffer(Term *);
 Frame *term_generate_frame(Term *);
-void term_setup_handlers(Term *term, void *param, struct TermHandlers handlers);
+void term_setup_handlers(Term *term, void *param, TermHandlers handlers);
 
 void term_print_history(const Term *);
 void term_print_stream(const Term *);

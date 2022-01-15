@@ -29,11 +29,17 @@
 #include <X11/XF86keysym.h>
 #include <X11/Xatom.h>
 
+typedef struct {
+    struct { void *param; WinFuncResize     *func; } resize;
+    struct { void *param; WinFuncKeyPress   *func; } keypress;
+    struct { void *param; WinFuncKeyRelease *func; } keyrelease;
+    struct { void *param; WinFuncExpose     *func; } expose;
+} WinCallbacks;
+
 typedef struct Server_ Server;
 
 struct Win_ {
-    void *param;
-    Server *server;
+    Server *srv;
     Window xid;
     XIC ic;
     GC gc;
@@ -62,14 +68,14 @@ struct Server_ {
     int depth;
     struct {
         EGLDisplay dpy;
-        EGLContext context;
-        EGLConfig config;
+        EGLContext ctx;
+        EGLConfig cfg;
         struct {
             EGLint major;
             EGLint minor;
-        } version;
+        } ver;
     } egl;
-    Win clients[4];
+    Win clients[2];
 };
 
 #endif

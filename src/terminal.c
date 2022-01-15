@@ -114,11 +114,11 @@ static void set_cursor_style(Term *, int);
 static void do_action(Term *, StateCode, ActionCode, uchar);
 
 Term *
-term_create(struct TermConfig config)
+term_create(const TermConfig *cfg)
 {
     Term *term = xmalloc(1, sizeof(*term));
 
-    if (!term_init(term, config)) {
+    if (cfg && !term_init(term, cfg)) {
         free(term);
     }
 
@@ -126,24 +126,24 @@ term_create(struct TermConfig config)
 }
 
 bool
-term_init(Term *term, struct TermConfig config)
+term_init(Term *term, const TermConfig *cfg)
 {
     ASSERT(term);
 
     memclear(term, 1, sizeof(*term));
 
-    term->cols = config.cols;
-    term->rows = config.rows;
+    term->cols = cfg->cols;
+    term->rows = cfg->rows;
     term->max_cols = term->cols;
     term->max_rows = term->rows;
-    term->histlines = round_pow2(config.histlines);
+    term->histlines = round_pow2(cfg->histlines);
 
     term->ring_prim = ring_create(term->histlines, term->cols, term->rows);
     term->ring_alt  = ring_create(term->rows, term->cols, term->rows);
     term->ring = term->ring_prim;
     term->frame.cells = xcalloc(term->cols * term->rows, sizeof(*term->frame.cells));
 
-    term->tabcols = config.tabcols;
+    term->tabcols = cfg->tabcols;
     term->tabstops = xcalloc(term->cols, sizeof(*term->tabstops));
     for (int i = 0; ++i < term->cols; ) {
         term->tabstops[i] |= (i % term->tabcols == 0) ? 1 : 0;
@@ -151,14 +151,14 @@ term_init(Term *term, struct TermConfig config)
 
     arr_reserve(term->parser.data, 4);
 
-    term->color_bg = config.color_bg;
-    term->color_fg = config.color_fg;
+    term->color_bg = cfg->color_bg;
+    term->color_fg = cfg->color_fg;
 
-    static_assert(LEN(term->colors) == LEN(config.colors), "User colors array mismatch.");
+    static_assert(LEN(term->colors) == LEN(cfg->colors), "User colors array mismatch.");
 
     for (uint i = 0; i < LEN(term->colors); i++) {
-        if (config.colors[i]) {
-            term->colors[i] = config.colors[i];
+        if (cfg->colors[i]) {
+            term->colors[i] = cfg->colors[i];
         } else {
             term->colors[i] = VTCOLOR(i);
         }
@@ -169,21 +169,13 @@ term_init(Term *term, struct TermConfig config)
     term->cell.fg = term->color_fg;
     term->cell.attrs = 0;
 
-    term->colsize = config.colsize;
-    term->rowsize = config.rowsize;
+    term->colsize = cfg->colsize;
+    term->rowsize = cfg->rowsize;
+
+    term->param = cfg->param;
+    term->handlers = cfg->handlers;
 
     return true;
-}
-
-void
-term_setup_handlers(Term *term, void *param, struct TermHandlers handlers)
-{
-    if (!term) return;
-
-    term->param = param;
-    term->handlers.set_title    = DEFAULT(handlers.set_title,    NULL);
-    term->handlers.set_icon     = DEFAULT(handlers.set_icon,     NULL);
-    term->handlers.set_property = DEFAULT(handlers.set_property, NULL);
 }
 
 void
@@ -218,6 +210,9 @@ term_exec(Term *term, const char *shell)
 
     return term->mfd;
 }
+
+int term_cols(const Term *term) { return term->cols; }
+int term_rows(const Term *term) { return term->rows; }
 
 Frame *
 term_generate_frame(Term *term)
@@ -336,49 +331,6 @@ term_resize(Term *term, int cols, int rows)
 
         pty_resize(term->mfd, cols, rows, term->colsize, term->rowsize);
     }
-}
-
-Cell *
-term_get_row(const Term *term, int row)
-{
-    ASSERT(row >= 0 && row < term->rows);
-
-    Cell *cells = cells_get_visible(term->ring, 0, row);
-    if (cells[0].ucs4) {
-        return cells;
-    }
-
-    return NULL;
-}
-
-Cell
-term_get_cell(const Term *term, int col, int row)
-{
-    Cell cell = *cells_get(term->ring, col, row);
-
-    return (Cell){
-        .ucs4 = DEFAULT(cell.ucs4, ' '),
-        .attrs = cell.attrs,
-        .bg = (cell.attrs & ATTR_INVERT) ? cell.fg : cell.bg,
-        .fg = (cell.attrs & ATTR_INVERT) ? cell.bg : cell.fg
-    };
-}
-
-bool
-term_get_cursor(const Term *term, CursorDesc *cursor)
-{
-    if (!term->hidecursor && check_visible(term->ring, term->x, term->y)) {
-        if (cursor) {
-            cursor->col = term->x;
-            cursor->row = term->y;
-            cursor->style = term->crs_style;
-            cursor->color = term->color_fg;
-        }
-
-        return true;
-    }
-
-    return false;
 }
 
 size_t

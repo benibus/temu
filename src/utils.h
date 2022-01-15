@@ -32,9 +32,7 @@
   T vt__ = (v1);            \
   (v1) = (v2), (v2) = vt__; \
 } while (0)
-#define SETPTR(p,...) do {   \
-  if (p) *(p) = __VA_ARGS__; \
-while (0)
+#define SETPTR(p,...) (((p) != NULL) ? (*(p) = (__VA_ARGS__), (p)) : NULL)
 
 #define strequal(s1,s2)    (strcmp((s1), (s2)) == 0)
 #define strnequal(s1,s2,n) (strncmp((s1), (s2), (n)) == 0)
@@ -103,6 +101,8 @@ uint64 timer_nsec(TimeRec *);
 int64 timediff_msec(const TimeRec *, const TimeRec *);
 int64 timediff_usec(const TimeRec *, const TimeRec *);
 void timeblk_update(TimeBlock *);
+
+static inline bool strempty(const char *str) { return !(str && str[0]); }
 
 static inline int64 imin(int64 a, int64 b) { return MIN(a, b); }
 static inline int64 imax(int64 a, int64 b) { return MAX(a, b); }

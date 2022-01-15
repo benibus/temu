@@ -30,43 +30,44 @@
 #define MIN_HISTLINES 128
 #define MAX_HISTLINES 4096
 
-typedef struct Config {
+typedef struct {
     char *wm_class;
-    char *wm_instance;
+    char *wm_name;
     char *wm_title;
     char *geometry;
     char *font;
-    char *fontfile;
+    char *fontpath;
     char *colors[MAX_CFG_COLORS];
     char *shell;
-    uint tablen;
-    uint border_px;
-    uint histsize;
-    uint columns, rows;
-    struct { int x, y; } position;
-} Config;
+    uint cols;
+    uint rows;
+    uint padding;
+    uint tabcols;
+    uint histlines;
+} AppPrefs;
 // NOTE: must include *after* definitions
 #include "config.h"
 
 typedef struct {
+    AppPrefs prefs;
     Win *win;
     Term *term;
     FontSet *fontset;
     int width;
     int height;
-    int borderpx;
     int cols;
     int rows;
+    int padpx;
     int colpx;
     int rowpx;
 } App;
 
 static App app_;
 
-static void event_resize(void *param, int width, int height);
-static void event_key_press(void *param, uint key, uint mods, const uchar *text, int len);
-static void handler_set_title(void *param, const char *str, size_t len);
-static void handler_set_icon(void *param, const char *str, size_t len);
+static WinFuncResize on_event_resize;
+static WinFuncKeyPress on_event_keypress;
+static void on_osc_set_title(void *param, const char *str, size_t len);
+static void on_osc_set_icon(void *param, const char *str, size_t len);
 static int run(App *app);
 
 int
@@ -77,53 +78,47 @@ main(int argc, char **argv)
     static_assert(FontStyleItalic == ATTR_ITALIC, "Bitmask mismatch.");
     static_assert(FontStyleBoldItalic == (ATTR_BOLD|ATTR_ITALIC), "Bitmask mismatch.");
 
-    for (int opt; (opt = getopt(argc, argv, "T:N:C:S:F:f:c:r:x:y:b:m:s:")) != -1; ) {
+    AppPrefs prefs = { 0 };
+
+    for (int opt; (opt = getopt(argc, argv, "T:N:C:S:F:f:c:r:p:m:s:")) != -1; ) {
         union {
             char *s;
-            long n;
+            long i;
+            ulong u;
             double f;
         } arg;
         char *errp; // for strtol()
 
         switch (opt) {
-        case 'T': config.wm_title = optarg; break;
-        case 'N': config.wm_instance = optarg; break;
-        case 'C': config.wm_class = optarg; break;
-        case 'S': config.shell = optarg; break;
-        case 'f': config.font = optarg; break;
-        case 'F': config.fontfile = optarg; break;
+        case 'T': prefs.wm_title = (!strempty(optarg)) ? optarg : NULL; break;
+        case 'N': prefs.wm_name  = (!strempty(optarg)) ? optarg : NULL; break;
+        case 'C': prefs.wm_class = (!strempty(optarg)) ? optarg : NULL; break;
+        case 'S': prefs.shell    = (!strempty(optarg)) ? optarg : NULL; break;
+        case 'f': prefs.font     = (!strempty(optarg)) ? optarg : NULL; break;
+        case 'F': prefs.fontpath = (!strempty(optarg)) ? optarg : NULL; break;
         case 'c':
-            arg.n = strtol(optarg, &errp, 10);
-            if (!*errp) {
-                if (arg.n > 0) {
-                    config.columns = arg.n;
-                }
+            arg.u = strtoul(optarg, &errp, 10);
+            if (!*errp && arg.u < UINT_MAX) {
+                prefs.cols = arg.u;
             }
             break;
         case 'r':
-            arg.n = strtol(optarg, &errp, 10);
-            if (!*errp) {
-                if (arg.n > 0) {
-                    config.rows = arg.n;
-                }
+            arg.u = strtol(optarg, &errp, 10);
+            if (!*errp && arg.u < UINT_MAX) {
+                prefs.rows = arg.u;
             }
             break;
-        case 'x':
-            arg.n = strtol(optarg, &errp, 10);
-            if (!*errp) config.position.x = arg.n;
-            break;
-        case 'y':
-            arg.n = strtol(optarg, &errp, 10);
-            if (!*errp) config.position.y = arg.n;
-            break;
-        case 'b':
-            arg.n = strtol(optarg, &errp, 10);
-            if (!*errp) config.border_px = arg.n;
+        case 'p':
+            arg.u = strtoul(optarg, &errp, 10);
+            if (!*errp && arg.u < UINT_MAX) {
+                prefs.padding = arg.u;
+            }
             break;
         case 'm':
-            arg.n = strtol(optarg, &errp, 10);
-            if (arg.n > 0 && !*errp)
-                config.histsize = CLAMP(arg.n, MIN_HISTLINES, MAX_HISTLINES);
+            arg.u = strtoul(optarg, &errp, 10);
+            if (!*errp && arg.u < UINT_MAX) {
+                prefs.histlines = arg.u;
+            }
             break;
         case '?':
         case ':':
@@ -136,91 +131,64 @@ error_invalid:
         exit(1);
     }
 
-    if (platform_setup()) {
+    App *const app = &app_;
+
+    app->prefs = default_prefs;
+#define MERGEOPT(opt) (app->prefs.opt = DEFAULT(prefs.opt, app->prefs.opt))
+    MERGEOPT(cols);
+    MERGEOPT(rows);
+    MERGEOPT(padding);
+
+    MERGEOPT(wm_class);
+    MERGEOPT(wm_name);
+    MERGEOPT(wm_title);
+    MERGEOPT(geometry);
+    MERGEOPT(shell);
+    MERGEOPT(font);
+    MERGEOPT(fontpath);
+
+    if (prefs.histlines >= MIN_HISTLINES && prefs.histlines <= MAX_HISTLINES) {
+        app->prefs.histlines = prefs.histlines;
+    }
+#undef MERGEOPT
+
+    app->win = window_create();
+
+    if (app->win) {
         dbgprint("Window server initialized");
     } else {
         dbgprint("Failed to initialize window server");
         return EXIT_FAILURE;
     }
 
-    struct TermConfig termcfg = { 0 };
-
-    for (uint i = 0; i < LEN(config.colors); i++) {
-        ASSERT(config.colors[i]);
-
-        uint32 *dst;
-
-        switch (i) {
-        case 0:  dst = &termcfg.color_bg;  break;
-        case 1:  dst = &termcfg.color_fg;  break;
-        default: dst = &termcfg.colors[i-2]; break;
-        }
-        if (!platform_parse_color_string(config.colors[i], dst)) {
-            dbgprint("Failed to parse RGB string: %s", config.colors[i]);
-            exit(EXIT_FAILURE);
-        }
-    }
-    dbgprint("User colors parsed");
-
-    App *const app = &app_;
-
-    if (!fontmgr_init(platform_get_dpi())) {
-        dbgprint("Failed to initialize font manager");
-        return EXIT_FAILURE;
-    } else {
+    if (fontmgr_init(window_get_dpi(app->win))) {
         char *fontpath = NULL;
 
-        if (config.fontfile) {
-            fontpath = realpath(config.fontfile, NULL);
+        if (app->prefs.fontpath) {
+            fontpath = realpath(app->prefs.fontpath, NULL);
             if (fontpath) {
-                dbgprint("Resolved file path: %s -> %s", config.fontfile, fontpath);
+                dbgprint("Resolved file path: %s -> %s", app->prefs.fontpath, fontpath);
+                app->fontset = fontmgr_create_fontset_from_file(fontpath);
+                FREE(fontpath);
             } else {
-                dbgprint("Failed to resolve file path: %s", config.fontfile);
+                dbgprint("Failed to resolve file path: %s", app->prefs.fontpath);
             }
         }
-        if (fontpath) {
-            app->fontset = fontmgr_create_fontset_from_file(fontpath);
-            FREE(fontpath);
-        } else {
-            app->fontset = fontmgr_create_fontset(config.font);
-        }
         if (!app->fontset) {
-            dbgprint("Failed to open fallback fonts. aborting...");
-            return EXIT_FAILURE;
+            app->fontset = fontmgr_create_fontset(app->prefs.font);
+            if (!app->fontset) {
+                dbgprint("Failed to open fallback fonts. aborting...");
+                return EXIT_FAILURE;
+            }
         }
 
         dbgprint("Fonts opened");
+    } else {
+        dbgprint("Failed to initialize font manager");
+        return EXIT_FAILURE;
     }
 
     fontset_get_metrics(app->fontset, &app->colpx, &app->rowpx, NULL, NULL);
-
-    Win *win = window_create(
-        (WinConfig){
-            .param = app,
-            .smooth_resize = false,
-            .wm_instance = config.wm_instance,
-            .wm_class    = config.wm_class,
-            .cols        = config.columns,
-            .rows        = config.rows,
-            .colpx       = app->colpx,
-            .rowpx       = app->rowpx,
-            .border      = config.border_px,
-            .callbacks = {
-                .resize     = event_resize,
-                .key_press  = event_key_press,
-                /* .text_input = event_text_input, */
-                .expose     = NULL
-            }
-        }
-    );
-
-    if (win) {
-        dbgprint("Window created");
-        window_set_title(win, config.wm_title, strlen(config.wm_title));
-    } else {
-        dbgprint("Failed to create window");
-        return EXIT_FAILURE;
-    }
 
     if (fontset_init(app->fontset)) {
         dbgprint("Font cache initialized");
@@ -229,6 +197,23 @@ error_invalid:
         return EXIT_FAILURE;
     }
 
+    app->padpx = app->prefs.padding;
+    if (!window_set_size(app->win, app->prefs.cols * app->colpx + 2 * app->padpx,
+                                   app->prefs.rows * app->rowpx + 2 * app->padpx))
+    {
+        return EXIT_FAILURE;
+    }
+    window_set_size_hints(app->win, app->colpx + 2 * app->padpx,
+                                    app->rowpx + 2 * app->padpx,
+                                    app->colpx,
+                                    app->rowpx);
+
+    window_set_class_hints(app->win, app->prefs.wm_name, app->prefs.wm_class);
+    window_set_title(app->win, app->prefs.wm_title, strlen(app->prefs.wm_title));
+
+    window_callback_resize(app->win, app, &on_event_resize);
+    window_callback_keypress(app->win, app, &on_event_keypress);
+
     if (renderer_init()) {
         dbgprint("Renderer initialized");
     } else {
@@ -236,41 +221,63 @@ error_invalid:
         return EXIT_FAILURE;
     }
 
-    if (window_show(win)) {
-        window_get_dimensions(win, &app->width, &app->height, &app->borderpx);
+    TermConfig termcfg = { 0 };
+
+    for (uint i = 0; i < LEN(app->prefs.colors); i++) {
+        ASSERT(app->prefs.colors[i]);
+
+        uint32 *dst;
+
+        switch (i) {
+        case 0:  dst = &termcfg.color_bg;  break;
+        case 1:  dst = &termcfg.color_fg;  break;
+        default: dst = &termcfg.colors[i-2]; break;
+        }
+        if (!window_query_color(app->win, app->prefs.colors[i], dst)) {
+            dbgprint("Failed to parse RGB string: %s", app->prefs.colors[i]);
+            exit(EXIT_FAILURE);
+        }
+    }
+    dbgprint("User colors parsed");
+
+    if (window_init(app->win)) {
+        window_get_size(app->win, &app->width, &app->height);
     } else {
         dbgprint("Failed to display window");
         return EXIT_FAILURE;
     }
 
-    app->win = win;
-    app->cols = (app->width - 2 * app->borderpx) / app->colpx;
-    app->rows = (app->height - 2 * app->borderpx) / app->rowpx;
+    app->cols = (app->width - 2 * app->padpx) / app->colpx;
+    app->rows = (app->height - 2 * app->padpx) / app->rowpx;
 
     dbgprint(
         "Window displayed\n"
         "    width   = %d\n"
         "    height  = %d\n"
-        "    border  = %d\n"
-        "    columns = %dx%d\n"
-        "    rows    = %dx%d",
+        "    cols    = %dx%d\n"
+        "    rows    = %dx%d\n"
+        "    padding = %d",
         app->width,
         app->height,
-        app->borderpx,
         app->cols, app->colpx,
-        app->rows, app->rowpx
+        app->rows, app->rowpx,
+        app->padpx
     );
 
-    ASSERT(app->cols == (int)config.columns);
-    ASSERT(app->rows == (int)config.rows);
+    ASSERT(app->cols == (int)app->prefs.cols);
+    ASSERT(app->rows == (int)app->prefs.rows);
 
     termcfg.cols      = app->cols;
     termcfg.rows      = app->rows;
     termcfg.colsize   = app->colpx;
     termcfg.rowsize   = app->rowpx;
-    termcfg.shell     = config.shell;
-    termcfg.histlines = MAX(config.histsize, termcfg.rows);
-    termcfg.tabcols   = DEFAULT(config.tablen, 8);
+    termcfg.shell     = app->prefs.shell;
+    termcfg.histlines = MAX(app->prefs.histlines, termcfg.rows);
+    termcfg.tabcols   = DEFAULT(app->prefs.tabcols, 8);
+
+    termcfg.param = app;
+    termcfg.handlers.set_title = on_osc_set_title;
+    termcfg.handlers.set_icon  = on_osc_set_icon;
 
     dbgprint(
         "Creating virtual terminal...\n"
@@ -282,24 +289,18 @@ error_invalid:
         termcfg.tabcols
     );
 
-    if ((app->term = term_create(termcfg))) {
+    if ((app->term = term_create(&termcfg))) {
         dbgprint("Virtual terminal created");
     } else {
         dbgprint("Failed to create virtual terminal");
         return EXIT_FAILURE;
     }
 
-    const struct TermHandlers handlers = {
-        .set_title = handler_set_title,
-        .set_icon  = handler_set_icon
-    };
-    term_setup_handlers(app->term, app, handlers);
-
     renderer_set_dimensions(
         app->width, app->height,
         app->cols, app->rows,
         app->colpx, app->rowpx,
-        app->borderpx
+        app->padpx
     );
     dbgprint("Renderer online");
 
@@ -327,8 +328,8 @@ run(App *app)
     }
 
     int result = 0;
-    const int srvfd = platform_get_fileno();
-    const int ptyfd = term_exec(term, config.shell);
+    const int srvfd = window_get_fileno(app->win);
+    const int ptyfd = term_exec(term, app->prefs.shell);
 
     if (ptyfd && srvfd) {
         dbgprint("Virtual terminal online. FD = %d", ptyfd);
@@ -400,7 +401,7 @@ quit:
 }
 
 void
-event_resize(void *param, int width, int height)
+on_event_resize(void *param, int width, int height)
 {
     App *const app = param;
 
@@ -408,18 +409,16 @@ event_resize(void *param, int width, int height)
         return;
     }
 
-    const int cols = (width - 2 * app->borderpx) / app->colpx;
-    const int rows = (height - 2 * app->borderpx) / app->rowpx;
+    const int cols = (width - 2 * app->padpx) / app->colpx;
+    const int rows = (height - 2 * app->padpx) / app->rowpx;
 
-    if (cols != app->term->cols || rows != app->term->rows) {
-        term_resize(app->term, cols, rows);
-    }
+    term_resize(app->term, cols, rows);
 
     renderer_set_dimensions(
         width, height,
         cols, rows,
         app->colpx, app->rowpx,
-        app->borderpx
+        app->padpx
     );
 
     app->width  = width;
@@ -429,7 +428,7 @@ event_resize(void *param, int width, int height)
 }
 
 void
-event_key_press(void *param, uint key, uint mods, const uchar *text, int len)
+on_event_keypress(void *param, uint key, uint mods, const uchar *text, int len)
 {
     App *const app = param;
 
@@ -437,10 +436,10 @@ event_key_press(void *param, uint key, uint mods, const uchar *text, int len)
     case KEYMOD_SHIFT:
         switch (key) {
         case KeyPgUp:
-            term_scroll(app->term, -app->term->rows);
+            term_scroll(app->term, -term_rows(app->term));
             return;
         case KeyPgDown:
-            term_scroll(app->term, +app->term->rows);
+            term_scroll(app->term, +term_rows(app->term));
             return;
         }
         break;
@@ -467,28 +466,28 @@ event_key_press(void *param, uint key, uint mods, const uchar *text, int len)
 }
 
 void
-handler_set_title(void *param, const char *str, size_t len)
+on_osc_set_title(void *param, const char *str, size_t len)
 {
     const App *app = param;
     ASSERT(app == &app_);
 
-    if (!str || !len) {
-        str = config.wm_title;
-        len = strlen(str);
+    if (str && len) {
+        window_set_title(app->win, str, len);
+    } else {
+        window_set_title(app->win, app->prefs.wm_title, strlen(app->prefs.wm_title));
     }
-    window_set_title(app->win, str, len);
 }
 
 void
-handler_set_icon(void *param, const char *str, size_t len)
+on_osc_set_icon(void *param, const char *str, size_t len)
 {
     const App *app = param;
     ASSERT(app == &app_);
 
-    if (!str || !len) {
-        str = config.wm_title;
-        len = strlen(str);
+    if (str && len) {
+        window_set_icon(app->win, str, len);
+    } else {
+        window_set_icon(app->win, app->prefs.wm_title, strlen(app->prefs.wm_title));
     }
-    window_set_icon(app->win, str, len);
 }
 

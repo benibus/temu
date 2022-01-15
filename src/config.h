@@ -18,44 +18,41 @@
 #ifndef CONFIG_H__
 #define CONFIG_H__
 
-static Config config = {
+static const AppPrefs default_prefs = {
     .wm_class = "Temu",
-    .wm_instance = "temu",
+    .wm_name = "temu",
     .wm_title = "temu",
     .geometry = NULL,
     .font = NULL,
-    .fontfile = NULL,
-    .colors = {
-        "#18191B", // background
-        "#BCBFBD", // foreground
-
-        // Normal colors
-        "#282A2E", // black
-        "#A54242", // red
-        "#448D65", // green
-        "#DE935F", // yellow
-        "#4A7096", // blue
-        "#85678F", // magenta
-        "#558D86", // cyan
-        "#747C84", // white
-
-        // Bright colors
-        "#41464D", // black
-        "#CC6666", // red
-        "#55A679", // green
-        "#F0B674", // yellow
-        "#638EB3", // blue
-        "#A884BB", // magenta
-        "#70AFAB", // cyan
-        "#C5C8C6"  // white
-    },
+    .fontpath = NULL,
     .shell = NULL,
-    .tablen = 8,
-    .border_px = 0,
-    .histsize = 128,
-    .columns = 140,
+    .cols = 140,
     .rows = 40,
-    .position = { .x = 0, .y = 0 }
+    .tabcols = 8,
+    .padding = 0,
+    .histlines = 128,
+    .colors = {
+        "#18191B", // Background
+        "#BCBFBD", // Foreground
+
+        "#282A2E", // Black
+        "#A54242", // Red
+        "#448D65", // Green
+        "#DE935F", // Yellow
+        "#4A7096", // Blue
+        "#85678F", // Magenta
+        "#558D86", // Cyan
+        "#747C84", // White
+
+        "#41464D", // Bright Black
+        "#CC6666", // Bright Red
+        "#55A679", // Bright Green
+        "#F0B674", // Bright Yellow
+        "#638EB3", // Bright Blue
+        "#A884BB", // Bright Magenta
+        "#70AFAB", // Bright Cyan
+        "#C5C8C6"  // Bright White
+    }
 };
 
 #endif
