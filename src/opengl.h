@@ -45,8 +45,6 @@
 
 #ifdef OPENGL_INCLUDE_PLATFORM
 #include <EGL/egl.h>
-
-void egl_print_info(EGLDisplay);
 #endif
 
 GLuint gl_compile_shader(const char *src, GLenum type);
@@ -70,3 +68,4 @@ GLuint gl_link_shaders(GLuint *shaders, uint count);
 void gl__get_error(const char *file, const char *func, int line);
 
 #endif
+

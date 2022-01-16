@@ -19,8 +19,7 @@
 #define X11_PLATFORM_H__
 
 #include "common.h"
-#define OPENGL_INCLUDE_PLATFORM 1
-#include "opengl.h"
+#include "gfx_context.h"
 #include "platform.h"
 
 #include <X11/Xlib.h>
@@ -43,7 +42,7 @@ struct Win_ {
     Window xid;
     XIC ic;
     GC gc;
-    EGLSurface surface;
+    GfxTarget *target;
     bool online;
     int pid;
     int xpos;
@@ -66,16 +65,8 @@ struct Server_ {
     int dpy_height;
     float dpi;
     int depth;
-    struct {
-        EGLDisplay dpy;
-        EGLContext ctx;
-        EGLConfig cfg;
-        struct {
-            EGLint major;
-            EGLint minor;
-        } ver;
-    } egl;
-    Win clients[2];
+    Gfx *gfx;
+    Win clients[1];
 };
 
 #endif

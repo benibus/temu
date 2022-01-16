@@ -16,6 +16,7 @@ set(BIN ${PROJECT_NAME})
 set(SOURCES
     src/fonts.c
     src/fsm.c
+    src/gfx_context.c
     src/keys.c
     src/main.c
     src/opengl.c
@@ -26,21 +27,6 @@ set(SOURCES
     src/utf8.c
     src/utils.c
     src/x11_platform.c
-    src/cells.h
-    src/config.h
-    src/common.h
-    src/fonts.h
-    src/fsm.h
-    src/keymap.h
-    src/opengl.h
-    src/platform.h
-    src/pty.h
-    src/renderer.h
-    src/ring.h
-    src/terminal.h
-    src/utf8.h
-    src/utils.h
-    src/x11_platform.h
 )
 
 add_executable(${BIN} ${SOURCES})

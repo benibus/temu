@@ -20,32 +20,6 @@
 #define OPENGL_INCLUDE_PLATFORM 1
 #include "opengl.h"
 
-void
-egl_print_info(EGLDisplay dpy)
-{
-    if (!dpy) return;
-
-    fprintf(stderr,
-        "\n"
-        "EGL_VERSION     = %s\n"
-        "EGL_VENDOR      = %s\n"
-        "EGL_CLIENT_APIS = %s\n"
-        "\n"
-        "GL_VERSION      = %s\n"
-        "GL_VENDOR       = %s\n"
-        "GL_RENDERER     = %s\n"
-        "GL_SHADING_LANGUAGE_VERSION = %s\n"
-        "\n",
-        eglQueryString(dpy, EGL_VERSION),
-        eglQueryString(dpy, EGL_VENDOR),
-        eglQueryString(dpy, EGL_CLIENT_APIS),
-        glGetString(GL_VERSION),
-        glGetString(GL_VENDOR),
-        glGetString(GL_RENDERER),
-        glGetString(GL_SHADING_LANGUAGE_VERSION)
-    );
-}
-
 GLuint
 gl_compile_shader(const char *src, GLenum type)
 {

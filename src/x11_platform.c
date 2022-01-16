@@ -157,10 +157,7 @@ server_init(void)
     if (!(server.dpy = XOpenDisplay(NULL))) {
         return false;
     }
-    if (!(server.egl.dpy = eglGetDisplay((EGLNativeDisplayType)server.dpy))) {
-        return false;
-    }
-    if (!(eglInitialize(server.egl.dpy, &server.egl.ver.major, &server.egl.ver.minor))) {
+    if (!(server.gfx = gfx_create_context(server.dpy))) {
         return false;
     }
 
@@ -238,28 +235,17 @@ server_init(void)
 #undef INTERN_ATOM
 
     {
-        XVisualInfo template = { 0 };
+        XVisualInfo visreq = { 0 };
         XVisualInfo *visinfo;
         int count_;
-        static const EGLint eglattrs[] = {
-            EGL_RED_SIZE,        8,
-            EGL_GREEN_SIZE,      8,
-            EGL_BLUE_SIZE,       8,
-            EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-            EGL_NONE
-        };
-        EGLint visid, nconfig;
 
-        if (!eglChooseConfig(server.egl.dpy, eglattrs, &server.egl.cfg, 1, &nconfig)) {
+        visreq.visualid = gfx_get_visual_id(server.gfx);
+
+        if (!visreq.visualid) {
             return false;
         }
-        ASSERT(server.egl.cfg && nconfig > 0);
-        if (!eglGetConfigAttrib(server.egl.dpy, server.egl.cfg, EGL_NATIVE_VISUAL_ID, &visid)) {
-            return false;
-        }
-        template.visualid = visid;
 
-        visinfo = XGetVisualInfo(server.dpy, VisualIDMask, &template, &count_);
+        visinfo = XGetVisualInfo(server.dpy, VisualIDMask, &visreq, &count_);
         if (!visinfo) {
             return false;
         }
@@ -270,30 +256,9 @@ server_init(void)
 
         XFree(visinfo);
 
-        eglBindAPI(EGL_OPENGL_ES_API);
-
-        // TODO(ben): Global or window-specific context?
-        server.egl.ctx = eglCreateContext(
-            server.egl.dpy,
-            server.egl.cfg,
-            EGL_NO_CONTEXT,
-            (EGLint []){
-                EGL_CONTEXT_CLIENT_VERSION, 2,
-#if (defined(GL_ES_VERSION_3_2) && BUILD_DEBUG)
-                EGL_CONTEXT_OPENGL_DEBUG, EGL_TRUE,
-#endif
-                EGL_NONE
-            }
-        );
-
-        if (!server.egl.ctx) {
-            dbgprint("Failed to open EGL context");
+        if (!gfx_init_context(server.gfx)) {
             return false;
         }
-
-        EGLint result = 0;
-        eglQueryContext(server.egl.dpy, server.egl.ctx, EGL_CONTEXT_CLIENT_TYPE, &result);
-        ASSERT(result == EGL_OPENGL_ES_API);
     }
 
     server.fd = ConnectionNumber(server.dpy);
@@ -306,11 +271,10 @@ server_init(void)
 }
 
 void
-platform_shutdown()
+platform_shutdown(void)
 {
-    window_make_current(NULL);
-    eglDestroyContext(server.egl.dpy, server.egl.ctx);
-    eglTerminate(server.egl.dpy);
+    gfx_set_target(server.gfx, NULL);
+    gfx_destroy_context(server.gfx);
     XCloseDisplay(server.dpy);
 }
 
@@ -502,38 +466,29 @@ window_create(void)
     query_dimensions(win, &win->width, &win->height);
     query_coordinates(win, &win->xpos, &win->ypos);
 
-    // OpenGL surface initialization
-    win->surface = eglCreateWindowSurface(
-        server.egl.dpy,
-        server.egl.cfg,
-        win->xid,
-        NULL
-    );
-    if (!win->surface) {
+    win->target = gfx_create_target(server.gfx, win->xid);
+
+    if (!win->target) {
         dbgprint("Failed to create EGL surface");
         return NULL;
     }
 
     {
-        EGLint result;
-
-        eglQuerySurface(server.egl.dpy, win->surface, EGL_WIDTH, &result);
-        ASSERT(result == (int)width);
-        eglQuerySurface(server.egl.dpy, win->surface, EGL_HEIGHT, &result);
-        ASSERT(result == (int)height);
-        eglGetConfigAttrib(server.egl.dpy, server.egl.cfg, EGL_SURFACE_TYPE, &result);
-        ASSERT(result & EGL_WINDOW_BIT);
+        int r_width, r_height;
+        gfx_get_target_size(server.gfx, win->target, &r_width, &r_height);
+        ASSERT(r_width  == (int)width);
+        ASSERT(r_height == (int)height);
     }
 
     if (window_make_current(win)) {
-        gl_set_debug_object(win);
-        egl_print_info(server.egl.dpy);
+        gfx_set_debug_object(win);
+        gfx_print_info(server.gfx);
     } else {
         dbgprint("Failed to set current window");
         return NULL;
     }
 
-    eglSwapInterval(server.egl.dpy, 0);
+    gfx_set_vsync(server.gfx, false);
 
     return win;
 }
@@ -542,10 +497,12 @@ void
 window_destroy(Win *win)
 {
     ASSERT(win && win->xid);
-    if (win->surface) {
-        eglDestroySurface(server.egl.dpy, win->surface);
-        window_make_current(NULL);
+    if (win->target) {
+        if (gfx_destroy_target(server.gfx, win->target)) {
+            win->target = NULL;
+        }
     }
+    ASSERT(!win->target);
     XDestroyWindow(server.dpy, win->xid);
     win->online = false;
 }
@@ -679,26 +636,23 @@ window_set_class_hints(Win *win, char *wm_name, char *wm_class)
 bool
 window_online(const Win *win)
 {
+    ASSERT(win);
+
     return win->online;
 }
 
 void
 window_update(const Win *win)
 {
-    eglSwapBuffers(server.egl.dpy, win->surface);
+    ASSERT(win);
+
+    gfx_post_target(server.gfx, win->target);
 }
 
 bool
 window_make_current(const Win *win)
 {
-    if (!eglMakeCurrent(server.egl.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT)) {
-        return false;
-    }
-    if (win && !eglMakeCurrent(server.egl.dpy, win->surface, win->surface, server.egl.ctx)) {
-        return false;
-    }
-
-    return true;
+    return gfx_set_target(server.gfx, (win) ? win->target : NULL);
 }
 
 void
@@ -901,6 +855,8 @@ xhandler_configurenotify(XEvent *event_, Win *win, uint32 time)
 
     win->width  = event->width;
     win->height = event->height;
+
+    gfx_set_target_size(server.gfx, win->target, win->width, win->height);
 }
 
 inline void
