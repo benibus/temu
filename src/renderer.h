@@ -97,5 +97,23 @@ union Vec4U_ {
     struct { uint r, g, b, a; };
 };
 
+#if STD_C11
+  #define VEC__(N,T,...) ((Vec##N##T){{ __VA_ARGS__ }})
+#else
+  #define VEC__(N,T,...) ((Vec##N##T){ __VA_ARGS__ })
+#endif
+
+#define VEC2F(x,y) VEC__(2,F,x,y)
+#define VEC2I(x,y) VEC__(2,I,x,y)
+#define VEC2U(x,y) VEC__(2,U,x,y)
+
+#define VEC3F(x,y,z) VEC__(3,F,x,y,z)
+#define VEC3I(x,y,z) VEC__(3,I,x,y,z)
+#define VEC3U(x,y,z) VEC__(3,U,x,y,z)
+
+#define VEC4F(x,y,z,w) VEC__(4,F,x,y,z,w)
+#define VEC4I(x,y,z,w) VEC__(4,I,x,y,z,w)
+#define VEC4U(x,y,z,w) VEC__(4,U,x,y,z,w)
+
 #endif
 

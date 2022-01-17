@@ -700,10 +700,11 @@ static void emu_osc(Term *, const char *, const int *, int);
     X_(CSI, DECRST,   emu_csi_decrst) \
     X_(CSI, DECDSR,   NULL)
 
+#define OPCODE(esc) OP##esc
 // Define opcodes for C1 and CSI escape sequences
 enum {
     NOOP,
-#define X_(group,opcode,...) JOIN(OP, opcode),
+#define X_(group,name,...) OPCODE(name),
     HANDLER_TABLE
 #undef X_
 };
@@ -719,15 +720,16 @@ struct HandlerInfo {
 // Define table entries for C1 and CSI escape sequences
 static const struct HandlerInfo dispatch_table[] = {
     [NOOP] = { .group = "UNK" },
-#define X_(group_,opcode_,func_) [JOIN(OP, opcode_)] = { \
+#define X_(group_,name_,func_) [OPCODE(name_)] = { \
     .group = #group_,  \
-    .name  = #opcode_, \
+    .name  = #name_,   \
     .func  = func_     \
 },
     HANDLER_TABLE
 #undef X_
 };
 
+#undef OPCODE
 #undef HANDLER_TABLE
 
 #include <unistd.h> // for isatty()

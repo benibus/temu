@@ -105,6 +105,11 @@ typedef struct {
     uint32 max;
 } String;
 
+#define XPASTE__(a,b) a##b
+#define XPASTE(a,b)   XPASTE__(a,b)
+#define XSTRING__(s)  #s
+#define XSTRING(s)    XSTRING__(s)
+
 #define MIN(a,b)        (((a) < (b)) ? (a) : (b))
 #define MAX(a,b)        (((a) > (b)) ? (a) : (b))
 #define CLAMP(n,a,b)    (((n) < (a)) ? (a) : (((n) > (b)) ? (b) : (n)))
@@ -114,18 +119,8 @@ typedef struct {
 #define DEFAULT(v1,v2)  ((!!(v1)) ? (v1) : (v2))
 #define ALIGN_DOWN(n,a) ((n) & ~((a) - 1))
 #define ALIGN_UP(n,a)   (((n) + ((a) - 1)) & ~((a) - 1))
-#define JOIN(a,b)       a##b
 
-#if STD_C11
-  #define vecx(...) {{ __VA_ARGS__ }}
-#else
-  #define vecx(...) { __VA_ARGS__ }
-#endif
-
-#define vec2(x_,y_)       vecx((x_), (y_))
-#define vec3(x_,y_,z_)    vecx((x_), (y_), (z_))
-#define vec4(x_,y_,z_,w_) vecx((x_), (y_), (z_), (w_))
-
+// TODO(ben): Move these
 #define pack_rgb(r,g,b)    ((((r)&0xff)<<16)|(((g)&0xff)<<8)|((b)&0xff))
 #define pack_bgr(r,g,b)    ((((b)&0xff)<<16)|(((g)&0xff)<<8)|((r)&0xff))
 #define pack_rgba(r,g,b,a) ((((r)&0xff)<<24)|(((g)&0xff)<<16)|(((b)&0xff)<<8)|((a)&0xff))

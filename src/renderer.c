@@ -134,7 +134,7 @@ static const char shader_frag[] =
 static inline Vec4F
 unpack_argb(uint32 argb)
 {
-    return (Vec4F)vec4(
+    return VEC4F(
         ((argb & 0x00ff0000) >> 16) / 255.f,
         ((argb & 0x0000ff00) >>  8) / 255.f,
         ((argb & 0x000000ff) >>  0) / 255.f,
@@ -172,10 +172,10 @@ renderer_draw_frame(const Frame *frame, FontSet *fontset)
                 cell.attrs & (ATTR_BOLD|ATTR_ITALIC),
                 cell.ucs4
             );
-            rc.instances[at].screen_pos = (Vec2U)vec2(ix, iy);
+            rc.instances[at].screen_pos = VEC2U(ix, iy);
             rc.instances[at].texid      = tex.id;
-            rc.instances[at].tile_pos   = (Vec2F)vec2(tex.u, tex.v);
-            rc.instances[at].tile_size  = (Vec2F)vec2(tex.w, tex.h);
+            rc.instances[at].tile_pos   = VEC2F(tex.u, tex.v);
+            rc.instances[at].tile_size  = VEC2F(tex.w, tex.h);
             if (cell.attrs & ATTR_INVERT) {
                 rc.instances[at].color_bg = unpack_argb(cell.fg);
                 rc.instances[at].color_fg = unpack_argb(cell.bg);
@@ -193,10 +193,10 @@ renderer_draw_frame(const Frame *frame, FontSet *fontset)
     if (frame->cursor.visible) {
         if (!cinst) {
             cinst = &rc.instances[at++];
-            cinst->screen_pos = (Vec2U)vec2(cx, cy);
+            cinst->screen_pos = VEC2U(cx, cy);
             cinst->texid      = 0;
-            cinst->tile_pos   = (Vec2F)vecx(0);
-            cinst->tile_size  = (Vec2F)vecx(0);
+            cinst->tile_pos   = VEC2F(0, 0);
+            cinst->tile_size  = VEC2F(0, 0);
         }
         cinst->color_bg = fg;
         cinst->color_fg = bg;
