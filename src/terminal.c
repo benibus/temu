@@ -253,19 +253,15 @@ term_pull(Term *term, uint32 msec)
     ASSERT(msec < 1E3);
 
     size_t accum = 0;
-    const uint32 basetime = timer_msec(NULL);
+    size_t len;
+    const int basetime = timer_msec(NULL);
     int timeout = msec;
 
     do {
-        size_t len = pty_read(term->mfd, term->input, LEN(term->input), timeout);
-        if (!len) {
-            timeout = 0;
-        } else {
-            term_consume(term, term->input, len);
-            accum += len;
-            timeout -= (timer_msec(NULL) - basetime);
-        }
-    } while (timeout > 0);
+        len = pty_read(term->mfd, term->input, LEN(term->input), timeout);
+        accum += len;
+        timeout -= timer_msec(NULL) - basetime;
+    } while (term_consume(term, term->input, len) && timeout > 0);
 
     return accum;
 }

@@ -42,9 +42,9 @@
     exit(1);               \
 } while (0)
 
-static void sys_sigchld(int);
-static void signal_reset(int signo);
-static void signal_handle(int signo, siginfo_t *info, void *context);
+static void setup_parent_signals(void);
+static void reset_signal(int signo);
+static void on_signal(int signo, siginfo_t *info, void *context);
 
 int
 pty_init(const char *shell, int *mfd_, int *sfd_)
@@ -59,9 +59,11 @@ pty_init(const char *shell, int *mfd_, int *sfd_)
         FATAL("openpty");
     }
 
+    setup_parent_signals();
+
     switch ((pid = fork())) {
     case -1: // fork failed
-        FATAL("fork()");
+        FATAL("fork");
     case 0: { // child process
         setsid();
 
@@ -78,14 +80,14 @@ pty_init(const char *shell, int *mfd_, int *sfd_)
 
         const struct passwd *pwd = getpwuid(getuid());
         if (!pwd) {
-            FATAL("getpwuid()");
+            FATAL("getpwuid");
         }
 
-        if (!shell || !*shell) {
+        if (strempty(shell)) {
             shell = getenv("SHELL");
-            if (!shell || !*shell) {
+            if (strempty(shell)) {
                 shell = pwd->pw_shell;
-                if (!shell || !*shell) {
+                if (strempty(shell)) {
                     shell = "/bin/sh";
                 }
             }
@@ -99,7 +101,7 @@ pty_init(const char *shell, int *mfd_, int *sfd_)
 
         static const int signals[] = { SIGCHLD, SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGALRM };
         for (uint i = 0; i < LEN(signals); i++) {
-            signal_reset(signals[i]);
+            reset_signal(signals[i]);
         }
 
         execlp(shell, shell, (char *)NULL);
@@ -109,16 +111,6 @@ pty_init(const char *shell, int *mfd_, int *sfd_)
     }
     default: // parent process
         close(sfd);
-
-        struct sigaction sa = {
-            .sa_sigaction = signal_handle,
-            .sa_flags = SA_SIGINFO|SA_RESTART|SA_NOCLDSTOP
-        };
-        if (sigaction(SIGCHLD, &sa, NULL) < 0) {
-            FATAL("Failed to install SIGCHLD handler");
-        }
-        signal_reset(SIGINT);
-        signal_reset(SIGQUIT);
         break;
     }
 
@@ -129,10 +121,10 @@ pty_init(const char *shell, int *mfd_, int *sfd_)
 }
 
 void
-pty_hangup(int pid)
+pty_hangup(int cpid)
 {
-    if (pid) {
-        kill(pid, SIGHUP);
+    if (cpid) {
+        kill(cpid, SIGHUP);
     }
 }
 
@@ -140,6 +132,8 @@ size_t
 pty_read(int mfd, uchar *buf, size_t len, uint32 msec)
 {
     ASSERT(mfd > 0);
+
+    errno = 0;
 
     fd_set rset;
     FD_ZERO(&rset);
@@ -167,6 +161,8 @@ pty_write(int mfd, const uchar *buf, size_t len)
     size_t idx = 0;
     fd_set wset;
 
+    errno = 0;
+
     while (idx < len) {
         FD_ZERO(&wset);
         FD_SET(mfd, &wset);
@@ -193,6 +189,8 @@ pty_resize(int mfd, int cols, int rows, int colsize, int rowsize)
 {
     ASSERT(mfd > 0);
 
+    errno = 0;
+
     struct winsize spec = {
         .ws_col = cols,
         .ws_row = rows,
@@ -206,8 +204,28 @@ pty_resize(int mfd, int cols, int rows, int colsize, int rowsize)
 }
 
 void
-signal_reset(int signo)
+on_signal(int signo, siginfo_t *info, void *context)
 {
+    UNUSED(context);
+
+    int status;
+
+    if (signo == SIGCHLD) {
+        // Acknowledge the child's exit to avoid creating a zombie process
+        waitpid(info->si_pid, &status, WNOHANG);
+#if 0
+        if (WIFEXITED(status) && WEXITSTATUS(status)) {
+            dbgprint("(CPID: %d) exited with code %d", info->si_pid, WEXITSTATUS(status));
+        }
+#endif
+    }
+}
+
+void
+reset_signal(int signo)
+{
+    errno = 0;
+
     if (sigaction(signo, &(struct sigaction){ .sa_handler = SIG_DFL }, NULL) < 0) {
         FATAL("Failed to install signal(%d) handler", signo);
     }
@@ -215,32 +233,19 @@ signal_reset(int signo)
 }
 
 void
-signal_handle(int signo, siginfo_t *info, void *context)
+setup_parent_signals(void)
 {
-    UNUSED(context);
+    struct sigaction sa = {
+        .sa_sigaction = on_signal,
+        .sa_flags = SA_SIGINFO|SA_RESTART|SA_NOCLDSTOP
+    };
 
-    switch (signo) {
-    case SIGCHLD: {
-        int status;
-        waitpid(info->si_pid, &status, WNOHANG);
-
-        /* FIXME(ben):
-         * The forked process exits with 1 after manually sending SIGHUP (i.e. after window close)
-         * so we can't reliably pass-on the child's return value.
-         * There's probably something I'm missing here...
-         */
-#if 0
-        dbgprint("Handling SIGCHLD (pid = %hd), status = %d", info->si_pid, status);
-        if (WIFEXITED(status) && WEXITSTATUS(status)) {
-            dbgprint("Child exited with code %d", WEXITSTATUS(status));
-        }
-#endif
-
-        _exit(0);
+    if (sigaction(SIGCHLD, &sa, NULL) < 0) {
+        FATAL("Failed to install SIGCHLD handler");
     }
-    default:
-        break;
-    }
+
+    reset_signal(SIGINT);
+    reset_signal(SIGQUIT);
 }
 
 #undef FATAL

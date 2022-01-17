@@ -280,7 +280,7 @@ error_invalid:
     termcfg.handlers.set_icon  = on_osc_set_icon;
 
     dbgprint(
-        "Creating virtual terminal...\n"
+        "Creating terminal...\n"
         "    shell     = %s\n"
         "    histlines = %u\n"
         "    tabspaces = %u",
@@ -290,9 +290,9 @@ error_invalid:
     );
 
     if ((app->term = term_create(&termcfg))) {
-        dbgprint("Virtual terminal created");
+        dbgprint("Terminal created");
     } else {
-        dbgprint("Failed to create virtual terminal");
+        dbgprint("Failed to create terminal");
         return EXIT_FAILURE;
     }
 
@@ -324,77 +324,60 @@ run(App *app)
     window_make_current(app->win);
 
     if (!window_online(app->win)) {
-        return 0;
+        dbgprint("Window is not online");
+        return EXIT_FAILURE;
     }
 
     int result = 0;
+
     const int srvfd = window_get_fileno(app->win);
+    ASSERT(srvfd);
     const int ptyfd = term_exec(term, app->prefs.shell);
 
-    if (ptyfd && srvfd) {
-        dbgprint("Virtual terminal online. FD = %d", ptyfd);
+    if (ptyfd) {
+        dbgprint("Terminal online. FD = %d", ptyfd);
     } else {
-        dbgprint("Failed to start virtual terminal");
+        dbgprint("Failed to start terminal");
         result = EXIT_FAILURE;
-        goto quit;
     }
 
-    do {
-        renderer_draw_frame(term_generate_frame(term), app->fontset);
-        window_update(app->win);
-    } while (window_poll_events(app->win));
-
-    struct pollfd pollset[] = {
+    struct pollfd pollset[2] = {
         { .fd = ptyfd, .events = POLLIN, .revents = 0 },
         { .fd = srvfd, .events = POLLIN, .revents = 0 }
     };
 
-    static_assert(LEN(pollset) == 2, "Unexpected pollset size");
+    static const int rate = 16;
+    bool hangup = false;
+    bool draw = true;
 
-    // Target polling rate
-    static const uint32 msec = 16;
-
-    while (window_online(app->win)) {
-        const uint32 basetime = timer_msec(NULL);
-        bool draw = true;
-
-        switch (poll(pollset, LEN(pollset), msec)) {
-        case -1:
-            if (errno) {
-                perror("poll()");
-            }
-            result = errno;
-            goto quit;
-        case 0:
-            if (!window_poll_events(app->win)) {
-                draw = false;
-            }
-            break;
-        case LEN(pollset) - 1:
-            if (pollset[0].revents & POLLIN) {
-#if 1
-                const int timeout = 0;
-#else
-                const int timeout = msec - (timer_msec(NULL) - basetime);
-#endif
-                term_pull(term, MAX(timeout, 0));
-            } else {
-                if (!window_poll_events(app->win)) {
-                    draw = false;
-                }
-            }
-            break;
-        case LEN(pollset):
-            break;
-        }
-
-        if (draw && window_online(app->win)) {
+    while (!result && !hangup && window_online(app->win)) {
+        if (draw) {
             renderer_draw_frame(term_generate_frame(app->term), app->fontset);
             window_update(app->win);
         }
+
+        draw = false;
+
+        errno = 0;
+        const int status = poll(pollset, LEN(pollset), rate);
+
+        if (status < 0) {
+            printerr("ERROR poll: %s\n", strerror(errno));
+            result = DEFAULT(errno, EXIT_FAILURE); // paranoia
+        } else if (!status) {
+            draw = !!window_poll_events(app->win);
+        } else if ((pollset[0].revents|pollset[1].revents) & POLLHUP) {
+            hangup = true;
+        } else {
+            if (pollset[0].revents & POLLIN) {
+                draw = !!term_pull(term, 0);
+            }
+            if (pollset[1].revents & POLLIN) {
+                draw = !!window_poll_events(app->win);
+            }
+        }
     }
 
-quit:
     window_destroy(app->win);
 
     return result;
