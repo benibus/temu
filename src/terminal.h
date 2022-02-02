@@ -21,55 +21,61 @@
 #include "common.h"
 #include "cells.h"
 #include "ring.h"
+#include "fonts.h"
+
+typedef void TermFuncSetTitle(void *, const char *, size_t);
+typedef void TermFuncSetIcon(void *, const char *, size_t);
+typedef void TermFuncSetProp(void *, const char *, size_t);
+
+typedef struct { void *param; TermFuncSetTitle *func; } TermCallbackSetTitle;
+typedef struct { void *param; TermFuncSetIcon  *func; } TermCallbackSetIcon;
+typedef struct { void *param; TermFuncSetProp  *func; } TermCallbackSetProp;
 
 typedef struct {
-    void (*set_title)(void *param, const char *title, size_t len);
-    void (*set_icon)(void *param, const char *title, size_t len);
-    void (*set_property)(void *param, const char *title, size_t len);
-} TermHandlers;
+    TermCallbackSetTitle settitle;
+    TermCallbackSetIcon  seticon;
+    TermCallbackSetProp  setprop;
+} TermCallbacks;
 
 typedef struct {
-    void *param;
-    char *shell;
-    uint16 cols, rows;
-    uint16 colsize, rowsize;
-    uint16 tabcols;
-    uint16 histlines;
-    uint32 color_bg;
-    uint32 color_fg;
-    uint32 colors[16];
-    TermHandlers handlers;
-} TermConfig;
+    union {
+        uint32 base16[16];
+        uint32 base256[256];
+    };
+    uint32 bg;
+    uint32 fg;
+} TermColors;
 
 #define IOBUF_MAX (4096)
 
 typedef struct {
-    int pid;                // PTY PID
-    int mfd;                // PTY master file descriptor
-    int sfd;                // PTY slave file descriptor
+    int pid; // PTY PID
+    int mfd; // PTY master file descriptor
+    int sfd; // PTY slave file descriptor
     uchar input[IOBUF_MAX]; // PTY input buffer
 
-    Ring *ring;
-    Ring *ring_prim;
-    Ring *ring_alt;
-    uint8 *tabstops;
+    FontSet *fonts;
 
-    int cols;
-    int rows;
-    int max_cols;
-    int max_rows;
+    Ring *rings[2];  // Primary/alternate screen buffers
+    Ring *ring;      // Current screen buffer
 
-    int colsize;
-    int rowsize;
-    int histlines;
-    int tabcols;
+    uint8 *tabstops; // Current tabstop columns
+    int tabcols;     // Columns per horizontal tab
 
-    int x;
-    int y;
+    int cols;      // Current screen columns
+    int rows;      // Current screen rows
+    int max_cols;  // Maximum prior screen columns
+    int max_rows;  // Maximum prior screen rows
+    int colpx;     // Horizontal cell size in pixels
+    int rowpx;     // Vertical cell size in pixels
+    int histlines; // Maximum lines in scrollback history
 
-    bool wrapnext;
-    bool hidecursor;
-    bool altscreen;
+    int x; // Current cursor column
+    int y; // Current cursor row
+
+    bool wrapnext;   // Wrap cursor before next write
+    bool hidecursor; // Cursor is manually hidden
+    bool altscreen;  // Alternate screen is active
 
     Frame frame;
     Cell cell;
@@ -77,9 +83,7 @@ typedef struct {
     uint32 crs_color;
     CursorDesc saved_crs;
 
-    uint32 color_bg;
-    uint32 color_fg;
-    uint32 colors[16];
+    TermColors colors;
 
     struct Parser {
         uint state;      // Current FSM state
@@ -92,40 +96,39 @@ typedef struct {
         bool overflow;   // Numeric paramater overflowed
     } parser;
 
-    void *param;
-#if 1
-    TermHandlers handlers;
-#else
-    struct TermHandlers {
-        void (*set_title)(void *param, const char *title, size_t len);
-        void (*set_icon)(void *param, const char *title, size_t len);
-        void (*set_property)(void *param, const char *title, size_t len);
-    } handlers;
-#endif
+    TermCallbacks callbacks;
 } Term;
 
-Term *term_create(const TermConfig *cfg);
+Term *term_create(uint16 histlines, uint8 tabcols);
+void term_resize(Term *term, uint width, uint height);
+
 void term_destroy(Term *term);
-bool term_init(Term *term, const TermConfig *cfg);
-int term_exec(Term *, const char *);
+int term_exec(Term *term, const char *shell, int argc, const char *const *argv);
 size_t term_pull(Term *, uint32);
 size_t term_push(Term *, const void *, size_t);
 size_t term_push_input(Term *term, uint key, uint mod, const uchar *text, size_t len);
 size_t term_consume(Term *, const uchar *, size_t);
 void term_scroll(Term *, int);
 void term_reset_scroll(Term *);
-void term_resize(Term *, int, int);
 int term_cols(const Term *term);
 int term_rows(const Term *term);
-Cell *term_get_row(const Term *, int);
-Cell term_get_cell(const Term *, int, int);
-bool term_get_cursor(const Term *, CursorDesc *);
 size_t term_make_key_string(const Term *, uint, uint, char *, size_t);
 Cell *term_get_framebuffer(Term *);
 Frame *term_generate_frame(Term *);
-void term_setup_handlers(Term *term, void *param, TermHandlers handlers);
+
+void term_set_background_color(Term *term, uint32 color);
+void term_set_foreground_color(Term *term, uint32 color);
+void term_set_default_colors(Term *term, uint32 bg_color, uint32 fg_color);
+void term_set_base16_color(Term *term, uint8 idx, uint32 color);
+void term_set_base256_color(Term *term, uint8 idx, uint32 color);
+void term_set_display(Term *term, FontSet *fonts, uint width, uint height);
+
+void term_callback_settitle(Term *term, void *param, TermFuncSetTitle *func);
+void term_callback_seticon(Term *term, void *param, TermFuncSetIcon *func);
+void term_callback_setprop(Term *term, void *param, TermFuncSetProp *func);
 
 void term_print_history(const Term *);
 void term_print_stream(const Term *);
 
 #endif
+

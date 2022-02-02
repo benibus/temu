@@ -29,7 +29,7 @@ static const AppPrefs default_prefs = {
     .cols = 140,
     .rows = 40,
     .tabcols = 8,
-    .padding = 0,
+    .border = 0,
     .histlines = 128,
     .colors = {
         "#18191B", // Background

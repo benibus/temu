@@ -34,57 +34,10 @@
 static uchar *dbginput; // For human-readable printing
 #endif
 
-/*
- * LUT for the standard terminal RGB values. 0-15 may be overridden by the user.
- * https://wikipedia.org/wiki/ANSI_escape_code#Colors
- *
- * [0x00...0x07] Normal colors
- * [0x08...0x0f] High-intensity colors
- * [0x10...0xe7] 6x6x6 color cube
- * [0xe8...0xff] Grayscale (dark -> light)
- *
- */
-static const uint32 rgb_presets[256] = {
-    0x000000, 0x800000, 0x008000, 0x808000, 0x000080, 0x800080, 0x008080, 0xc0c0c0,
-    0x808080, 0xff0000, 0x00ff00, 0xffff00, 0x0000ff, 0xff00ff, 0x00ffff, 0xffffff,
-    0x000000, 0x00005f, 0x000087, 0x0000af, 0x0000d7, 0x0000ff, 0x005f00, 0x005f5f,
-    0x005f87, 0x005faf, 0x005fd7, 0x005fff, 0x008700, 0x00875f, 0x008787, 0x0087af,
-    0x0087d7, 0x0087ff, 0x00af00, 0x00af5f, 0x00af87, 0x00afaf, 0x00afd7, 0x00afff,
-    0x00d700, 0x00d75f, 0x00d787, 0x00d7af, 0x00d7d7, 0x00d7ff, 0x00ff00, 0x00ff5f,
-    0x00ff87, 0x00ffaf, 0x00ffd7, 0x00ffff, 0x5f0000, 0x5f005f, 0x5f0087, 0x5f00af,
-    0x5f00d7, 0x5f00ff, 0x5f5f00, 0x5f5f5f, 0x5f5f87, 0x5f5faf, 0x5f5fd7, 0x5f5fff,
-    0x5f8700, 0x5f875f, 0x5f8787, 0x5f87af, 0x5f87d7, 0x5f87ff, 0x5faf00, 0x5faf5f,
-    0x5faf87, 0x5fafaf, 0x5fafd7, 0x5fafff, 0x5fd700, 0x5fd75f, 0x5fd787, 0x5fd7af,
-    0x5fd7d7, 0x5fd7ff, 0x5fff00, 0x5fff5f, 0x5fff87, 0x5fffaf, 0x5fffd7, 0x5fffff,
-    0x870000, 0x87005f, 0x870087, 0x8700af, 0x8700d7, 0x8700ff, 0x875f00, 0x875f5f,
-    0x875f87, 0x875faf, 0x875fd7, 0x875fff, 0x878700, 0x87875f, 0x878787, 0x8787af,
-    0x8787d7, 0x8787ff, 0x87af00, 0x87af5f, 0x87af87, 0x87afaf, 0x87afd7, 0x87afff,
-    0x87d700, 0x87d75f, 0x87d787, 0x87d7af, 0x87d7d7, 0x87d7ff, 0x87ff00, 0x87ff5f,
-    0x87ff87, 0x87ffaf, 0x87ffd7, 0x87ffff, 0xaf0000, 0xaf005f, 0xaf0087, 0xaf00af,
-    0xaf00d7, 0xaf00ff, 0xaf5f00, 0xaf5f5f, 0xaf5f87, 0xaf5faf, 0xaf5fd7, 0xaf5fff,
-    0xaf8700, 0xaf875f, 0xaf8787, 0xaf87af, 0xaf87d7, 0xaf87ff, 0xafaf00, 0xafaf5f,
-    0xafaf87, 0xafafaf, 0xafafd7, 0xafafff, 0xafd700, 0xafd75f, 0xafd787, 0xafd7af,
-    0xafd7d7, 0xafd7ff, 0xafff00, 0xafff5f, 0xafff87, 0xafffaf, 0xafffd7, 0xafffff,
-    0xd70000, 0xd7005f, 0xd70087, 0xd700af, 0xd700d7, 0xd700ff, 0xd75f00, 0xd75f5f,
-    0xd75f87, 0xd75faf, 0xd75fd7, 0xd75fff, 0xd78700, 0xd7875f, 0xd78787, 0xd787af,
-    0xd787d7, 0xd787ff, 0xd7af00, 0xd7af5f, 0xd7af87, 0xd7afaf, 0xd7afd7, 0xd7afff,
-    0xd7d700, 0xd7d75f, 0xd7d787, 0xd7d7af, 0xd7d7d7, 0xd7d7ff, 0xd7ff00, 0xd7ff5f,
-    0xd7ff87, 0xd7ffaf, 0xd7ffd7, 0xd7ffff, 0xff0000, 0xff005f, 0xff0087, 0xff00af,
-    0xff00d7, 0xff00ff, 0xff5f00, 0xff5f5f, 0xff5f87, 0xff5faf, 0xff5fd7, 0xff5fff,
-    0xff8700, 0xff875f, 0xff8787, 0xff87af, 0xff87d7, 0xff87ff, 0xffaf00, 0xffaf5f,
-    0xffaf87, 0xffafaf, 0xffafd7, 0xffafff, 0xffd700, 0xffd75f, 0xffd787, 0xffd7af,
-    0xffd7d7, 0xffd7ff, 0xffff00, 0xffff5f, 0xffff87, 0xffffaf, 0xffffd7, 0xffffff,
-    0x080808, 0x121212, 0x1c1c1c, 0x262626, 0x303030, 0x3a3a3a, 0x444444, 0x4e4e4e,
-    0x585858, 0x626262, 0x6c6c6c, 0x767676, 0x808080, 0x8a8a8a, 0x949494, 0x9e9e9e,
-    0xa8a8a8, 0xb2b2b2, 0xbcbcbc, 0xc6c6c6, 0xd0d0d0, 0xdadada, 0xe4e4e4, 0xeeeeee
-};
-
-#define VTCOLOR(idx) (rgb_presets[(idx)])
-
 #define CELLINIT(t) (Cell){  \
     .ucs4  = ' ',            \
-    .bg    = (t)->color_bg,  \
-    .fg    = (t)->color_fg,  \
+    .bg    = (t)->colors.bg,  \
+    .fg    = (t)->colors.fg,  \
     .type  = CellTypeNormal, \
     .width = 1,              \
     .attrs = 0,              \
@@ -113,69 +66,165 @@ static void set_cursor_style(Term *, int);
 
 static void do_action(Term *, StateCode, ActionCode, uchar);
 
-Term *
-term_create(const TermConfig *cfg)
-{
-    Term *term = xmalloc(1, sizeof(*term));
+#define XCALLBACK_(M,T) \
+void term_callback_##M(Term *term, void *param, TermFunc##T *func) { \
+    ASSERT(term);                                                    \
+    term->callbacks.M.param = DEFAULT(param, term);                  \
+    term->callbacks.M.func  = func;                                  \
+}
+XCALLBACK_(settitle, SetTitle)
+XCALLBACK_(seticon,  SetIcon)
+XCALLBACK_(setprop,  SetProp)
+#undef XCALLBACK_
 
-    if (cfg && !term_init(term, cfg)) {
-        free(term);
-    }
+static void alloc_frame(Frame *, uint16, uint16);
+static void alloc_tabstops(uint8 **, uint16, uint16, uint16);
+static void init_color_table(Term *);
+static void init_parser(Term *);
+static void update_dimensions(Term *, uint16, uint16);
+
+Term *
+term_create(uint16 histlines, uint8 tabcols)
+{
+    Term *term = xcalloc(1, sizeof(*term));
+
+    term->histlines = round_pow2(DEFAULT(histlines, 1024));
+    term->tabcols = DEFAULT(tabcols, 8);
+    init_color_table(term);
 
     return term;
 }
 
-bool
-term_init(Term *term, const TermConfig *cfg)
+void
+term_set_display(Term *term, FontSet *fonts, uint width, uint height)
 {
+    // Sanity checks, since we can only be half-initialized by this point
     ASSERT(term);
+    ASSERT(!term->ring);
+    ASSERT(term->histlines);
+    ASSERT(term->tabcols);
+    ASSERT(fonts);
+    ASSERT(width);
+    ASSERT(height);
 
-    memclear(term, 1, sizeof(*term));
+    // Query the nominal cell resolution. This was already done by the caller to set the
+    // initial window size, but we're doing it again here since we're going to start using
+    // the primary font API within the terminal anyway
+    fontset_get_metrics(fonts, &term->colpx, &term->rowpx, NULL, NULL);
 
-    term->cols = cfg->cols;
-    term->rows = cfg->rows;
-    term->max_cols = term->cols;
-    term->max_rows = term->rows;
-    term->histlines = round_pow2(cfg->histlines);
+    ASSERT(term->rowpx > 0);
+    ASSERT(term->colpx > 0);
 
-    term->ring_prim = ring_create(term->histlines, term->cols, term->rows);
-    term->ring_alt  = ring_create(term->rows, term->cols, term->rows);
-    term->ring = term->ring_prim;
-    term->frame.cells = xcalloc(term->cols * term->rows, sizeof(*term->frame.cells));
+    term->fonts = fonts;
+    term->cols = (int)width / term->colpx;
+    term->rows = (int)height / term->rowpx;
 
-    term->tabcols = cfg->tabcols;
-    term->tabstops = xcalloc(term->cols, sizeof(*term->tabstops));
-    for (int i = 0; ++i < term->cols; ) {
-        term->tabstops[i] |= (i % term->tabcols == 0) ? 1 : 0;
+    if (term->rows > term->histlines) {
+        term->histlines = round_pow2(term->rows);
     }
 
-    arr_reserve(term->parser.data, 4);
+    term->rings[0] = ring_create(term->histlines, term->cols, term->rows);
+    term->rings[1] = ring_create(term->rows, term->cols, term->rows);
+    term->ring = term->rings[0];
 
-    term->color_bg = cfg->color_bg;
-    term->color_fg = cfg->color_fg;
+    alloc_frame(&term->frame, term->cols, term->rows);
+    alloc_tabstops(&term->tabstops, 0, term->cols, term->tabcols);
 
-    static_assert(LEN(term->colors) == LEN(cfg->colors), "User colors array mismatch.");
+    update_dimensions(term, term->cols, term->rows);
+}
 
-    for (uint i = 0; i < LEN(term->colors); i++) {
-        if (cfg->colors[i]) {
-            term->colors[i] = cfg->colors[i];
+void
+init_color_table(Term *term)
+{
+    ASSERT(term);
+    static_assert(LEN(term->colors.base256) == 256, "Invalid color table size");
+
+    memset(term->colors.base256, 0, sizeof(term->colors.base256));
+
+    // Default standard colors (0-15)
+    static const uint32 base16[16] = {
+        0x000000, 0x800000, 0x008000, 0x808000, 0x000080, 0x800080, 0x008080, 0xc0c0c0,
+        0x808080, 0xff0000, 0x00ff00, 0xffff00, 0x0000ff, 0xff00ff, 0x00ffff, 0xffffff
+    };
+
+    uint32 *const table = term->colors.base256;
+
+    for (uint i = 0; i < 256; i++) {
+        if (i < 16) {
+            table[i] = base16[i];
+        } else if (i < 232) {
+            // 6x6x6 color cube (16-231)
+            uint8 n;
+            table[i] |= ((n = ((i - 16) / 36) % 6) ? 40 * n + 55 : 0) << 16;
+            table[i] |= ((n = ((i - 16) /  6) % 6) ? 40 * n + 55 : 0) <<  8;
+            table[i] |= ((n = ((i - 16) /  1) % 6) ? 40 * n + 55 : 0) <<  0;
         } else {
-            term->colors[i] = VTCOLOR(i);
+            // Grayscale from darkest to lightest (232-255)
+            const uint8 k = (i - 232) * 10 + 8;
+            table[i] |= k << 16;
+            table[i] |= k <<  8;
+            table[i] |= k <<  0;
         }
     }
 
+    term->colors.bg = table[0];
+    term->colors.fg = table[7];
+}
+
+void
+term_set_background_color(Term *term, uint32 color)
+{
+    ASSERT(term);
+
+    term->colors.bg = (color & 0xffffff);
+}
+
+void
+term_set_foreground_color(Term *term, uint32 color)
+{
+    ASSERT(term);
+
+    term->colors.fg = (color & 0xffffff);
+}
+
+void
+term_set_default_colors(Term *term, uint32 bg_color, uint32 fg_color)
+{
+    ASSERT(term);
+
+    term_set_background_color(term, bg_color);
+    term_set_foreground_color(term, fg_color);
+}
+
+void
+term_set_base16_color(Term *term, uint8 idx, uint32 color)
+{
+    ASSERT(term);
+    ASSERT(idx < 16);
+
+    term_set_base256_color(term, (idx & 0xf), color);
+}
+
+void
+term_set_base256_color(Term *term, uint8 idx, uint32 color)
+{
+    ASSERT(term);
+
+    term->colors.base256[idx] = (color & 0xffffff);
+}
+
+void
+init_parser(Term *term)
+{
+    ASSERT(term);
+
+    // Default cell
     term->cell.width = 1;
-    term->cell.bg = term->color_bg;
-    term->cell.fg = term->color_fg;
+    term->cell.bg = term->colors.bg;
+    term->cell.fg = term->colors.fg;
     term->cell.attrs = 0;
 
-    term->colsize = cfg->colsize;
-    term->rowsize = cfg->rowsize;
-
-    term->param = cfg->param;
-    term->handlers = cfg->handlers;
-
-    return true;
+    arr_reserve(term->parser.data, 4);
 }
 
 void
@@ -189,8 +238,8 @@ term_destroy(Term *term)
     if (term->tabstops) {
         free(term->tabstops);
     }
-    ring_destroy(term->ring_prim);
-    ring_destroy(term->ring_alt);
+    ring_destroy(term->rings[0]);
+    ring_destroy(term->rings[1]);
     term->ring = NULL;
     pty_hangup(term->pid);
     free(term);
@@ -201,11 +250,17 @@ term_destroy(Term *term)
 }
 
 int
-term_exec(Term *term, const char *shell)
+term_exec(Term *term, const char *shell, int argc, const char *const *argv)
 {
+    UNUSED(argc);
+    UNUSED(argv);
+
+    ASSERT(term);
+
     if (!term->pid) {
+        init_parser(term);
         term->pid = pty_init(shell, &term->mfd, &term->sfd);
-        pty_resize(term->mfd, term->cols, term->rows, term->colsize, term->rowsize);
+        pty_resize(term->mfd, term->cols, term->rows, term->colpx, term->rowpx);
     }
 
     return term->mfd;
@@ -225,10 +280,10 @@ term_generate_frame(Term *term)
     frame->cursor.col = term->x;
     frame->cursor.row = term->y;
     frame->cursor.style = term->crs_style;
-    frame->cursor.color = term->color_fg;
+    frame->cursor.color = term->colors.fg;
     frame->time = timer_msec(NULL);
-    frame->default_bg = term->color_bg;
-    frame->default_fg = term->color_fg;
+    frame->default_bg = term->colors.bg;
+    frame->default_fg = term->colors.fg;
 
     if (!term->hidecursor && check_visible(term->ring, term->x, term->y)) {
         frame->cursor.visible = true;
@@ -283,50 +338,97 @@ term_reset_scroll(Term *term)
 }
 
 void
-term_resize(Term *term, int cols, int rows)
+alloc_frame(Frame *frame, uint16 cols_, uint16 rows_)
 {
-    cols = MAX(cols, 1);
-    rows = MAX(rows, 1);
+    ASSERT(frame);
 
-    if (cols != term->cols || rows != term->rows) {
-        if (cols > term->max_cols || rows > term->max_rows) {
-            term->max_cols = MAX(cols, term->max_cols);
-            term->max_rows = MAX(rows, term->max_rows);
-            term->frame.cells = xrealloc(
-                term->frame.cells,
-                term->max_cols * term->max_rows,
-                sizeof(*term->frame.cells)
-            );
+    const int cols = MAX((int)cols_, frame->cols);
+    const int rows = MAX((int)rows_, frame->rows);
+
+    if (cols && rows && (cols > frame->cols || rows > frame->rows)) {
+        if (!frame->cells) {
+            frame->cells = xcalloc(cols * rows, sizeof(*frame->cells));
+        } else {
+            frame->cells = xrealloc(frame->cells, cols * rows, sizeof(*frame->cells));
         }
+        frame->cols = cols;
+        frame->rows = rows;
+    }
+}
 
-        if (cols != term->cols) {
-            term->tabstops = xrealloc(term->tabstops, cols, sizeof(*term->tabstops));
-            for (int i = term->cols; i < cols; i++) {
-                term->tabstops[i] = (i && i % term->tabcols == 0) ? 1 : 0;
+void
+alloc_tabstops(uint8 **r_tabstops, uint16 begcol, uint16 endcol, uint16 tabcols)
+{
+    ASSERT(r_tabstops);
+
+    if (endcol > begcol) {
+        uint8 *tabstops = *r_tabstops;
+        tabstops = xrealloc(tabstops, endcol, sizeof(*tabstops));
+        if (!tabcols) {
+            memset(&tabstops[begcol], 0, (endcol - begcol) * sizeof(*tabstops));
+        } else {
+            for (uint i = begcol; i < endcol; i++) {
+                tabstops[i] = (i && i % tabcols == 0) ? 1 : 0;
             }
         }
-
-        // Compress the screen vertically.
-        if (rows <= term->y) {
-            ring_adjust_head(term->ring_prim, term->rows - rows);
-            term->y -= term->rows - rows;
-        }
-
-        // Expand the screen vertically while history lines exist.
-        if (rows > term->rows) {
-            int delta = imin(rows - term->rows, ring_histlines(term->ring_prim));
-            ring_adjust_head(term->ring_prim, -delta);
-            term->y += delta;
-        }
-
-        ring_set_dimensions(term->ring_prim, cols, rows);
-        ring_set_dimensions(term->ring_alt, cols, rows);
-
-        term->cols = cols;
-        term->rows = rows;
-
-        pty_resize(term->mfd, cols, rows, term->colsize, term->rowsize);
+        *r_tabstops = tabstops;
     }
+}
+
+void
+update_dimensions(Term *term, uint16 cols_, uint16 rows_)
+{
+    ASSERT(term);
+
+    const int cols = DEFAULT(cols_, term->cols);
+    const int rows = DEFAULT(rows_, term->rows);
+
+    term->cols = cols;
+    term->rows = rows;
+    term->max_cols = MAX(cols, term->max_cols);
+    term->max_rows = MAX(rows, term->max_rows);
+}
+
+void
+term_resize(Term *term, uint width, uint height)
+{
+    ASSERT(term);
+    ASSERT(width);
+    ASSERT(height);
+
+    const int cols = (int)width / term->colpx;
+    const int rows = (int)height / term->rowpx;
+
+    if (cols == term->cols && rows == term->rows) {
+        return;
+    }
+
+    // Compress the screen vertically.
+    if (rows <= term->y) {
+        ring_adjust_head(term->rings[0], term->rows - rows);
+        term->y -= term->rows - rows;
+    }
+
+    // Expand the screen vertically while history lines exist.
+    if (rows > term->rows) {
+        int delta = imin(rows - term->rows, ring_histlines(term->rings[0]));
+        ring_adjust_head(term->rings[0], -delta);
+        term->y += delta;
+    }
+
+    // Resize history
+    ring_set_dimensions(term->rings[0], cols, rows);
+    ring_set_dimensions(term->rings[1], cols, rows);
+
+    // Resize extra buffers
+    alloc_tabstops(&term->tabstops, term->max_cols, cols, term->tabcols);
+    alloc_frame(&term->frame, cols, rows);
+
+    // Resize psuedoterminal
+    pty_resize(term->mfd, cols, rows, term->colpx, term->rowpx);
+
+    // Commit changes
+    update_dimensions(term, cols, rows);
 }
 
 size_t
@@ -485,7 +587,7 @@ cursor_save(Term *term)
         .col     = term->x,
         .row     = term->y,
         .style   = term->crs_style,
-        .color   = term->color_fg,
+        .color   = term->colors.fg,
         .visible = !term->hidecursor
     };
 }
@@ -503,13 +605,13 @@ cursor_restore(Term *term)
 void
 set_active_bg(Term *term, uint8 idx)
 {
-    term->cell.bg = (idx < 16) ? term->colors[idx] : VTCOLOR(idx);
+    term->cell.bg = term->colors.base256[idx];
 }
 
 void
 set_active_fg(Term *term, uint8 idx)
 {
-    term->cell.fg = (idx < 16) ? term->colors[idx] : VTCOLOR(idx);
+    term->cell.fg = term->colors.base256[idx];
 }
 
 void
@@ -527,25 +629,25 @@ set_active_fg_rgb(Term *term, uint8 r, uint8 g, uint8 b)
 void
 term_use_screen_alt(Term *term)
 {
-    term->ring = term->ring_alt;
+    term->ring = term->rings[1];
 }
 
 void
 term_use_screen_primary(Term *term)
 {
-    term->ring = term->ring_prim;
+    term->ring = term->rings[0];
 }
 
 void
 reset_active_bg(Term *term)
 {
-    term->cell.bg = term->color_bg;
+    term->cell.bg = term->colors.bg;
 }
 
 void
 reset_active_fg(Term *term)
 {
-    term->cell.fg = term->color_fg;
+    term->cell.fg = term->colors.fg;
 }
 
 void
@@ -1161,24 +1263,24 @@ emu_osc(Term *term, const char *str, const int *argv, int argc)
      */
     UNUSED(argc);
 
+    const TermCallbacks cb = term->callbacks;
+
     switch (argv[0]) {
     case 0:
     case 1:
-        if (term->handlers.set_icon) {
-            term->handlers.set_icon(term->param, str, arr_count(str));
+        if (cb.seticon.func) {
+            cb.seticon.func(cb.seticon.param, str, arr_count(str));
         }
-        if (argv[0] != 0) {
-            break;
-        }
+        if (argv[0] != 0) break;
         // fallthrough
     case 2:
-        if (term->handlers.set_title) {
-            term->handlers.set_title(term->param, str, arr_count(str));
+        if (cb.settitle.func) {
+            cb.settitle.func(cb.settitle.param, str, arr_count(str));
         }
         break;
     case 3:
-        if (term->handlers.set_property) {
-            term->handlers.set_property(term->param, str, arr_count(str));
+        if (cb.setprop.func) {
+            cb.setprop.func(cb.setprop.param, str, arr_count(str));
         }
         break;
     }

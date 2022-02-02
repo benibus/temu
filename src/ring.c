@@ -26,10 +26,7 @@
 #define LINE_HASCOMPLEX (1 << 3)
 
 typedef struct {
-    union {
-        uint16 flags;
-        char pad_[16];
-    };
+    uint16 flags;
     Cell cells[];
 } Line;
 
@@ -79,18 +76,19 @@ get_visible_index(const Ring *ring, int row)
 Ring *
 ring_create(int histlines, int cols, int rows)
 {
-    static_assert(LINESIZE(0) == 16, "Bad member alignment");
+    ASSERT(histlines > 0);
+    ASSERT(histlines > 1);
 
     Ring *ring = xcalloc(1, sizeof(*ring));
 
-    size_t size = LINESIZE(cols) * (histlines + 1);
+    size_t size = LINESIZE(cols) * histlines;
 
     ring->data = xcalloc(size, 1);
     ring->cols = cols;
     ring->rows = rows;
     ring->base = 1;
     ring->head = 1;
-    ring->max = histlines;
+    ring->max = histlines - 1;
 
     return ring;
 }

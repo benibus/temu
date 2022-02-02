@@ -26,6 +26,11 @@
 #include "fonts.h"
 #include "renderer.h"
 
+static_assert(FontStyleRegular == ATTR_NONE, "Bitmask mismatch.");
+static_assert(FontStyleBold == ATTR_BOLD, "Bitmask mismatch.");
+static_assert(FontStyleItalic == ATTR_ITALIC, "Bitmask mismatch.");
+static_assert(FontStyleBoldItalic == (ATTR_BOLD|ATTR_ITALIC), "Bitmask mismatch.");
+
 #define MAX_CFG_COLORS (2+16)
 #define MIN_HISTLINES 128
 #define MAX_HISTLINES 4096
@@ -41,7 +46,7 @@ typedef struct {
     char *shell;
     uint cols;
     uint rows;
-    uint padding;
+    uint border;
     uint tabcols;
     uint histlines;
 } AppPrefs;
@@ -50,34 +55,39 @@ typedef struct {
 
 typedef struct {
     AppPrefs prefs;
+
     Win *win;
     Term *term;
     FontSet *fontset;
-    int width;
-    int height;
-    int cols;
-    int rows;
-    int padpx;
-    int colpx;
-    int rowpx;
+
+    int grid_width;
+    int grid_height;
+    int grid_border;
+    int cell_width;
+    int cell_height;
+
+    int argc;
+    const char **argv;
 } App;
 
 static App app_;
 
 static WinFuncResize on_event_resize;
 static WinFuncKeyPress on_event_keypress;
-static void on_osc_set_title(void *param, const char *str, size_t len);
-static void on_osc_set_icon(void *param, const char *str, size_t len);
+static TermFuncSetTitle on_osc_set_title;
+static TermFuncSetIcon on_osc_set_icon;
+
+static void setup(App *app, const AppPrefs *prefs);
+static void setup_preferences(App *app, const AppPrefs *restrict prefs);
+static void setup_fonts(App *app, float dpi);
+static void setup_window(App *app);
+static void setup_display(App *app);
+static void setup_terminal(App *app);
 static int run(App *app);
 
 int
 main(int argc, char **argv)
 {
-    static_assert(FontStyleRegular == ATTR_NONE, "Bitmask mismatch.");
-    static_assert(FontStyleBold == ATTR_BOLD, "Bitmask mismatch.");
-    static_assert(FontStyleItalic == ATTR_ITALIC, "Bitmask mismatch.");
-    static_assert(FontStyleBoldItalic == (ATTR_BOLD|ATTR_ITALIC), "Bitmask mismatch.");
-
     AppPrefs prefs = { 0 };
 
     for (int opt; (opt = getopt(argc, argv, "T:N:C:S:F:f:c:r:p:m:s:")) != -1; ) {
@@ -111,7 +121,7 @@ main(int argc, char **argv)
         case 'p':
             arg.u = strtoul(optarg, &errp, 10);
             if (!*errp && arg.u < UINT_MAX) {
-                prefs.padding = arg.u;
+                prefs.border = arg.u;
             }
             break;
         case 'm':
@@ -133,179 +143,9 @@ error_invalid:
 
     App *const app = &app_;
 
-    app->prefs = default_prefs;
-#define MERGEOPT(opt) (app->prefs.opt = DEFAULT(prefs.opt, app->prefs.opt))
-    MERGEOPT(cols);
-    MERGEOPT(rows);
-    MERGEOPT(padding);
-
-    MERGEOPT(wm_class);
-    MERGEOPT(wm_name);
-    MERGEOPT(wm_title);
-    MERGEOPT(geometry);
-    MERGEOPT(shell);
-    MERGEOPT(font);
-    MERGEOPT(fontpath);
-
-    if (prefs.histlines >= MIN_HISTLINES && prefs.histlines <= MAX_HISTLINES) {
-        app->prefs.histlines = prefs.histlines;
-    }
-#undef MERGEOPT
-
-    app->win = window_create();
-
-    if (app->win) {
-        dbgprint("Window server initialized");
-    } else {
-        dbgprint("Failed to initialize window server");
-        return EXIT_FAILURE;
-    }
-
-    if (fontmgr_init(window_get_dpi(app->win))) {
-        char *fontpath = NULL;
-
-        if (app->prefs.fontpath) {
-            fontpath = realpath(app->prefs.fontpath, NULL);
-            if (fontpath) {
-                dbgprint("Resolved file path: %s -> %s", app->prefs.fontpath, fontpath);
-                app->fontset = fontmgr_create_fontset_from_file(fontpath);
-                FREE(fontpath);
-            } else {
-                dbgprint("Failed to resolve file path: %s", app->prefs.fontpath);
-            }
-        }
-        if (!app->fontset) {
-            app->fontset = fontmgr_create_fontset(app->prefs.font);
-            if (!app->fontset) {
-                dbgprint("Failed to open fallback fonts. aborting...");
-                return EXIT_FAILURE;
-            }
-        }
-
-        dbgprint("Fonts opened");
-    } else {
-        dbgprint("Failed to initialize font manager");
-        return EXIT_FAILURE;
-    }
-
-    fontset_get_metrics(app->fontset, &app->colpx, &app->rowpx, NULL, NULL);
-
-    if (fontset_init(app->fontset)) {
-        dbgprint("Font cache initialized");
-    } else {
-        dbgprint("Failed to initialize font cache");
-        return EXIT_FAILURE;
-    }
-
-    app->padpx = app->prefs.padding;
-    if (!window_set_size(app->win, app->prefs.cols * app->colpx + 2 * app->padpx,
-                                   app->prefs.rows * app->rowpx + 2 * app->padpx))
-    {
-        return EXIT_FAILURE;
-    }
-    window_set_size_hints(app->win, app->colpx + 2 * app->padpx,
-                                    app->rowpx + 2 * app->padpx,
-                                    app->colpx,
-                                    app->rowpx);
-
-    window_set_class_hints(app->win, app->prefs.wm_name, app->prefs.wm_class);
-    window_set_title(app->win, app->prefs.wm_title, strlen(app->prefs.wm_title));
-
-    window_callback_resize(app->win, app, &on_event_resize);
-    window_callback_keypress(app->win, app, &on_event_keypress);
-
-    if (renderer_init()) {
-        dbgprint("Renderer initialized");
-    } else {
-        dbgprint("Failed to initialize renderer");
-        return EXIT_FAILURE;
-    }
-
-    TermConfig termcfg = { 0 };
-
-    for (uint i = 0; i < LEN(app->prefs.colors); i++) {
-        ASSERT(app->prefs.colors[i]);
-
-        uint32 *dst;
-
-        switch (i) {
-        case 0:  dst = &termcfg.color_bg;  break;
-        case 1:  dst = &termcfg.color_fg;  break;
-        default: dst = &termcfg.colors[i-2]; break;
-        }
-        if (!window_query_color(app->win, app->prefs.colors[i], dst)) {
-            dbgprint("Failed to parse RGB string: %s", app->prefs.colors[i]);
-            exit(EXIT_FAILURE);
-        }
-    }
-    dbgprint("User colors parsed");
-
-    if (window_init(app->win)) {
-        window_get_size(app->win, &app->width, &app->height);
-    } else {
-        dbgprint("Failed to display window");
-        return EXIT_FAILURE;
-    }
-
-    app->cols = (app->width - 2 * app->padpx) / app->colpx;
-    app->rows = (app->height - 2 * app->padpx) / app->rowpx;
-
-    dbgprint(
-        "Window displayed\n"
-        "    width   = %d\n"
-        "    height  = %d\n"
-        "    cols    = %dx%d\n"
-        "    rows    = %dx%d\n"
-        "    padding = %d",
-        app->width,
-        app->height,
-        app->cols, app->colpx,
-        app->rows, app->rowpx,
-        app->padpx
-    );
-
-    ASSERT(app->cols == (int)app->prefs.cols);
-    ASSERT(app->rows == (int)app->prefs.rows);
-
-    termcfg.cols      = app->cols;
-    termcfg.rows      = app->rows;
-    termcfg.colsize   = app->colpx;
-    termcfg.rowsize   = app->rowpx;
-    termcfg.shell     = app->prefs.shell;
-    termcfg.histlines = MAX(app->prefs.histlines, termcfg.rows);
-    termcfg.tabcols   = DEFAULT(app->prefs.tabcols, 8);
-
-    termcfg.param = app;
-    termcfg.handlers.set_title = on_osc_set_title;
-    termcfg.handlers.set_icon  = on_osc_set_icon;
-
-    dbgprint(
-        "Creating terminal...\n"
-        "    shell     = %s\n"
-        "    histlines = %u\n"
-        "    tabspaces = %u",
-        DEFAULT(termcfg.shell, "$SHELL"),
-        termcfg.histlines,
-        termcfg.tabcols
-    );
-
-    if ((app->term = term_create(&termcfg))) {
-        dbgprint("Terminal created");
-    } else {
-        dbgprint("Failed to create terminal");
-        return EXIT_FAILURE;
-    }
-
-    renderer_set_dimensions(
-        app->width, app->height,
-        app->cols, app->rows,
-        app->colpx, app->rowpx,
-        app->padpx
-    );
-    dbgprint("Renderer online");
+    setup(app, &prefs);
 
     dbgprint("Running temu...");
-
     int result = run(app);
 
     term_destroy(app->term);
@@ -314,6 +154,219 @@ error_invalid:
     platform_shutdown();
 
     return result;
+}
+
+void
+setup(App *app, const AppPrefs *prefs)
+{
+    setup_preferences(app, prefs);
+
+    app->win = window_create();
+
+    if (!app->win) {
+        dbgprint("Failed to initialize window server");
+        exit(EXIT_FAILURE);
+    }
+
+    setup_fonts(app, window_get_dpi(app->win));
+    setup_window(app);
+    setup_display(app);
+    setup_terminal(app);
+}
+
+void
+setup_preferences(App *app, const AppPrefs *restrict prefs)
+{
+    app->prefs = default_prefs;
+
+#define SETDEFAULT(opt) (app->prefs.opt = DEFAULT(prefs->opt, app->prefs.opt))
+    SETDEFAULT(cols);
+    SETDEFAULT(rows);
+    SETDEFAULT(border);
+    SETDEFAULT(wm_class);
+    SETDEFAULT(wm_name);
+    SETDEFAULT(wm_title);
+    SETDEFAULT(geometry);
+    SETDEFAULT(shell);
+    SETDEFAULT(font);
+    SETDEFAULT(fontpath);
+#undef SETDEFAULT
+    if (prefs->histlines >= MIN_HISTLINES && prefs->histlines <= MAX_HISTLINES) {
+        app->prefs.histlines = prefs->histlines;
+    }
+}
+
+void
+setup_fonts(App *app, float dpi)
+{
+    // DEPENDS:
+    // app->prefs.font
+    // app->prefs.fontpath
+
+    if (!fontmgr_init(dpi)) {
+        dbgprint("Failed to initialize font manager");
+        exit(EXIT_FAILURE);
+    }
+
+    char *fontpath = NULL;
+    if (app->prefs.fontpath) {
+        fontpath = realpath(app->prefs.fontpath, NULL);
+        if (fontpath) {
+            dbgprint("Resolved file path: %s -> %s", app->prefs.fontpath, fontpath);
+            app->fontset = fontmgr_create_fontset_from_file(fontpath);
+            FREE(fontpath);
+        } else {
+            dbgprint("Failed to resolve file path: %s", app->prefs.fontpath);
+        }
+    }
+    if (!app->fontset) {
+        app->fontset = fontmgr_create_fontset(app->prefs.font);
+        if (!app->fontset) {
+            dbgprint("Failed to open fallback fonts. aborting...");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    dbgprint("Fonts opened");
+    fontset_get_metrics(app->fontset, &app->cell_width, &app->cell_height, NULL, NULL);
+
+    if (!fontset_init(app->fontset)) {
+        dbgprint("Failed to initialize font cache");
+        exit(EXIT_FAILURE);
+    }
+
+    dbgprint("Font cache initialized");
+}
+
+void
+setup_window(App *app)
+{
+    // DEPENDS:
+    // app->prefs.cols
+    // app->prefs.rows
+    // app->prefs.border
+    // app->prefs.wm_title
+    // app->prefs.wm_name
+    // app->prefs.wm_class
+    // app->win
+    // app->cell_width
+    // app->cell_height
+
+    ASSERT(app);
+    ASSERT(app->win);
+
+    app->grid_width  = app->prefs.cols * app->cell_width;
+    app->grid_height = app->prefs.rows * app->cell_height;
+    app->grid_border = app->prefs.border;
+
+    const int padding = 2 * app->grid_border;
+
+    window_set_class_hints(app->win, app->prefs.wm_name, app->prefs.wm_class);
+    window_set_title(app->win, app->prefs.wm_title, strlen(app->prefs.wm_title));
+    window_set_size_hints(app->win,
+                          app->cell_width + padding,
+                          app->cell_height + padding,
+                          app->cell_width,
+                          app->cell_height);
+    if (!window_set_size(app->win, app->grid_width + padding, app->grid_height + padding)) {
+        exit(EXIT_FAILURE);
+    }
+
+    window_callback_resize(app->win, app, &on_event_resize);
+    window_callback_keypress(app->win, app, &on_event_keypress);
+}
+
+void
+setup_display(App *app)
+{
+    // DEPENDS:
+    // app->win
+    // app->grid_border
+
+    if (!window_init(app->win)) {
+        dbgprint("Failed to display window");
+        exit(EXIT_FAILURE);
+    }
+
+    int width, height;
+    window_get_size(app->win, &width, &height);
+
+    app->grid_width = width - 2 * app->grid_border;
+    app->grid_height = height - 2 * app->grid_border;
+
+    const int cols = app->grid_width / app->cell_width;
+    const int rows = app->grid_height / app->cell_height;
+
+    ASSERT(cols == (int)app->prefs.cols);
+    ASSERT(rows == (int)app->prefs.rows);
+
+    // TODO(ben): Make this happen happen automatically in gfx layer
+    {
+        if (!renderer_init()) {
+            dbgprint("Failed to initialize renderer");
+            exit(EXIT_FAILURE);
+        }
+        renderer_set_dimensions(width, height,
+                                cols, rows,
+                                app->cell_width, app->cell_height,
+                                app->grid_border);
+        dbgprint("Renderer initialized");
+    }
+
+    dbgprint(
+        "Window displayed\n"
+        "    width       = %d\n"
+        "    height      = %d\n"
+        "    grid_width  = %d\n"
+        "    grid_height = %d\n"
+        "    grid_border = %d\n"
+        "    cell_width  = %d\n"
+        "    cell_height = %d\n",
+        width,
+        height,
+        app->grid_width,
+        app->grid_height,
+        app->grid_border,
+        app->cell_width,
+        app->cell_height
+    );
+}
+
+void
+setup_terminal(App *app)
+{
+    // DEPENDS:
+    // app->prefs.histlines
+    // app->prefs.tabcols
+    // app->prefs.colors
+    // app->fontset
+    // app->grid_width
+    // app->grid_height
+
+    Term *const term = term_create(app->prefs.histlines, app->prefs.tabcols);
+
+    term_set_display(term, app->fontset, app->grid_width, app->grid_height);
+
+    for (uint i = 0; i < LEN(app->prefs.colors); i++) {
+        ASSERT(app->prefs.colors[i]);
+        uint32 color;
+
+        if (!window_query_color(app->win, app->prefs.colors[i], &color)) {
+            dbgprint("Failed to parse RGB string: %s", app->prefs.colors[i]);
+            exit(EXIT_FAILURE);
+        }
+
+        switch (i) {
+        case 0:  term_set_background_color(term, color);    break;
+        case 1:  term_set_foreground_color(term, color);    break;
+        default: term_set_base16_color(term, i - 2, color); break;
+        }
+    }
+
+    term_callback_settitle(term, app, &on_osc_set_title);
+    term_callback_seticon(term, app, &on_osc_set_icon);
+
+    app->term = term;
 }
 
 int
@@ -332,7 +385,7 @@ run(App *app)
 
     const int srvfd = window_get_fileno(app->win);
     ASSERT(srvfd);
-    const int ptyfd = term_exec(term, app->prefs.shell);
+    const int ptyfd = term_exec(term, app->prefs.shell, app->argc, app->argv);
 
     if (ptyfd) {
         dbgprint("Terminal online. FD = %d", ptyfd);
@@ -388,26 +441,29 @@ on_event_resize(void *param, int width, int height)
 {
     App *const app = param;
 
-    if (width == app->width && height == app->height) {
+    const int grid_width = width - 2 * app->grid_border;
+    const int grid_height = height - 2 * app->grid_border;
+
+    ASSERT(grid_width > app->cell_width);
+    ASSERT(grid_height > app->cell_height);
+
+    if (grid_width == app->grid_width && grid_height == app->grid_height) {
         return;
     }
 
-    const int cols = (width - 2 * app->padpx) / app->colpx;
-    const int rows = (height - 2 * app->padpx) / app->rowpx;
+    app->grid_width  = grid_width;
+    app->grid_height = grid_height;
 
-    term_resize(app->term, cols, rows);
+    const int cols = grid_width / app->cell_width;
+    const int rows = grid_height / app->cell_height;
 
-    renderer_set_dimensions(
-        width, height,
-        cols, rows,
-        app->colpx, app->rowpx,
-        app->padpx
-    );
+    term_resize(app->term, grid_width, grid_height);
 
-    app->width  = width;
-    app->height = height;
-    app->cols   = cols;
-    app->rows   = rows;
+    // TODO(ben): Make automatic
+    renderer_set_dimensions(width, height,
+                            cols, rows,
+                            app->cell_width, app->cell_height,
+                            app->grid_border);
 }
 
 void
