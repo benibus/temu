@@ -23,26 +23,25 @@
 
 typedef struct Win_ Win;
 
-// TODO(ben): Roll this into window_destroy() under the hood
-void platform_shutdown(void);
-
 Win *window_create(void);
 void window_destroy(Win *win);
 bool window_init(Win *win);
 bool window_make_current(const Win *win);
-bool window_online(const Win *win);
+bool window_is_online(const Win *win);
 float window_get_dpi(const Win *win);
 int window_get_fileno(const Win *win);
 bool window_query_color(const Win *, const char *name, uint32 *color);
 int window_events_pending(const Win *win);
-void window_get_size(const Win *win, int *width, int *height);
+void window_get_size(const Win *win, int *width, int *height, int *border);
 void window_set_title(Win *win, const char *name, size_t len);
 void window_set_icon(Win *win, const char *name, size_t len);
 bool window_set_size(Win *win, uint width, uint height);
-void window_set_size_hints(Win *win, uint min_width, uint min_height, uint inc_width, uint inc_height);
+void window_set_size_hints(Win *win, uint inc_width, uint inc_height, uint border);
 void window_set_class_hints(Win *win, char *wm_name, char *wm_class);
 int window_poll_events(Win *win);
 void window_update(const Win *win);
+int window_width(const Win *win);
+int window_height(const Win *win);
 
 typedef void WinFuncResize(void *, int, int);
 typedef void WinFuncKeyPress(void *, uint, uint, const uchar *, int);

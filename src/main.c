@@ -60,9 +60,8 @@ typedef struct {
     Term *term;
     FontSet *fontset;
 
-    int grid_width;
-    int grid_height;
-    int grid_border;
+    int width;
+    int height;
     int cell_width;
     int cell_height;
 
@@ -90,7 +89,7 @@ main(int argc, char **argv)
 {
     AppPrefs prefs = { 0 };
 
-    for (int opt; (opt = getopt(argc, argv, "T:N:C:S:F:f:c:r:p:m:s:")) != -1; ) {
+    for (int opt; (opt = getopt(argc, argv, "T:N:C:S:F:f:c:r:b:m:s:")) != -1; ) {
         union {
             char *s;
             long i;
@@ -118,7 +117,7 @@ main(int argc, char **argv)
                 prefs.rows = arg.u;
             }
             break;
-        case 'p':
+        case 'b':
             arg.u = strtoul(optarg, &errp, 10);
             if (!*errp && arg.u < UINT_MAX) {
                 prefs.border = arg.u;
@@ -150,8 +149,7 @@ error_invalid:
 
     term_destroy(app->term);
     fontset_destroy(app->fontset);
-    renderer_shutdown();
-    platform_shutdown();
+    window_destroy(app->win);
 
     return result;
 }
@@ -255,20 +253,14 @@ setup_window(App *app)
     ASSERT(app);
     ASSERT(app->win);
 
-    app->grid_width  = app->prefs.cols * app->cell_width;
-    app->grid_height = app->prefs.rows * app->cell_height;
-    app->grid_border = app->prefs.border;
-
-    const int padding = 2 * app->grid_border;
+    const int width  = app->prefs.cols * app->cell_width;
+    const int height = app->prefs.rows * app->cell_height;
 
     window_set_class_hints(app->win, app->prefs.wm_name, app->prefs.wm_class);
     window_set_title(app->win, app->prefs.wm_title, strlen(app->prefs.wm_title));
-    window_set_size_hints(app->win,
-                          app->cell_width + padding,
-                          app->cell_height + padding,
-                          app->cell_width,
-                          app->cell_height);
-    if (!window_set_size(app->win, app->grid_width + padding, app->grid_height + padding)) {
+
+    window_set_size_hints(app->win, app->cell_width, app->cell_height, app->prefs.border);
+    if (!window_set_size(app->win, width, height)) {
         exit(EXIT_FAILURE);
     }
 
@@ -281,52 +273,23 @@ setup_display(App *app)
 {
     // DEPENDS:
     // app->win
-    // app->grid_border
 
     if (!window_init(app->win)) {
         dbgprint("Failed to display window");
         exit(EXIT_FAILURE);
     }
 
-    int width, height;
-    window_get_size(app->win, &width, &height);
-
-    app->grid_width = width - 2 * app->grid_border;
-    app->grid_height = height - 2 * app->grid_border;
-
-    const int cols = app->grid_width / app->cell_width;
-    const int rows = app->grid_height / app->cell_height;
-
-    ASSERT(cols == (int)app->prefs.cols);
-    ASSERT(rows == (int)app->prefs.rows);
-
-    // TODO(ben): Make this happen happen automatically in gfx layer
-    {
-        if (!renderer_init()) {
-            dbgprint("Failed to initialize renderer");
-            exit(EXIT_FAILURE);
-        }
-        renderer_set_dimensions(width, height,
-                                cols, rows,
-                                app->cell_width, app->cell_height,
-                                app->grid_border);
-        dbgprint("Renderer initialized");
-    }
+    app->width = window_width(app->win);
+    app->height = window_height(app->win);
 
     dbgprint(
         "Window displayed\n"
         "    width       = %d\n"
         "    height      = %d\n"
-        "    grid_width  = %d\n"
-        "    grid_height = %d\n"
-        "    grid_border = %d\n"
         "    cell_width  = %d\n"
         "    cell_height = %d\n",
-        width,
-        height,
-        app->grid_width,
-        app->grid_height,
-        app->grid_border,
+        app->width,
+        app->height,
         app->cell_width,
         app->cell_height
     );
@@ -340,12 +303,12 @@ setup_terminal(App *app)
     // app->prefs.tabcols
     // app->prefs.colors
     // app->fontset
-    // app->grid_width
-    // app->grid_height
+    // app->width
+    // app->height
 
     Term *const term = term_create(app->prefs.histlines, app->prefs.tabcols);
 
-    term_set_display(term, app->fontset, app->grid_width, app->grid_height);
+    term_set_display(term, app->fontset, app->width, app->height);
 
     for (uint i = 0; i < LEN(app->prefs.colors); i++) {
         ASSERT(app->prefs.colors[i]);
@@ -376,7 +339,7 @@ run(App *app)
 
     window_make_current(app->win);
 
-    if (!window_online(app->win)) {
+    if (!window_is_online(app->win)) {
         dbgprint("Window is not online");
         return EXIT_FAILURE;
     }
@@ -403,9 +366,9 @@ run(App *app)
     bool hangup = false;
     bool draw = true;
 
-    while (!result && !hangup && window_online(app->win)) {
+    while (!result && !hangup && window_is_online(app->win)) {
         if (draw) {
-            renderer_draw_frame(term_generate_frame(app->term), app->fontset);
+            gfx_render_frame(term_generate_frame(app->term), app->fontset);
             window_update(app->win);
         }
 
@@ -431,8 +394,6 @@ run(App *app)
         }
     }
 
-    window_destroy(app->win);
-
     return result;
 }
 
@@ -441,29 +402,17 @@ on_event_resize(void *param, int width, int height)
 {
     App *const app = param;
 
-    const int grid_width = width - 2 * app->grid_border;
-    const int grid_height = height - 2 * app->grid_border;
+    ASSERT(width > app->cell_width);
+    ASSERT(height > app->cell_height);
 
-    ASSERT(grid_width > app->cell_width);
-    ASSERT(grid_height > app->cell_height);
-
-    if (grid_width == app->grid_width && grid_height == app->grid_height) {
+    if (width == app->width && height == app->height) {
         return;
     }
 
-    app->grid_width  = grid_width;
-    app->grid_height = grid_height;
+    term_resize(app->term, width, height);
 
-    const int cols = grid_width / app->cell_width;
-    const int rows = grid_height / app->cell_height;
-
-    term_resize(app->term, grid_width, grid_height);
-
-    // TODO(ben): Make automatic
-    renderer_set_dimensions(width, height,
-                            cols, rows,
-                            app->cell_width, app->cell_height,
-                            app->grid_border);
+    app->width  = width;
+    app->height = height;
 }
 
 void

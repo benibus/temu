@@ -16,38 +16,15 @@
  *------------------------------------------------------------------------------*/
 
 #include "utils.h"
-#include "opengl.h"
+#include "vector.h"
+#include "gfx_private.h"
 #include "renderer.h"
 
 #include <math.h>
 
-typedef struct Instance_ Instance;
+#define MAX_INSTANCES (1024)
 
-struct RenderContext {
-    int width;
-    int height;
-    int ncols;
-    int nrows;
-    int colpx;
-    int rowpx;
-    int borderpx;
-
-    GLuint program;
-    GLuint vao;
-    GLuint vbo;
-    Instance *instances;
-
-    struct {
-        GLuint projection;
-        GLuint cellpx;
-        GLuint borderpx;
-        GLuint screenpx;
-    } uniforms;
-};
-
-static struct RenderContext rc;
-
-struct Instance_ {
+struct GfxInstance_ {
     Vec2U screen_pos;
     uint texid;
     Vec2F tile_pos;
@@ -55,6 +32,10 @@ struct Instance_ {
     Vec4F color_bg;
     Vec4F color_fg;
 };
+
+static struct {
+    GfxImage images[1];
+} globals;
 
 static const char shader_vert[] =
 "#version " OPENGL_SHADER_HEADER "\n"
@@ -131,6 +112,14 @@ static const char shader_frag[] =
 "}\n"
 ;
 
+static GfxImage *gfx_image_get(void) { return &globals.images[0]; }
+
+GfxImage *
+gfx_image_create(void)
+{
+    return gfx_image_get();
+}
+
 static inline Vec4F
 unpack_argb(uint32 argb)
 {
@@ -142,17 +131,45 @@ unpack_argb(uint32 argb)
     );
 }
 
-void
-renderer_draw_frame(const Frame *frame, FontSet *fontset)
+static void
+draw_start(GLuint prog, GLuint vao, GLuint vbo, Vec4F color)
 {
+    glClearColor(color.r, color.g, color.b, 1.f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glUseProgram(prog);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+}
+
+static void
+draw_finish(void)
+{
+    return;
+}
+
+static void
+draw_flush(const GfxInstance *instances, int count)
+{
+    glBufferSubData(GL_ARRAY_BUFFER, 0, count * sizeof(*instances), instances);
+    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, count);
+}
+
+void
+gfx_render_frame(const Frame *frame, FontSet *fontset)
+{
+    GfxImage *const img = gfx_image_get();
+
     if (!frame) {
         return;
     }
 
-    Instance *cinst = NULL;
+    GfxInstance *cinst = NULL;
     uint at = 0;
     const Vec4F bg = unpack_argb(frame->default_bg);
     const Vec4F fg = unpack_argb(frame->default_fg);
+
+    draw_start(img->prog, img->vao, img->vbo, bg);
 
     if (!fontset) {
         goto draw;
@@ -165,6 +182,10 @@ renderer_draw_frame(const Frame *frame, FontSet *fontset)
     int ix, iy;
 
     for (iy = 0; iy < frame->rows; iy++) {
+        if (at + frame->cols + 1 > MAX_INSTANCES) {
+            draw_flush(img->instances, at);
+            at = 0;
+        }
         for (ix = 0; cells[ix].ucs4 && ix < frame->cols; ix++, at++) {
             const Cell cell = cells[ix];
             const Texture tex = fontset_get_glyph_texture(
@@ -172,27 +193,27 @@ renderer_draw_frame(const Frame *frame, FontSet *fontset)
                 cell.attrs & (ATTR_BOLD|ATTR_ITALIC),
                 cell.ucs4
             );
-            rc.instances[at].screen_pos = VEC2U(ix, iy);
-            rc.instances[at].texid      = tex.id;
-            rc.instances[at].tile_pos   = VEC2F(tex.u, tex.v);
-            rc.instances[at].tile_size  = VEC2F(tex.w, tex.h);
+            img->instances[at].screen_pos = VEC2U(ix, iy);
+            img->instances[at].texid      = tex.id;
+            img->instances[at].tile_pos   = VEC2F(tex.u, tex.v);
+            img->instances[at].tile_size  = VEC2F(tex.w, tex.h);
             if (cell.attrs & ATTR_INVERT) {
-                rc.instances[at].color_bg = unpack_argb(cell.fg);
-                rc.instances[at].color_fg = unpack_argb(cell.bg);
+                img->instances[at].color_bg = unpack_argb(cell.fg);
+                img->instances[at].color_fg = unpack_argb(cell.bg);
             } else {
-                rc.instances[at].color_bg = unpack_argb(cell.bg);
-                rc.instances[at].color_fg = unpack_argb(cell.fg);
+                img->instances[at].color_bg = unpack_argb(cell.bg);
+                img->instances[at].color_fg = unpack_argb(cell.fg);
             }
         }
         if (iy == cy && ix > cx) {
-            cinst = &rc.instances[at - (ix - cx)];
+            cinst = &img->instances[at - (ix - cx)];
         }
         cells += frame->cols;
     }
 
     if (frame->cursor.visible) {
         if (!cinst) {
-            cinst = &rc.instances[at++];
+            cinst = &img->instances[at++];
             cinst->screen_pos = VEC2U(cx, cy);
             cinst->texid      = 0;
             cinst->tile_pos   = VEC2F(0, 0);
@@ -203,18 +224,16 @@ renderer_draw_frame(const Frame *frame, FontSet *fontset)
     }
 
 draw:
-    glClearColor(bg.r, bg.g, bg.b, 1.f);
-    glClear(GL_COLOR_BUFFER_BIT);
+    if (at > 0) {
+        draw_flush(img->instances, at);
+        at = 0;
+    }
 
-    glUseProgram(rc.program);
-    glBindVertexArray(rc.vao);
-    glBindBuffer(GL_ARRAY_BUFFER, rc.vbo);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, at * sizeof(*rc.instances), rc.instances);
-    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, at);
+    draw_finish();
 }
 
 bool
-renderer_init(void)
+gfx_image_init(GfxImage *img)
 {
     GLuint shaders[2] = { 0 };
 
@@ -224,15 +243,15 @@ renderer_init(void)
     if (!(shaders[1] = gl_compile_shader(shader_frag, GL_FRAGMENT_SHADER))) {
         return false;
     }
-    if (!(rc.program = gl_link_shaders(shaders, LEN(shaders)))) {
+    if (!(img->prog = gl_link_shaders(shaders, LEN(shaders)))) {
         return false;
     }
-    glUseProgram(rc.program);
+    glUseProgram(img->prog);
 
-    glGenVertexArrays(1, &rc.vao);
-    glGenBuffers(1, &rc.vbo);
-    glBindVertexArray(rc.vao);
-    glBindBuffer(GL_ARRAY_BUFFER, rc.vbo);
+    glGenVertexArrays(1, &img->vao);
+    glGenBuffers(1, &img->vbo);
+    glBindVertexArray(img->vao);
+    glBindBuffer(GL_ARRAY_BUFFER, img->vbo);
 
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
@@ -251,74 +270,76 @@ renderer_init(void)
     glVertexAttribIPointer(
         0,
         2, GL_UNSIGNED_INT,
-        sizeof(Instance),
-        (void *)offsetof(Instance, screen_pos)
+        sizeof(GfxInstance),
+        (void *)offsetof(GfxInstance, screen_pos)
     );
     glVertexAttribIPointer(
         1,
         1, GL_UNSIGNED_INT,
-        sizeof(Instance),
-        (void *)offsetof(Instance, texid)
+        sizeof(GfxInstance),
+        (void *)offsetof(GfxInstance, texid)
     );
     glVertexAttribPointer(
         2,
         2, GL_FLOAT,
         GL_FALSE,
-        sizeof(Instance),
-        (void *)offsetof(Instance, tile_pos)
+        sizeof(GfxInstance),
+        (void *)offsetof(GfxInstance, tile_pos)
     );
     glVertexAttribPointer(
         3,
         2, GL_FLOAT,
         GL_FALSE,
-        sizeof(Instance),
-        (void *)offsetof(Instance, tile_size)
+        sizeof(GfxInstance),
+        (void *)offsetof(GfxInstance, tile_size)
     );
     glVertexAttribPointer(
         4,
         4, GL_FLOAT,
         GL_FALSE,
-        sizeof(Instance),
-        (void *)offsetof(Instance, color_bg)
+        sizeof(GfxInstance),
+        (void *)offsetof(GfxInstance, color_bg)
     );
     glVertexAttribPointer(
         5,
         4, GL_FLOAT,
         GL_FALSE,
-        sizeof(Instance),
-        (void *)offsetof(Instance, color_fg)
+        sizeof(GfxInstance),
+        (void *)offsetof(GfxInstance, color_fg)
     );
 
-    glUniform1i(glGetUniformLocation(rc.program, "tex[0]"), 0);
-    glUniform1i(glGetUniformLocation(rc.program, "tex[1]"), 1);
-    glUniform1i(glGetUniformLocation(rc.program, "tex[2]"), 2);
-    glUniform1i(glGetUniformLocation(rc.program, "tex[3]"), 3);
+    glUniform1i(glGetUniformLocation(img->prog, "tex[0]"), 0);
+    glUniform1i(glGetUniformLocation(img->prog, "tex[1]"), 1);
+    glUniform1i(glGetUniformLocation(img->prog, "tex[2]"), 2);
+    glUniform1i(glGetUniformLocation(img->prog, "tex[3]"), 3);
 
-    rc.uniforms.projection = glGetUniformLocation(rc.program, "u_projection");
-    rc.uniforms.cellpx     = glGetUniformLocation(rc.program, "u_cellpx");
-    rc.uniforms.borderpx   = glGetUniformLocation(rc.program, "u_borderpx");
-    rc.uniforms.screenpx   = glGetUniformLocation(rc.program, "u_screenpx");
+    img->uniforms.projection = glGetUniformLocation(img->prog, "u_projection");
+    img->uniforms.cellpx     = glGetUniformLocation(img->prog, "u_cellpx");
+    img->uniforms.borderpx   = glGetUniformLocation(img->prog, "u_borderpx");
+    img->uniforms.screenpx   = glGetUniformLocation(img->prog, "u_screenpx");
+
+    glBufferData(GL_ARRAY_BUFFER,
+                 MAX_INSTANCES * sizeof(*img->instances),
+                 NULL,
+                 GL_DYNAMIC_DRAW);
+    ASSERT(!img->instances);
+    img->instances = xcalloc(MAX_INSTANCES, sizeof(*img->instances));
 
     return true;
 }
 
 void
-renderer_shutdown(void)
+gfx_image_destroy(GfxImage *img)
 {
-    FREE(rc.instances);
+    FREE(img->instances);
 }
 
 void
-renderer_set_dimensions(int width, int height,
-                        int ncols, int nrows,
-                        int colpx, int rowpx,
-                        int borderpx)
+gfx_image_set_size(GfxImage *img,
+                    int width, int height,
+                    int colpx, int rowpx,
+                    int borderpx)
 {
-    static int max_inst = 0;
-
-    ASSERT(ncols * colpx + 2 * borderpx <= width);
-    ASSERT(nrows * rowpx + 2 * borderpx <= height);
-
     const float matrix[4][4] = {
         [0][0] = +2.f / width,
         [1][1] = -2.f / height,
@@ -328,29 +349,20 @@ renderer_set_dimensions(int width, int height,
         [3][3] = +1.f
     };
 
-    glUniformMatrix4fv(rc.uniforms.projection, 1, GL_FALSE, (const float *)matrix);
-    glUniform2ui(rc.uniforms.screenpx, width, height);
-    if (colpx != rc.colpx || rowpx != rc.rowpx) {
-        glUniform2ui(rc.uniforms.cellpx, colpx, rowpx);
+    glUniformMatrix4fv(img->uniforms.projection, 1, GL_FALSE, (const float *)matrix);
+    glUniform2ui(img->uniforms.screenpx, width, height);
+    if (colpx != img->colpx || rowpx != img->rowpx) {
+        glUniform2ui(img->uniforms.cellpx, colpx, rowpx);
     }
-    if (borderpx != rc.borderpx) {
-        glUniform2ui(rc.uniforms.borderpx, borderpx, borderpx);
-    }
-
-    if (ncols * nrows > max_inst) {
-        max_inst = ncols * nrows;
-        glBindBuffer(GL_ARRAY_BUFFER, rc.vbo);
-        glBufferData(GL_ARRAY_BUFFER, max_inst * sizeof(*rc.instances), NULL, GL_DYNAMIC_DRAW);
-        rc.instances = xrealloc(rc.instances, max_inst, sizeof(*rc.instances));
+    if (borderpx != img->borderpx) {
+        glUniform2ui(img->uniforms.borderpx, borderpx, borderpx);
     }
 
-    rc.width    = width;
-    rc.height   = height;
-    rc.ncols    = ncols;
-    rc.nrows    = nrows;
-    rc.colpx    = colpx;
-    rc.rowpx    = rowpx;
-    rc.borderpx = borderpx;
+    img->width    = width;
+    img->height   = height;
+    img->colpx    = colpx;
+    img->rowpx    = rowpx;
+    img->borderpx = borderpx;
 
     glViewport(0, 0, width, height);
 }

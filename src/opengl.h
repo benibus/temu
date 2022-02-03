@@ -43,10 +43,6 @@
   #include <GLES2/gl2.h>
 #endif
 
-#ifdef OPENGL_INCLUDE_PLATFORM
-#include <EGL/egl.h>
-#endif
-
 GLuint gl_compile_shader(const char *src, GLenum type);
 GLuint gl_link_shaders(GLuint *shaders, uint count);
 

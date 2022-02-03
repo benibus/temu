@@ -125,6 +125,7 @@ static Atom wm_atoms[NUM_ATOM];
 static Server server;
 
 static bool server_init(void);
+static void server_fini(void);
 static void query_dimensions(Win *, int *, int *);
 static void query_coordinates(Win *, int *, int *);
 static bool is_literal_ascii(KeySym);
@@ -143,6 +144,9 @@ XCALLBACK_(keyrelease, KeyRelease)
 XCALLBACK_(expose,     Expose)
 #undef XCALLBACK_
 
+static inline int add_border(int dim, int border) { return MAX(0, dim + 2 * border); }
+static inline int sub_border(int dim, int border) { return MAX(0, dim - 2 * border); }
+
 bool
 server_init(void)
 {
@@ -157,7 +161,7 @@ server_init(void)
     if (!(server.dpy = XOpenDisplay(NULL))) {
         return false;
     }
-    if (!(server.gfx = gfx_create_context(server.dpy))) {
+    if (!(server.gfx = gfx_context_create(server.dpy))) {
         return false;
     }
 
@@ -256,7 +260,7 @@ server_init(void)
 
         XFree(visinfo);
 
-        if (!gfx_init_context(server.gfx)) {
+        if (!gfx_context_init(server.gfx)) {
             return false;
         }
     }
@@ -271,10 +275,10 @@ server_init(void)
 }
 
 void
-platform_shutdown(void)
+server_fini(void)
 {
     gfx_set_target(server.gfx, NULL);
-    gfx_destroy_context(server.gfx);
+    gfx_context_destroy(server.gfx);
     XCloseDisplay(server.dpy);
 }
 
@@ -466,7 +470,7 @@ window_create(void)
     query_dimensions(win, &win->width, &win->height);
     query_coordinates(win, &win->xpos, &win->ypos);
 
-    win->target = gfx_create_target(server.gfx, win->xid);
+    win->target = gfx_target_create(server.gfx, win->xid);
 
     if (!win->target) {
         dbgprint("Failed to create EGL surface");
@@ -475,20 +479,20 @@ window_create(void)
 
     {
         int r_width, r_height;
-        gfx_get_target_size(server.gfx, win->target, &r_width, &r_height);
+        gfx_target_query_size(win->target, &r_width, &r_height);
         ASSERT(r_width  == (int)width);
         ASSERT(r_height == (int)height);
     }
 
-    if (window_make_current(win)) {
-        gfx_set_debug_object(win);
-        gfx_print_info(server.gfx);
-    } else {
+    if (!window_make_current(win)) {
         dbgprint("Failed to set current window");
         return NULL;
     }
 
+    gfx_set_debug_object(win);
+    gfx_print_info(server.gfx);
     gfx_set_vsync(server.gfx, false);
+    gfx_target_init(win->target);
 
     return win;
 }
@@ -498,13 +502,26 @@ window_destroy(Win *win)
 {
     ASSERT(win && win->xid);
     if (win->target) {
-        if (gfx_destroy_target(server.gfx, win->target)) {
+        if (gfx_target_destroy(win->target)) {
             win->target = NULL;
         }
     }
     ASSERT(!win->target);
     XDestroyWindow(server.dpy, win->xid);
+    win->srv = NULL;
     win->online = false;
+
+    bool active = false;
+    for (uint i = 0; i < LEN(server.clients); i++) {
+        if (server.clients[i].srv) {
+            active = true;
+            break;
+        }
+    }
+
+    if (!active) {
+        server_fini();
+    }
 }
 
 static bool
@@ -553,6 +570,13 @@ window_init(Win *win)
         XMapWindow(server.dpy, win->xid);
         if (wait_for_event(win, VisibilityNotify, DEFAULT_TIMEOUT, NULL)) {
             query_coordinates(win, &win->xpos, &win->ypos);
+            query_dimensions(win, &win->width, &win->height);
+            gfx_target_set_size(win->target,
+                                win->width,
+                                win->height,
+                                win->inc_width,
+                                win->inc_height,
+                                win->border);
             win->online = true;
         }
     }
@@ -565,8 +589,8 @@ window_set_size(Win *win, uint width, uint height)
 {
     ASSERT(win);
 
-    width  = DEFAULT(width,  DEFAULT(height, DEFAULT_WIDTH));
-    height = DEFAULT(height, DEFAULT(width,  DEFAULT_HEIGHT));
+    width = add_border(DEFAULT(width,  DEFAULT(height, DEFAULT_WIDTH)), win->border);
+    height = add_border(DEFAULT(height, DEFAULT(width,  DEFAULT_HEIGHT)), win->border);
 
     XResizeWindow(server.dpy, win->xid, width, height);
     if (wait_for_event(win, ConfigureNotify, DEFAULT_TIMEOUT, NULL)) {
@@ -579,16 +603,16 @@ window_set_size(Win *win, uint width, uint height)
 }
 
 void
-window_set_size_hints(Win *win, uint min_width, uint min_height, uint inc_width, uint inc_height)
+window_set_size_hints(Win *win, uint inc_width, uint inc_height, uint border)
 {
     ASSERT(win);
 
-    if (!min_width && !min_height) {
+    if (!inc_width && !inc_height) {
         return;
-    } else if (!min_width) {
-        min_width = min_height;
-    } else if (!min_height) {
-        min_height = min_width;
+    } else if (!inc_width) {
+        inc_width = inc_height;
+    } else if (!inc_height) {
+        inc_height = inc_width;
     }
 
     XSizeHints *hints = XAllocSizeHints();
@@ -598,13 +622,17 @@ window_set_size_hints(Win *win, uint min_width, uint min_height, uint inc_width,
     }
 
     hints->flags = PMinSize|PResizeInc;
-    hints->min_width  = min_width;
-    hints->min_height = min_height;
+    hints->min_width  = add_border(inc_width, border);
+    hints->min_height = add_border(inc_height, border);
     hints->width_inc  = DEFAULT(inc_width,  1);
     hints->height_inc = DEFAULT(inc_height, 1);
 
     XSetWMNormalHints(server.dpy, win->xid, hints);
     XFree(hints);
+
+    win->border = border;
+    win->inc_width = inc_width;
+    win->inc_height = inc_height;
 }
 
 void
@@ -634,7 +662,7 @@ window_set_class_hints(Win *win, char *wm_name, char *wm_class)
 }
 
 bool
-window_online(const Win *win)
+window_is_online(const Win *win)
 {
     ASSERT(win);
 
@@ -646,7 +674,7 @@ window_update(const Win *win)
 {
     ASSERT(win);
 
-    gfx_post_target(server.gfx, win->target);
+    gfx_target_post(win->target);
 }
 
 bool
@@ -655,13 +683,30 @@ window_make_current(const Win *win)
     return gfx_set_target(server.gfx, (win) ? win->target : NULL);
 }
 
-void
-window_get_size(const Win *win, int *width, int *height)
+int
+window_width(const Win *win)
 {
     ASSERT(win);
 
-    SETPTR(width,  win->width);
-    SETPTR(height, win->height);
+    return sub_border(win->width, win->border);
+}
+
+int
+window_height(const Win *win)
+{
+    ASSERT(win);
+
+    return sub_border(win->height, win->border);
+}
+
+void
+window_get_size(const Win *win, int *width, int *height, int *border)
+{
+    ASSERT(win);
+
+    SETPTR(width,  window_width(win));
+    SETPTR(height, window_height(win));
+    SETPTR(border, win->border);
 }
 
 static void
@@ -850,13 +895,18 @@ xhandler_configurenotify(XEvent *event_, Win *win, uint32 time)
 
     const WinCallbacks cb = win->callbacks;
     if (cb.resize.func) {
-        cb.resize.func(cb.resize.param, event->width, event->height);
+        cb.resize.func(cb.resize.param,
+                       sub_border(event->width, win->border),
+                       sub_border(event->height, win->border));
     }
+
+    gfx_target_set_size(win->target, event->width, event->height,
+                        win->inc_width,
+                        win->inc_height,
+                        win->border);
 
     win->width  = event->width;
     win->height = event->height;
-
-    gfx_set_target_size(server.gfx, win->target, win->width, win->height);
 }
 
 inline void

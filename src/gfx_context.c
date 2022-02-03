@@ -17,13 +17,13 @@
 
 #include "utils.h"
 #include "gfx_context.h"
-#include "opengl.h"
+#include "gfx_private.h"
 
 struct GfxTarget_ {
+    Gfx *gfx;
+    GfxImage *img;
     EGLNativeWindowType win;
     EGLSurface surf;
-    int width;
-    int height;
 };
 
 struct Gfx_ {
@@ -41,12 +41,12 @@ struct Gfx_ {
 static struct {
     Gfx gfx;
     GfxTarget targets[1];
-} instance;
+} globals;
 
 Gfx *
-gfx_create_context(EGLNativeDisplayType dpy)
+gfx_context_create(EGLNativeDisplayType dpy)
 {
-    Gfx *const gfx = &instance.gfx;
+    Gfx *const gfx = &globals.gfx;
 
     if (!gfx->online) {
         if (!(gfx->dpy = eglGetDisplay(dpy))) {
@@ -63,7 +63,7 @@ gfx_create_context(EGLNativeDisplayType dpy)
 }
 
 void
-gfx_destroy_context(Gfx *gfx)
+gfx_context_destroy(Gfx *gfx)
 {
     ASSERT(gfx);
 
@@ -72,35 +72,8 @@ gfx_destroy_context(Gfx *gfx)
     memset(gfx, 0, sizeof(*gfx));
 }
 
-EGLint
-gfx_get_visual_id(Gfx *gfx)
-{
-    ASSERT(gfx);
-
-    EGLint visid, count;
-    static const EGLint attrs[] = {
-        EGL_RED_SIZE,        8,
-        EGL_GREEN_SIZE,      8,
-        EGL_BLUE_SIZE,       8,
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-        EGL_NONE
-    };
-
-    if (!eglChooseConfig(gfx->dpy, attrs, &gfx->cfg, 1, &count)) {
-        return 0;
-    }
-
-    ASSERT(gfx->cfg && count > 0);
-
-    if (!eglGetConfigAttrib(gfx->dpy, gfx->cfg, EGL_NATIVE_VISUAL_ID, &visid)) {
-        return 0;
-    }
-
-    return visid;
-}
-
 bool
-gfx_init_context(Gfx *gfx)
+gfx_context_init(Gfx *gfx)
 {
     ASSERT(gfx);
 
@@ -130,66 +103,105 @@ gfx_init_context(Gfx *gfx)
     return true;
 }
 
-GfxTarget *
-gfx_create_target(Gfx *gfx, EGLNativeWindowType win)
+EGLint
+gfx_get_visual_id(Gfx *gfx)
 {
     ASSERT(gfx);
-    ASSERT(!gfx->target);
 
-    GfxTarget *target = &instance.targets[0];
-    ASSERT(!target->surf);
+    EGLint visid, count;
+    static const EGLint attrs[] = {
+        EGL_RED_SIZE,        8,
+        EGL_GREEN_SIZE,      8,
+        EGL_BLUE_SIZE,       8,
+        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+        EGL_NONE
+    };
+
+    if (!eglChooseConfig(gfx->dpy, attrs, &gfx->cfg, 1, &count)) {
+        return 0;
+    }
+
+    ASSERT(gfx->cfg && count > 0);
+
+    if (!eglGetConfigAttrib(gfx->dpy, gfx->cfg, EGL_NATIVE_VISUAL_ID, &visid)) {
+        return 0;
+    }
+
+    return visid;
+}
+
+GfxTarget *
+gfx_target_create(Gfx *gfx, EGLNativeWindowType win)
+{
+    ASSERT(gfx);
+
+    GfxTarget *target = &globals.targets[0];
+    ASSERT(!target->gfx);
 
     target->surf = eglCreateWindowSurface(gfx->dpy, gfx->cfg, win, NULL);
 
     if (!target->surf) {
-        target = NULL;
-    } else if (!gfx_query_target_size(gfx, target, NULL, NULL)) {
+        return NULL;
+    }
+
+    target->gfx = gfx;
+    target->win = win;
+
+    if (!gfx_target_query_size(target, NULL, NULL)) {
         eglDestroySurface(gfx->dpy, target->surf);
         memset(target, 0, sizeof(*target));
-        target = NULL;
-    } else {
-        target->win = win;
+        return NULL;
     }
 
     return target;
 }
 
 bool
-gfx_destroy_target(Gfx *gfx, GfxTarget *target)
+gfx_target_init(GfxTarget *target)
 {
-    ASSERT(gfx);
     ASSERT(target);
+    ASSERT(target->gfx);
+
+    target->img = gfx_image_create();
+
+    if (!target->img || !gfx_image_init(target->img)) {
+        return false;
+    }
+
+    return true;
+}
+
+bool
+gfx_target_destroy(GfxTarget *target)
+{
+    ASSERT(target);
+    ASSERT(target->gfx);
+
+    Gfx *const gfx = target->gfx;
 
     eglDestroySurface(gfx->dpy, target->surf);
 
     if (!gfx_set_target(gfx, NULL)){
         return false;
     }
-
-    memset(target, 0, sizeof(*target));
-
-    if (target == gfx->target) {
+    if (gfx->target == target) {
         gfx->target = NULL;
     }
+
+    gfx_image_destroy(target->img);
+
+    memset(target, 0, sizeof(*target));
 
     return true;
 }
 
-void
-gfx_get_target_size(const Gfx *gfx, const GfxTarget *target, int *r_width, int *r_height)
-{
-    ASSERT(gfx);
-    ASSERT(target);
-
-    SETPTR(r_width,  target->width);
-    SETPTR(r_height, target->height);
-}
-
 bool
-gfx_query_target_size(const Gfx *gfx, GfxTarget *target, int *r_width, int *r_height)
+gfx_target_query_size(const GfxTarget *target, int *r_width, int *r_height)
 {
-    ASSERT(gfx);
     ASSERT(target);
+    ASSERT(target->gfx);
+
+    const Gfx *const gfx = target->gfx;
 
     int width, height;
     if (!eglQuerySurface(gfx->dpy, target->surf, EGL_WIDTH, &width) ||
@@ -198,23 +210,23 @@ gfx_query_target_size(const Gfx *gfx, GfxTarget *target, int *r_width, int *r_he
         return false;
     }
 
-    if (width != target->width || height != target->height) {
-        gfx_set_target_size(gfx, target, width, height);
-    }
-
-    gfx_get_target_size(gfx, target, r_width, r_height);
+    SETPTR(r_width, width);
+    SETPTR(r_height, height);
 
     return true;
 }
 
 void
-gfx_set_target_size(const Gfx *gfx, GfxTarget *target, uint width, uint height)
+gfx_target_set_size(GfxTarget *target, uint width, uint height,
+                    // NOTE(ben): Temporary scaffolding
+                    uint inc_width,
+                    uint inc_height,
+                    uint border)
 {
-    ASSERT(gfx);
     ASSERT(target);
+    ASSERT(target->gfx);
 
-    target->width  = width;
-    target->height = height;
+    gfx_image_set_size(target->img, width, height, inc_width, inc_height, border);
 }
 
 GfxTarget *
@@ -253,10 +265,12 @@ gfx_set_vsync(const Gfx *gfx, bool enable)
 }
 
 void
-gfx_post_target(const Gfx *gfx, const GfxTarget *target)
+gfx_target_post(const GfxTarget *target)
 {
-    ASSERT(gfx);
     ASSERT(target);
+    ASSERT(target->gfx);
+
+    const Gfx *const gfx = target->gfx;
 
     eglSwapBuffers(gfx->dpy, target->surf);
 }

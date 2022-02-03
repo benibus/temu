@@ -51,6 +51,9 @@ struct Win_ {
     int height;
     int border;
     WinCallbacks callbacks;
+    // TODO(ben): temporary
+    int inc_width;
+    int inc_height;
 };
 
 struct Server_ {
