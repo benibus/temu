@@ -16,7 +16,6 @@
  *------------------------------------------------------------------------------*/
 
 #include "utils.h"
-#include "terminal.h"
 #include "pty.h"
 
 #include <errno.h>

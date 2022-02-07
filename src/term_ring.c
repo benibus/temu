@@ -16,8 +16,7 @@
  *------------------------------------------------------------------------------*/
 
 #include "utils.h"
-#include "cells.h"
-#include "ring.h"
+#include "term_ring.h"
 
 #define LINE_DEFAULT    (0)
 #define LINE_WRAPPED    (1 << 0)

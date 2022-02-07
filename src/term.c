@@ -16,11 +16,11 @@
  *------------------------------------------------------------------------------*/
 
 #include "utils.h"
-#include "terminal.h"
-#include "keymap.h"
+#include "keycodes.h"
 #include "pty.h"
+#include "term_private.h"
+#include "term_ring.h"
 #include "fsm.h"
-#include "ring.h"
 #include "gfx_draw.h"
 
 #if BUILD_DEBUG
@@ -35,17 +35,20 @@
 static uchar *dbginput; // For human-readable printing
 #endif
 
-#define CELLINIT(t) (Cell){  \
-    .ucs4  = ' ',            \
-    .bg    = (t)->colors.bg,  \
-    .fg    = (t)->colors.fg,  \
-    .type  = CellTypeNormal, \
-    .width = 1,              \
-    .attrs = 0,              \
-}
+#define CELLINIT(t)              \
+    (Cell){                      \
+        .ucs4  = ' ',            \
+        .bg    = (t)->colors.bg, \
+        .fg    = (t)->colors.fg, \
+        .type  = CellTypeNormal, \
+        .width = 1,              \
+        .attrs = 0               \
+    }
 
 static uint cellslen(const Cell *, int);
 
+// TODO(ben): Fix naming, move to internal header
+static size_t consume(Term *term, const uchar *data, size_t len);
 static void write_codepoint(Term *, uint32, CellType);
 static void write_tab(Term *);
 static void write_newline(Term *);
@@ -330,7 +333,7 @@ term_pull(Term *term, uint32 msec)
         len = pty_read(term->mfd, term->input, LEN(term->input), timeout);
         accum += len;
         timeout -= timer_msec(NULL) - basetime;
-    } while (term_consume(term, term->input, len) && timeout > 0);
+    } while (consume(term, term->input, len) && timeout > 0);
 
     return accum;
 }
@@ -446,7 +449,7 @@ term_resize(Term *term, uint width, uint height)
 }
 
 size_t
-term_consume(Term *term, const uchar *str, size_t len)
+consume(Term *term, const uchar *str, size_t len)
 {
     uint i = 0;
 
@@ -713,6 +716,7 @@ void term_print_history(const Term *term)
     dbg_print_ring(term->ring);
 }
 
+// TODO(ben): Move all of the parsing/dispatch stuff somewhere else
 // C0 control functions
 static void emu_c0_ctrl(Term *, char);
 // C1 control functions

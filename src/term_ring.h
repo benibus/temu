@@ -15,12 +15,13 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  *------------------------------------------------------------------------------*/
 
-#ifndef RING_H__
-#define RING_H__
+#ifndef TERM_RING_H__
+#define TERM_RING_H__
 
 #include "common.h"
 #include "cells.h"
 
+// TODO(ben): Fix naming
 typedef struct Ring Ring;
 
 Ring *ring_create(int max_rows, int cols, int rows);

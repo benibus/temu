@@ -19,7 +19,7 @@
 #define PLATFORM_H__
 
 #include "common.h"
-#include "keymap.h"
+#include "keycodes.h"
 
 typedef struct Win_ Win;
 

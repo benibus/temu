@@ -15,40 +15,44 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  *------------------------------------------------------------------------------*/
 
-#ifndef TERM_H__
-#define TERM_H__
+#ifndef TERM_PRIVATE_H__
+#define TERM_PRIVATE_H__
 
 #include "common.h"
+#include "term.h"
+#include "term_ring.h"
 #include "cells.h"
-#include "ring.h"
-#include "fonts.h"
 
-typedef void TermFuncSetTitle(void *, const char *, size_t);
-typedef void TermFuncSetIcon(void *, const char *, size_t);
-typedef void TermFuncSetProp(void *, const char *, size_t);
+static_assert(FontStyleRegular == ATTR_NONE, "Bitmask mismatch.");
+static_assert(FontStyleBold == ATTR_BOLD, "Bitmask mismatch.");
+static_assert(FontStyleItalic == ATTR_ITALIC, "Bitmask mismatch.");
+static_assert(FontStyleBoldItalic == (ATTR_BOLD|ATTR_ITALIC), "Bitmask mismatch.");
+
+typedef struct TermCallbacks_ TermCallbacks;
+typedef struct TermColors_ TermColors;
 
 typedef struct { void *param; TermFuncSetTitle *func; } TermCallbackSetTitle;
 typedef struct { void *param; TermFuncSetIcon  *func; } TermCallbackSetIcon;
 typedef struct { void *param; TermFuncSetProp  *func; } TermCallbackSetProp;
 
-typedef struct {
+struct TermCallbacks_ {
     TermCallbackSetTitle settitle;
     TermCallbackSetIcon  seticon;
     TermCallbackSetProp  setprop;
-} TermCallbacks;
+};
 
-typedef struct {
+struct TermColors_ {
     union {
         uint32 base16[16];
         uint32 base256[256];
     };
     uint32 bg;
     uint32 fg;
-} TermColors;
+};
 
 #define IOBUF_MAX (4096)
 
-typedef struct {
+struct Term_ {
     int pid; // PTY PID
     int mfd; // PTY master file descriptor
     int sfd; // PTY slave file descriptor
@@ -97,38 +101,7 @@ typedef struct {
     } parser;
 
     TermCallbacks callbacks;
-} Term;
-
-Term *term_create(uint16 histlines, uint8 tabcols);
-void term_resize(Term *term, uint width, uint height);
-void term_draw(Term *term);
-
-void term_destroy(Term *term);
-int term_exec(Term *term, const char *shell, int argc, const char *const *argv);
-size_t term_pull(Term *, uint32);
-size_t term_push(Term *, const void *, size_t);
-size_t term_push_input(Term *term, uint key, uint mod, const uchar *text, size_t len);
-size_t term_consume(Term *, const uchar *, size_t);
-void term_scroll(Term *, int);
-void term_reset_scroll(Term *);
-int term_cols(const Term *term);
-int term_rows(const Term *term);
-size_t term_make_key_string(const Term *, uint, uint, char *, size_t);
-Cell *term_get_framebuffer(Term *);
-
-void term_set_background_color(Term *term, uint32 color);
-void term_set_foreground_color(Term *term, uint32 color);
-void term_set_default_colors(Term *term, uint32 bg_color, uint32 fg_color);
-void term_set_base16_color(Term *term, uint8 idx, uint32 color);
-void term_set_base256_color(Term *term, uint8 idx, uint32 color);
-void term_set_display(Term *term, FontSet *fonts, uint width, uint height);
-
-void term_callback_settitle(Term *term, void *param, TermFuncSetTitle *func);
-void term_callback_seticon(Term *term, void *param, TermFuncSetIcon *func);
-void term_callback_setprop(Term *term, void *param, TermFuncSetProp *func);
-
-void term_print_history(const Term *);
-void term_print_stream(const Term *);
+};
 
 #endif
 

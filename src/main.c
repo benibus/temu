@@ -21,14 +21,9 @@
 #include <unistd.h>
 
 #include "utils.h"
-#include "terminal.h"
 #include "platform.h"
 #include "fonts.h"
-
-static_assert(FontStyleRegular == ATTR_NONE, "Bitmask mismatch.");
-static_assert(FontStyleBold == ATTR_BOLD, "Bitmask mismatch.");
-static_assert(FontStyleItalic == ATTR_ITALIC, "Bitmask mismatch.");
-static_assert(FontStyleBoldItalic == (ATTR_BOLD|ATTR_ITALIC), "Bitmask mismatch.");
+#include "term.h"
 
 #define MAX_CFG_COLORS (2+16)
 #define MIN_HISTLINES 128

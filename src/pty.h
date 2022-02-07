@@ -19,7 +19,6 @@
 #define PTY_H__
 
 #include "common.h"
-#include "terminal.h"
 
 int pty_init(const char *, int *, int *);
 void pty_hangup(int pid);

@@ -18,12 +18,12 @@ set(SOURCES
     src/fsm.c
     src/gfx_context.c
     src/gfx_renderer.c
-    src/keys.c
     src/main.c
     src/opengl.c
     src/pty.c
-    src/ring.c
-    src/terminal.c
+    src/term.c
+    src/term_keyboard.c
+    src/term_ring.c
     src/utf8.c
     src/utils.c
     src/x11_platform.c

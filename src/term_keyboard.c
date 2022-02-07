@@ -18,8 +18,8 @@
 #include <ctype.h>
 
 #include "utils.h"
-#include "terminal.h"
-#include "keymap.h"
+#include "keycodes.h"
+#include "term_private.h"
 
 // temporary
 #define MODE_APPKEYPAD 0
