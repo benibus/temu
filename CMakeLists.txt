@@ -17,11 +17,11 @@ set(SOURCES
     src/fonts.c
     src/fsm.c
     src/gfx_context.c
+    src/gfx_renderer.c
     src/keys.c
     src/main.c
     src/opengl.c
     src/pty.c
-    src/renderer.c
     src/ring.c
     src/terminal.c
     src/utf8.c

@@ -571,12 +571,7 @@ window_init(Win *win)
         if (wait_for_event(win, VisibilityNotify, DEFAULT_TIMEOUT, NULL)) {
             query_coordinates(win, &win->xpos, &win->ypos);
             query_dimensions(win, &win->width, &win->height);
-            gfx_target_set_size(win->target,
-                                win->width,
-                                win->height,
-                                win->inc_width,
-                                win->inc_height,
-                                win->border);
+            gfx_target_resize(win->target, win->width, win->height);
             win->online = true;
         }
     }
@@ -585,7 +580,7 @@ window_init(Win *win)
 }
 
 bool
-window_set_size(Win *win, uint width, uint height)
+window_resize(Win *win, uint width, uint height)
 {
     ASSERT(win);
 
@@ -900,10 +895,7 @@ xhandler_configurenotify(XEvent *event_, Win *win, uint32 time)
                        sub_border(event->height, win->border));
     }
 
-    gfx_target_set_size(win->target, event->width, event->height,
-                        win->inc_width,
-                        win->inc_height,
-                        win->border);
+    gfx_target_resize(win->target, event->width, event->height);
 
     win->width  = event->width;
     win->height = event->height;

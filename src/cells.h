@@ -67,6 +67,7 @@ typedef struct {
 typedef struct {
     Cell *cells;
     int cols, rows;
+    int width, height;
     CursorDesc cursor;
     uint32 time;
     uint32 default_bg;

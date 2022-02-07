@@ -30,21 +30,19 @@
 
 #define GL_GLEXT_PROTOTYPES 1
 #if (GLES_VERSION >= 320)
-  #define OPENGL_SHADER_HEADER "300 es"
   #include <GLES3/gl32.h>
 #elif (GLES_VERSION >= 310)
-  #define OPENGL_SHADER_HEADER "300 es"
   #include <GLES3/gl31.h>
 #elif (GLES_VERSION >= 300)
-  #define OPENGL_SHADER_HEADER "300 es"
   #include <GLES3/gl3.h>
 #elif (GLES_VERSION >= 200)
-  #define OPENGL_SHADER_HEADER "200 es"
   #include <GLES2/gl2.h>
 #endif
 
 GLuint gl_compile_shader(const char *src, GLenum type);
 GLuint gl_link_shaders(GLuint *shaders, uint count);
+void gl_define_attr(GLuint idx, GLint count, GLenum type, GLsizei stride, uintptr_t offset);
+const char *gl_type_string(GLenum type);
 
 #if (BUILD_DEBUG)
   #define gl_get_error(...) gl__get_error(__FILE__,__func__,__LINE__)

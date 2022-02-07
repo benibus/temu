@@ -277,6 +277,8 @@ term_generate_frame(Term *term)
     ring_copy_framebuffer(term->ring, frame->cells);
     frame->cols = term->cols;
     frame->rows = term->rows;
+    frame->width = term->cols * term->colpx;
+    frame->height = term->rows *term->rowpx;
     frame->cursor.col = term->x;
     frame->cursor.row = term->y;
     frame->cursor.style = term->crs_style;

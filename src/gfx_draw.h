@@ -15,17 +15,17 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  *------------------------------------------------------------------------------*/
 
-#ifndef RENDERER_H__
-#define RENDERER_H__
+#ifndef GFX_DRAW_H__
+#define GFX_DRAW_H__
 
 #include "common.h"
 #include "cells.h"
 #include "fonts.h"
 
-void gfx_render_clear_1u(uint32 rgb);
-void gfx_render_clear_3u(uint8 r, uint8 g, uint8 b);
-void gfx_render_clear_3f(float r, float g, float b);
-void gfx_render_frame(const Frame *, FontSet *);
+void gfx_clear_rgb1u(uint32 rgb);
+void gfx_clear_rgb3u(uint8 r, uint8 g, uint8 b);
+void gfx_clear_rgb3f(float r, float g, float b);
+void gfx_draw_frame(const Frame *, FontSet *);
 
 #endif
 

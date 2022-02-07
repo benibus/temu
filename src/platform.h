@@ -35,7 +35,7 @@ int window_events_pending(const Win *win);
 void window_get_size(const Win *win, int *width, int *height, int *border);
 void window_set_title(Win *win, const char *name, size_t len);
 void window_set_icon(Win *win, const char *name, size_t len);
-bool window_set_size(Win *win, uint width, uint height);
+bool window_resize(Win *win, uint width, uint height);
 void window_set_size_hints(Win *win, uint inc_width, uint inc_height, uint border);
 void window_set_class_hints(Win *win, char *wm_name, char *wm_class);
 int window_poll_events(Win *win);

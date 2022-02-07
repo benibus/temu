@@ -33,10 +33,7 @@ GfxTarget *gfx_target_create(Gfx *gfx, EGLNativeWindowType win);
 bool gfx_target_destroy(GfxTarget *target);
 bool gfx_target_init(GfxTarget *target);
 bool gfx_target_query_size(const GfxTarget *target, int *r_width, int *r_height);
-void gfx_target_set_size(GfxTarget *target, uint width, uint height,
-                         uint inc_width,
-                         uint inc_height,
-                         uint border);
+void gfx_target_resize(GfxTarget *target, uint width, uint height);
 GfxTarget *gfx_get_target(const Gfx *gfx);
 bool gfx_set_target(Gfx *gfx, GfxTarget *target);
 void gfx_target_post(const GfxTarget *target);

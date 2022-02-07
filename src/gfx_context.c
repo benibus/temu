@@ -16,12 +16,12 @@
  *------------------------------------------------------------------------------*/
 
 #include "utils.h"
+#include "opengl.h"
 #include "gfx_context.h"
-#include "gfx_private.h"
+#include "gfx_renderer.h"
 
 struct GfxTarget_ {
     Gfx *gfx;
-    GfxImage *img;
     EGLNativeWindowType win;
     EGLSurface surf;
 };
@@ -162,9 +162,7 @@ gfx_target_init(GfxTarget *target)
     ASSERT(target);
     ASSERT(target->gfx);
 
-    target->img = gfx_image_create();
-
-    if (!target->img || !gfx_image_init(target->img)) {
+    if (!gfx_renderer_init()) {
         return false;
     }
 
@@ -181,14 +179,14 @@ gfx_target_destroy(GfxTarget *target)
 
     eglDestroySurface(gfx->dpy, target->surf);
 
-    if (!gfx_set_target(gfx, NULL)){
+    if (!gfx_set_target(gfx, NULL)) {
         return false;
     }
     if (gfx->target == target) {
         gfx->target = NULL;
     }
 
-    gfx_image_destroy(target->img);
+    gfx_renderer_fini();
 
     memset(target, 0, sizeof(*target));
 
@@ -217,16 +215,12 @@ gfx_target_query_size(const GfxTarget *target, int *r_width, int *r_height)
 }
 
 void
-gfx_target_set_size(GfxTarget *target, uint width, uint height,
-                    // NOTE(ben): Temporary scaffolding
-                    uint inc_width,
-                    uint inc_height,
-                    uint border)
+gfx_target_resize(GfxTarget *target, uint width, uint height)
 {
     ASSERT(target);
     ASSERT(target->gfx);
 
-    gfx_image_set_size(target->img, width, height, inc_width, inc_height, border);
+    gfx_renderer_resize(width, height);
 }
 
 GfxTarget *

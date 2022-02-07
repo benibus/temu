@@ -20,90 +20,61 @@
 
 #include "common.h"
 
-typedef union Vec2F_ Vec2F;
-typedef union Vec2I_ Vec2I;
-typedef union Vec2U_ Vec2U;
-typedef union Vec3F_ Vec3F;
-typedef union Vec3I_ Vec3I;
-typedef union Vec3U_ Vec3U;
-typedef union Vec4F_ Vec4F;
-typedef union Vec4I_ Vec4I;
-typedef union Vec4U_ Vec4U;
-
-union Vec2F_ {
-    float arr[2];
-    struct { float x, y; };
-    struct { float s, t; };
-    struct { float u, v; };
-};
-
-union Vec2I_ {
-    int arr[2];
-    struct { int x, y; };
-    struct { int s, t; };
-    struct { int u, v; };
-};
-
-union Vec2U_ {
-    uint arr[2];
-    struct { uint x, y; };
-    struct { uint s, t; };
-    struct { uint u, v; };
-};
-
-union Vec3F_ {
-    float arr[3];
-    struct { float x, y, z; };
-    struct { float r, g, b; };
-};
-
-union Vec3I_ {
-    int arr[3];
-    struct { int x, y, z; };
-    struct { int r, g, b; };
-};
-
-union Vec3U_ {
-    uint arr[3];
-    struct { uint x, y, z; };
-    struct { uint r, g, b; };
-};
-
-union Vec4F_ {
-    float arr[4];
-    struct { float x, y, z, w; };
-    struct { float s, t, u, v; };
-    struct { float r, g, b, a; };
-};
-
-union Vec4I_ {
-    int arr[4];
-    struct { int x, y, z, w; };
-    struct { int s, t, u, v; };
-    struct { int r, g, b, a; };
-};
-
-union Vec4U_ {
-    uint arr[4];
-    struct { uint x, y, z, w; };
-    struct { uint s, t, u, v; };
-    struct { uint r, g, b, a; };
-};
-
-#if STD_C11
-  #define VEC__(N,T,...) ((Vec##N##T){{ __VA_ARGS__ }})
-#else
-  #define VEC__(N,T,...) ((Vec##N##T){ __VA_ARGS__ })
+// Convenience aliases for making code-generation easier
+#ifndef Vec1F
+    #define Vec1F float
+#endif
+#ifndef Vec1I
+    #define Vec1I int
+#endif
+#ifndef Vec1U
+    #define Vec1U uint
 #endif
 
-#define VEC2F(x,y) VEC__(2,F,x,y)
-#define VEC2I(x,y) VEC__(2,I,x,y)
-#define VEC2U(x,y) VEC__(2,U,x,y)
+#define XDEF_VEC2(t)                    \
+    union {                             \
+        Vec1##t arr[2];                 \
+        struct { Vec1##t x, y; };       \
+        struct { Vec1##t s, t; };       \
+        struct { Vec1##t u, v; };       \
+    }
+#define XDEF_VEC3(t)                    \
+    union {                             \
+        Vec1##t arr[3];                 \
+        struct { Vec1##t x, y, z; };    \
+        struct { Vec1##t r, g, b; };    \
+    }
+#define XDEF_VEC4(t)                    \
+    union {                             \
+        Vec1##t arr[4];                 \
+        struct { Vec1##t x, y, z, w; }; \
+        struct { Vec1##t s, t, u, v; }; \
+        struct { Vec1##t r, g, b, a; }; \
+    }
 
-#define VEC3F(x,y,z) VEC__(3,F,x,y,z)
-#define VEC3I(x,y,z) VEC__(3,I,x,y,z)
-#define VEC3U(x,y,z) VEC__(3,U,x,y,z)
+// The typedef itself doesn't get expanded so as to not elude grep, ctags, etc...
+typedef XDEF_VEC2(F) Vec2F;
+typedef XDEF_VEC2(I) Vec2I;
+typedef XDEF_VEC2(U) Vec2U;
+typedef XDEF_VEC3(F) Vec3F;
+typedef XDEF_VEC3(I) Vec3I;
+typedef XDEF_VEC3(U) Vec3U;
+typedef XDEF_VEC4(F) Vec4F;
+typedef XDEF_VEC4(I) Vec4I;
+typedef XDEF_VEC4(U) Vec4U;
 
+#undef XDEF_VEC2
+#undef XDEF_VEC3
+#undef XDEF_VEC4
+
+#define VEC__(n,t,...) ((Vec##n##t){{ __VA_ARGS__ }})
+
+#define VEC2F(x,y)     VEC__(2,F,x,y)
+#define VEC2I(x,y)     VEC__(2,I,x,y)
+#define VEC2U(x,y)     VEC__(2,U,x,y)
+#define VEC3F(x,y,z)   VEC__(3,F,x,y,z)
+#define VEC3I(x,y,z)   VEC__(3,I,x,y,z)
+#define VEC3U(x,y,z)   VEC__(3,U,x,y,z)
 #define VEC4F(x,y,z,w) VEC__(4,F,x,y,z,w)
 #define VEC4I(x,y,z,w) VEC__(4,I,x,y,z,w)
 #define VEC4U(x,y,z,w) VEC__(4,U,x,y,z,w)

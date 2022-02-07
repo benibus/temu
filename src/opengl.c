@@ -65,6 +65,59 @@ gl_link_shaders(GLuint *shaders, uint count)
 }
 
 void
+gl_define_attr(GLuint idx, GLint count, GLenum type, GLsizei stride, uintptr_t offset)
+{
+    bool is_float = false;
+
+    switch (type) {
+    case GL_BYTE:
+    case GL_UNSIGNED_BYTE:
+    case GL_SHORT:
+    case GL_UNSIGNED_SHORT:
+    case GL_INT:
+    case GL_UNSIGNED_INT:
+        break;
+    case GL_FLOAT:
+        is_float = true;
+        break;
+    default:
+        dbgprint("Unhandled GLenum: 0x%x", type);
+        return;
+    }
+
+    glEnableVertexAttribArray(idx);
+    glVertexAttribDivisor(idx, 1);
+
+    if (is_float) {
+        glVertexAttribPointer(idx, count, type, GL_FALSE, stride, (void *)offset);
+    } else {
+        glVertexAttribIPointer(idx, count, type, stride, (void *)offset);
+    }
+}
+
+const char *
+gl_type_string(GLenum type)
+{
+#define X_ENUMS           \
+    X_(GL_ZERO)           \
+    X_(GL_BYTE)           \
+    X_(GL_UNSIGNED_BYTE)  \
+    X_(GL_SHORT)          \
+    X_(GL_UNSIGNED_SHORT) \
+    X_(GL_INT)            \
+    X_(GL_UNSIGNED_INT)   \
+    X_(GL_FLOAT)
+
+    switch (type) {
+#define X_(x) case (x): return #x;
+    X_ENUMS
+#undef X_
+    default: return "";
+    }
+#undef X_ENUMS
+}
+
+void
 gl__get_error(const char *file, const char *func, int line)
 {
     GLenum error = GL_NO_ERROR;

@@ -15,42 +15,14 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  *------------------------------------------------------------------------------*/
 
-#ifndef GFX_PRIVATE_H__
-#define GFX_PRIVATE_H__
+#ifndef GFX_RENDERER_H__
+#define GFX_RENDERER_H__
 
 #include "common.h"
-#include "opengl.h"
 
-typedef struct GfxImage_ GfxImage;
-typedef struct GfxInstance_ GfxInstance; // NOTE(ben): temporary
-
-struct GfxImage_ {
-    int width;
-    int height;
-    int colpx;
-    int rowpx;
-    int borderpx;
-
-    GLuint prog;
-    GLuint vao;
-    GLuint vbo;
-    GfxInstance *instances;
-
-    struct {
-        GLuint projection;
-        GLuint cellpx;
-        GLuint borderpx;
-        GLuint screenpx;
-    } uniforms;
-};
-
-GfxImage *gfx_image_create(void);
-void gfx_image_destroy(GfxImage *img);
-bool gfx_image_init(GfxImage *img);
-void gfx_image_set_size(GfxImage *img,
-                        int width, int height,
-                        int inc_width, int inc_height,
-                        int border);
+bool gfx_renderer_init(void);
+void gfx_renderer_fini(void);
+void gfx_renderer_resize(int width, int height);
 
 #endif
 

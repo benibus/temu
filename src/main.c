@@ -24,7 +24,7 @@
 #include "terminal.h"
 #include "platform.h"
 #include "fonts.h"
-#include "renderer.h"
+#include "gfx_draw.h"
 
 static_assert(FontStyleRegular == ATTR_NONE, "Bitmask mismatch.");
 static_assert(FontStyleBold == ATTR_BOLD, "Bitmask mismatch.");
@@ -260,7 +260,7 @@ setup_window(App *app)
     window_set_title(app->win, app->prefs.wm_title, strlen(app->prefs.wm_title));
 
     window_set_size_hints(app->win, app->cell_width, app->cell_height, app->prefs.border);
-    if (!window_set_size(app->win, width, height)) {
+    if (!window_resize(app->win, width, height)) {
         exit(EXIT_FAILURE);
     }
 
@@ -368,7 +368,7 @@ run(App *app)
 
     while (!result && !hangup && window_is_online(app->win)) {
         if (draw) {
-            gfx_render_frame(term_generate_frame(app->term), app->fontset);
+            gfx_draw_frame(term_generate_frame(app->term), app->fontset);
             window_update(app->win);
         }
 
