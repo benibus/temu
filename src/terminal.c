@@ -21,6 +21,7 @@
 #include "pty.h"
 #include "fsm.h"
 #include "ring.h"
+#include "gfx_draw.h"
 
 #if BUILD_DEBUG
   #define DEBUG_PRINT_INPUT 1
@@ -269,8 +270,8 @@ term_exec(Term *term, const char *shell, int argc, const char *const *argv)
 int term_cols(const Term *term) { return term->cols; }
 int term_rows(const Term *term) { return term->rows; }
 
-Frame *
-term_generate_frame(Term *term)
+static Frame *
+generate_frame(Term *term)
 {
     Frame *frame = &term->frame;
 
@@ -296,6 +297,17 @@ term_generate_frame(Term *term)
     }
 
     return frame;
+}
+
+void
+term_draw(Term *term)
+{
+    ASSERT(term);
+
+    gfx_clear_rgb1u(term->colors.bg);
+    if (term->pid) {
+        gfx_draw_frame(generate_frame(term), term->fonts);
+    }
 }
 
 size_t

@@ -199,9 +199,8 @@ gfx_clear_rgb1u(uint32 rgb)
 }
 
 static void
-draw_prepare(GLuint prog, GLuint vao, uint32 bg)
+draw_prepare(GLuint prog, GLuint vao)
 {
-    gfx_clear_rgb1u(bg);
     glUseProgram(prog);
     glBindVertexArray(vao);
 }
@@ -227,17 +226,13 @@ gfx_draw_frame(const Frame *frame, FontSet *fontset)
 {
     GfxDraw *const draw = get_draw();
 
-    if (!frame) {
+    if (!frame || !fontset) {
         return;
     }
 
     uint idx = 0;
 
-    draw_prepare(draw->prog, draw->vao, frame->default_bg);
-
-    if (!fontset) {
-        goto finish;
-    }
+    draw_prepare(draw->prog, draw->vao);
 
     // Cursor coordinates
     const int ccol = frame->cursor.col;
@@ -305,7 +300,6 @@ gfx_draw_frame(const Frame *frame, FontSet *fontset)
         }
     }
 
-finish:
     draw_quads(quads, idx);
 }
 

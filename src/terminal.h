@@ -93,7 +93,7 @@ typedef struct {
         int depth;       // Intermediate token index
         int argv[16];    // Numeric parameters
         int argi;        // Numeric parameter index
-        bool overflow;   // Numeric paramater overflowed
+        bool overflow;   // Numeric parameter overflowed
     } parser;
 
     TermCallbacks callbacks;
@@ -101,6 +101,7 @@ typedef struct {
 
 Term *term_create(uint16 histlines, uint8 tabcols);
 void term_resize(Term *term, uint width, uint height);
+void term_draw(Term *term);
 
 void term_destroy(Term *term);
 int term_exec(Term *term, const char *shell, int argc, const char *const *argv);
@@ -114,7 +115,6 @@ int term_cols(const Term *term);
 int term_rows(const Term *term);
 size_t term_make_key_string(const Term *, uint, uint, char *, size_t);
 Cell *term_get_framebuffer(Term *);
-Frame *term_generate_frame(Term *);
 
 void term_set_background_color(Term *term, uint32 color);
 void term_set_foreground_color(Term *term, uint32 color);

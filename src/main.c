@@ -24,7 +24,6 @@
 #include "terminal.h"
 #include "platform.h"
 #include "fonts.h"
-#include "gfx_draw.h"
 
 static_assert(FontStyleRegular == ATTR_NONE, "Bitmask mismatch.");
 static_assert(FontStyleBold == ATTR_BOLD, "Bitmask mismatch.");
@@ -368,7 +367,7 @@ run(App *app)
 
     while (!result && !hangup && window_is_online(app->win)) {
         if (draw) {
-            gfx_draw_frame(term_generate_frame(app->term), app->fontset);
+            term_draw(term);
             window_update(app->win);
         }
 
