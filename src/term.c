@@ -18,10 +18,13 @@
 #include "utils.h"
 #include "keycodes.h"
 #include "pty.h"
+#include "term_opcodes.h"
 #include "term_private.h"
 #include "term_ring.h"
 #include "fsm.h"
 #include "gfx_draw.h"
+
+#include <unistd.h> // for isatty()
 
 #if BUILD_DEBUG
   #define DEBUG_PRINT_INPUT 1
@@ -49,7 +52,8 @@ static uint cellslen(const Cell *, int);
 
 // TODO(ben): Fix naming, move to internal header
 static size_t consume(Term *term, const uchar *data, size_t len);
-static void write_codepoint(Term *, uint32, CellType);
+static void write_codepoint(Term *term, uint32 ucs4);
+static void write_printable(Term *, uint32, CellType);
 static void write_tab(Term *);
 static void write_newline(Term *);
 static void set_active_bg(Term *, uint8);
@@ -68,7 +72,7 @@ static void set_cursor_row(Term *, int);
 static void set_cursor_visibility(Term *, bool);
 static void set_cursor_style(Term *, int);
 
-static void do_action(Term *, StateCode, ActionCode, uchar);
+static uint32 do_action(Term *, StateCode, ActionCode, uchar);
 
 #define XCALLBACK_(M,T) \
 void term_callback_##M(Term *term, void *param, TermFunc##T *func) { \
@@ -86,6 +90,49 @@ static void alloc_tabstops(uint8 **, uint16, uint16, uint16);
 static void init_color_table(Term *);
 static void init_parser(Term *);
 static void update_dimensions(Term *, uint16, uint16);
+
+#define FUNCPROTO(x) void x(Term *term, const char *data, const int *argv, int argc)
+#define FUNCNAME(x)  func_##x
+#define FUNCDECL(x)  static FUNCPROTO(FUNCNAME(x))
+#define FUNCDEFN(x)  inline FUNCPROTO(FUNCNAME(x))
+
+#define X_DISPATCH_FUNCS \
+    X_(RI) \
+    X_(DECSC) \
+    X_(DECRC) \
+    X_(ICH) \
+    X_(CUU) \
+    X_(CUD) \
+    X_(CUF) \
+    X_(CUB) \
+    X_(CNL) \
+    X_(CPL) \
+    X_(CHA) \
+    X_(CUP) \
+    X_(CHT) \
+    X_(DCH) \
+    X_(VPA) \
+    X_(VPR) \
+    X_(ED) \
+    X_(EL) \
+    X_(SGR) \
+    X_(DSR) \
+    X_(DECSET) \
+    X_(DECRST) \
+    X_(DECSCUSR) \
+    X_(OSC)
+
+#define X_(cmd) FUNCDECL(cmd);
+X_DISPATCH_FUNCS
+#undef X_
+
+typedef FUNCPROTO((*DispatchFunc));
+
+static const DispatchFunc func_table[NumOpcodes] = {
+#define X_(cmd) [OPIDX_##cmd] = &FUNCNAME(cmd),
+    X_DISPATCH_FUNCS
+#undef X_
+};
 
 Term *
 term_create(uint16 histlines, uint8 tabcols)
@@ -448,6 +495,73 @@ term_resize(Term *term, uint width, uint height)
     update_dimensions(term, cols, rows);
 }
 
+static inline void
+print_parsed_params(const struct Parser *parse)
+{
+    for (int i = 0; i < parse->argi + 1; i++) {
+        fprintf(stderr, "%s%d", (i) ? ";" : "", parse->argv[i]);
+    }
+}
+
+static inline void
+print_parsed_string(const struct Parser *parse)
+{
+    fprintf(stderr,
+            "%d;%.*s",
+            parse->argi ? parse->argv[0] : 0,
+            (int)arr_count(parse->data),
+            (char *)parse->data);
+}
+
+static inline void
+trace_dispatch(uint32 oc, uint16 idx, const struct Parser *parse)
+{
+    const char *const name = opcode_to_string(oc);
+    const bool implemented = (OC_TAG(oc) == OPTAG_WRITE || !!func_table[idx]);
+
+    if (isatty(2)) {
+        fprintf(stderr, "\033[1;%dm*\033[m ", implemented ? 36 : 33);
+    } else {
+        fprintf(stderr, "%c ", implemented ? '*' : ' ');
+    }
+    fprintf(stderr, "$0x%x [%3u] %-16s ", oc, idx, name);
+
+    const uint tag = OC_TAG(oc);
+
+    switch (tag) {
+    case OPTAG_ESC:
+    case OPTAG_CSI:
+    case OPTAG_DCS: {
+        char buf[3] = {0};
+        opcode_get_chars(oc, buf);
+
+        switch (tag) {
+        case OPTAG_ESC:
+            fprintf(stderr, "\\e%.1s%.1s", &buf[1], &buf[0]);
+            break;
+        case OPTAG_CSI:
+            fprintf(stderr, "\\e[%.1s", &buf[2]);
+            print_parsed_params(parse);
+            fprintf(stderr, "%.1s%.1s", &buf[1], &buf[0]);
+            break;
+        case OPTAG_DCS:
+            fprintf(stderr, "\\eP%.1s%.1s%.1s", &buf[2], &buf[1], &buf[0]);
+            print_parsed_string(parse);
+            break;
+        }
+        break;
+    case OPTAG_OSC:
+        fprintf(stderr, "\\e]");
+        print_parsed_string(parse);
+        break;
+    }
+    default:
+        break;
+    }
+
+    fprintf(stderr, "\n");
+}
+
 size_t
 consume(Term *term, const uchar *str, size_t len)
 {
@@ -457,7 +571,25 @@ consume(Term *term, const uchar *str, size_t len)
         StateTrans result = fsm_next_state(term->parser.state, str[i]);
 
         for (uint n = 0; n < LEN(result.actions); n++) {
+#if 1
+            const uint32 oc = do_action(term, result.state, result.actions[n], str[i]);
+
+            if (!oc) continue;
+
+            const uint idx = opcode_to_index(oc);
+
+            trace_dispatch(oc, idx, &term->parser);
+
+            if (OC_TAG(oc) == OPTAG_WRITE) {
+                write_codepoint(term, OC_NO_TAG(oc));
+            } else if (oc) {
+                if (func_table[idx]) {
+                    func_table[idx](term, (char *)term->parser.data, term->parser.argv, term->parser.argi+1);
+                }
+            }
+#else
             do_action(term, result.state, result.actions[n], str[i]);
+#endif
         }
 
         term->parser.state = result.state;
@@ -487,7 +619,7 @@ consume(Term *term, const uchar *str, size_t len)
 }
 
 void
-write_codepoint(Term *term, uint32 ucs4, CellType type)
+write_printable(Term *term, uint32 ucs4, CellType type)
 {
     if (term->x + 1 < term->cols) {
         term->wrapnext = false;
@@ -541,7 +673,7 @@ write_tab(Term *term)
         if (term->tabstops[term->x] && n > 0) {
             break;
         }
-        write_codepoint(term, ' ', type);
+        write_printable(term, ' ', type);
         type = CellTypeDummyTab;
     }
 }
@@ -716,253 +848,10 @@ void term_print_history(const Term *term)
     dbg_print_ring(term->ring);
 }
 
-// TODO(ben): Move all of the parsing/dispatch stuff somewhere else
-// C0 control functions
-static void emu_c0_ctrl(Term *, char);
-// C1 control functions
-static void emu_c1_ri(Term *, const int *, int);
-static void emu_c1_decsc(Term *, const int *, int);
-static void emu_c1_decrc(Term *, const int *, int);
-// CSI functions
-static void emu_csi_ich(Term *, const int *, int);
-static void emu_csi_cuu(Term *, const int *, int);
-static void emu_csi_cud(Term *, const int *, int);
-static void emu_csi_cuf(Term *, const int *, int);
-static void emu_csi_cub(Term *, const int *, int);
-static void emu_csi_cnl(Term *, const int *, int);
-static void emu_csi_cpl(Term *, const int *, int);
-static void emu_csi_cha(Term *, const int *, int);
-static void emu_csi_cup(Term *, const int *, int);
-static void emu_csi_cht(Term *, const int *, int);
-static void emu_csi_dch(Term *, const int *, int);
-static void emu_csi_vpa(Term *, const int *, int);
-static void emu_csi_vpr(Term *, const int *, int);
-static void emu_csi_ed(Term *, const int *, int);
-static void emu_csi_el(Term *, const int *, int);
-static void emu_csi_sgr(Term *, const int *, int);
-static void emu_csi_dsr(Term *, const int *, int);
-static void emu_csi_decset(Term *, const int *, int);
-static void emu_csi_decrst(Term *, const int *, int);
-static void emu_csi_decscusr(Term *, const int *, int);
-// OSC/DCS functions
-static void emu_osc(Term *, const char *, const int *, int);
-
-// Expandable table for immutable VT functions
-#define HANDLER_TABLE \
-    X_(C1,  NEL,      NULL) \
-    X_(C1,  HTS,      NULL) \
-    X_(C1,  RI,       emu_c1_ri) \
-    X_(C1,  ST,       NULL) \
-    X_(C1,  DECBI,    NULL) \
-    X_(C1,  DECSC,    emu_c1_decsc) \
-    X_(C1,  DECRC,    emu_c1_decrc) \
-    X_(C1,  DECFI,    NULL) \
-    X_(C1,  DECPAM,   NULL) \
-    X_(C1,  DECPNM,   NULL) \
-    X_(C1,  RIS,      NULL) \
-    X_(C1,  LS2,      NULL) \
-    X_(C1,  LS3,      NULL) \
-    X_(C1,  LS3R,     NULL) \
-    X_(C1,  LS2R,     NULL) \
-    X_(C1,  LS1R,     NULL) \
-    X_(CSI, ICH,      emu_csi_ich) \
-    X_(CSI, CUU,      emu_csi_cuu) \
-    X_(CSI, CUD,      emu_csi_cud) \
-    X_(CSI, CUF,      emu_csi_cuf) \
-    X_(CSI, CUB,      emu_csi_cub) \
-    X_(CSI, CNL,      emu_csi_cnl) \
-    X_(CSI, CPL,      emu_csi_cpl) \
-    X_(CSI, CHA,      emu_csi_cha) \
-    X_(CSI, CUP,      emu_csi_cup) \
-    X_(CSI, CHT,      emu_csi_cht) \
-    X_(CSI, ED,       emu_csi_ed) \
-    X_(CSI, EL,       emu_csi_el) \
-    X_(CSI, IL,       NULL) \
-    X_(CSI, DL,       NULL) \
-    X_(CSI, DCH,      emu_csi_dch) \
-    X_(CSI, SU,       NULL) \
-    X_(CSI, SD,       NULL) \
-    X_(CSI, ECH,      NULL) \
-    X_(CSI, CBT,      NULL) \
-    X_(CSI, HPA,      NULL) \
-    X_(CSI, HPR,      NULL) \
-    X_(CSI, REP,      NULL) \
-    X_(CSI, VPA,      emu_csi_vpa) \
-    X_(CSI, VPR,      emu_csi_vpr) \
-    X_(CSI, HVP,      NULL) \
-    X_(CSI, TBC,      NULL) \
-    X_(CSI, SM,       NULL) \
-    X_(CSI, MC,       NULL) \
-    X_(CSI, RM,       NULL) \
-    X_(CSI, DECSTBM,  NULL) \
-    X_(CSI, SGR,      emu_csi_sgr) \
-    X_(CSI, DSR,      emu_csi_dsr) \
-    X_(CSI, DA,       NULL) \
-    X_(CSI, SCOSC,    NULL) \
-    X_(CSI, XTERMWM,  NULL) \
-    X_(CSI, DECSCUSR, emu_csi_decscusr) \
-    X_(CSI, DECSTR,   NULL) \
-    X_(CSI, DECSCL,   NULL) \
-    X_(CSI, DECCARA,  NULL) \
-    X_(CSI, DECCRA,   NULL) \
-    X_(CSI, DECFRA,   NULL) \
-    X_(CSI, DECERA,   NULL) \
-    X_(CSI, DECIC,    NULL) \
-    X_(CSI, DECDC,    NULL) \
-    X_(CSI, DECEFR,   NULL) \
-    X_(CSI, DECELR,   NULL) \
-    X_(CSI, DECSLE,   NULL) \
-    X_(CSI, DECRQLP,  NULL) \
-    X_(CSI, DECSED,   NULL) \
-    X_(CSI, DECSEL,   NULL) \
-    X_(CSI, DECSET,   emu_csi_decset) \
-    X_(CSI, DECMC,    NULL) \
-    X_(CSI, DECRST,   emu_csi_decrst) \
-    X_(CSI, DECDSR,   NULL)
-
-#define OPCODE(esc) OP##esc
-// Define opcodes for C1 and CSI escape sequences
-enum {
-    NOOP,
-#define X_(group,name,...) OPCODE(name),
-    HANDLER_TABLE
-#undef X_
-};
-
-struct HandlerInfo {
-    // For debugging/logging
-    const char *group;
-    const char *name;
-    // VT function implementation
-    void (*func)(Term *, const int *argv, int argc);
-};
-
-// Define table entries for C1 and CSI escape sequences
-static const struct HandlerInfo dispatch_table[] = {
-    [NOOP] = { .group = "UNK" },
-#define X_(group_,name_,func_) [OPCODE(name_)] = { \
-    .group = #group_,  \
-    .name  = #name_,   \
-    .func  = func_     \
-},
-    HANDLER_TABLE
-#undef X_
-};
-
-#undef OPCODE
-#undef HANDLER_TABLE
-
-#include <unistd.h> // for isatty()
-/*
- * Quick and dirty helper function for logging human-readable trace data
- * Its primary purpose is to make unhandled/unknown escape sequences easy to spot
- */
-static inline void
-dbg_print_sequence(const char *group,
-                   const char *name,
-                   const char *prefix,
-                   const int *argv, int argc,
-                   const uchar *data,
-                   const char *suffix,
-                   bool implemented)
-{
-    if (isatty(2)) {
-        printerr("\033[1;%dm*\033[m ", 30 + ((implemented) ? 6 : 3));
-    } else {
-        printerr("%c ", (implemented) ? '+' : '-');
-    }
-
-    printerr("%-3s %-8s \\e%s",
-        DEFAULT(group, "---"),
-        DEFAULT(name, "---"),
-        DEFAULT(prefix, "")
-    );
-
-    char delim[2] = { "" };
-    for (int i = 0; argv && i < argc; i++) {
-        printerr("%s%d", delim, argv[i]);
-        delim[0] = ';';
-    }
-
-    if (arr_count(data)) {
-        printerr("%s%.*s", delim, (int)arr_count(data), (const char *)data);
-    }
-
-    printerr("%s\n", DEFAULT(suffix, ""));
-}
-
-/*
- * Dispatch to the standard C1 and CSI functions that are implemented internally
- */
-static inline void
-dispatch_static(Term *term, uint8 opcode)
-{
-    ASSERT(opcode < LEN(dispatch_table));
-
-    const struct HandlerInfo info = dispatch_table[opcode];
-    const struct Parser *const parser = &term->parser;
-
-#if DEBUG_PRINT_ESC
-    {
-        char prefix[3] = { "[" };
-        char suffix[2] = { "" };
-
-        if (parser->depth > 1) {
-            prefix[1] = parser->tokens[0];
-            suffix[0] = parser->tokens[1];
-        } else {
-            suffix[0] = parser->tokens[0];
-        }
-
-        dbg_print_sequence(
-            info.group,
-            info.name,
-            prefix,
-            parser->argv,
-            parser->argi + 1,
-            parser->data,
-            suffix,
-            !!info.func
-        );
-
-        ASSERT(parser->depth <= 1 || parser->depth == 2);
-    }
-#endif
-
-    if (info.func) {
-        info.func(term, parser->argv, parser->argi + 1);
-    }
-}
-
-/*
- * Dispatch to a secondary OSC parser that calls external platform-dependent handlers
- */
-static inline void
-dispatch_osc(Term *term)
-{
-    const struct Parser *const parser = &term->parser;
-
-#if DEBUG_PRINT_ESC
-    {
-        dbg_print_sequence(
-            "OSC",
-            NULL,
-            "]",
-            parser->argv,
-            parser->argi,
-            parser->data,
-            NULL,
-            true
-        );
-    }
-#endif
-
-    emu_osc(term, (char *)parser->data, parser->argv, parser->argi);
-}
-
 static inline void
 parser_clear(struct Parser *parser)
 {
+    memset(parser->chars, 0, sizeof(parser->chars));
     memset(parser->tokens, 0, sizeof(parser->tokens));
     parser->depth = 0;
     memset(parser->argv, 0, sizeof(parser->argv));
@@ -1009,7 +898,7 @@ parser_next_param(struct Parser *parser)
  * The central routine for performing actions emitted by the state machine - i.e. parsing,
  * UTF-8 validation, writing to the ring buffer, and executing control sequences
  */
-void
+uint32
 do_action(Term *term, StateCode state, ActionCode action, uchar c)
 {
     struct Parser *parser = &term->parser;
@@ -1026,11 +915,11 @@ do_action(Term *term, StateCode state, ActionCode action, uchar c)
     switch (action) {
     case ActionNone:
     case ActionIgnore:
-        return;
-    case ActionPrint:
-        write_codepoint(term, parser->ucs4|(c & 0x7f), CellTypeNormal);
-        parser->ucs4 = 0;
-        break;
+        return 0;
+    case ActionPrint: {
+        const uint32 ucs4 = parser->ucs4|(c & 0x7f);
+        return OC_PACK1(WRITE, ucs4);
+    }
     case ActionUtf8Start:
         switch (state) {
         case StateUtf8B3: parser->ucs4 |= (c & 0x07) << 18; break;
@@ -1051,8 +940,7 @@ do_action(Term *term, StateCode state, ActionCode action, uchar c)
         parser->ucs4 = 0;
         break;
     case ActionExec:
-        emu_c0_ctrl(term, c);
-        break;
+        return OC_PACK1(WRITE, c);
     case ActionHook:
         // sets handler based on DCS parameters, intermediates, and new char
         break;
@@ -1085,13 +973,25 @@ do_action(Term *term, StateCode state, ActionCode action, uchar c)
         break;
     case ActionOscEnd:
         arr_push(parser->data, 0);
-        dispatch_osc(term);
-        break;
+        parser->chars[0] = c;
+        return OC_PACK3(OSC, parser->chars[2], parser->chars[1], parser->chars[0]);
     case ActionCollect:
-        if (parser->depth == LEN(parser->tokens)) {
-            dbgprint("warning: ignoring excess intermediate");
-        } else {
-            parser->tokens[parser->depth++] = c;
+        switch (state) {
+        case StateEsc2:
+            ASSERT(c >= OcMinC21);
+            ASSERT(c <= OcMaxC21);
+            parser->chars[1] = c;
+            break;
+        default:
+            if (c >= OcMinC32) {
+                ASSERT(c <= OcMaxC32);
+                parser->chars[2] = c;
+            } else {
+                ASSERT(c >= OcMinC31);
+                ASSERT(c <= OcMaxC31);
+                parser->chars[1] = c;
+            }
+            break;
         }
         break;
     case ActionParam:
@@ -1105,147 +1005,24 @@ do_action(Term *term, StateCode state, ActionCode action, uchar c)
         parser_clear(parser);
         break;
     case ActionEscDispatch: {
-        parser->tokens[parser->depth++] = c;
-
-        uint8 opcode = NOOP;
-
-        switch (c) {
-        case 'E':  opcode = OPNEL;    break;
-        case 'H':  opcode = OPHTS;    break;
-        case 'M':  opcode = OPRI;     break;
-        case '\\': opcode = OPST;     break;
-        case '6':  opcode = OPDECBI;  break;
-        case '7':  opcode = OPDECSC;  break;
-        case '8':  opcode = OPDECRC;  break;
-        case '9':  opcode = OPDECFI;  break;
-        case '=':  opcode = OPDECPAM; break;
-        case '>':  opcode = OPDECPNM; break;
-        case 'F':  break; // cursor lower-left
-        case 'c':  opcode = OPRIS;    break;
-        case 'l':  break; // memory lock
-        case 'm':  break; // memory unlock
-        case 'n':  opcode = OPLS2;    break;
-        case 'o':  opcode = OPLS3;    break;
-        case '|':  opcode = OPLS3R;   break;
-        case '}':  opcode = OPLS2R;   break;
-        case '~':  opcode = OPLS1R;   break;
-        }
-
-        dispatch_static(term, opcode);
-        break;
+        parser->chars[0] = c;
+        return OC_PACK2(ESC, parser->chars[1], parser->chars[0]);
     }
     case ActionCsiDispatch: {
-        parser->tokens[parser->depth] = c;
-
-        uint8 opcode = NOOP;
-
-        switch ((parser->depth++ > 0) ? parser->tokens[0] : 0) {
-        case 0:
-            switch (c) {
-            case '@': opcode = OPICH;     break;
-            case 'A': opcode = OPCUU;     break;
-            case 'B': opcode = OPCUD;     break;
-            case 'C': opcode = OPCUF;     break;
-            case 'D': opcode = OPCUB;     break;
-            case 'E': opcode = OPCNL;     break;
-            case 'F': opcode = OPCPL;     break;
-            case 'G': opcode = OPCHA;     break;
-            case 'H': opcode = OPCUP;     break;
-            case 'I': opcode = OPCHT;     break;
-            case 'J': opcode = OPED;      break;
-            case 'K': opcode = OPEL;      break;
-            case 'L': opcode = OPIL;      break;
-            case 'M': opcode = OPDL;      break;
-            case 'P': opcode = OPDCH;     break;
-            case 'S': opcode = OPSU;      break;
-            case 'T': opcode = OPSD;      break;
-            case 'X': opcode = OPECH;     break;
-            case 'Z': opcode = OPCBT;     break;
-            case '`': opcode = OPHPA;     break;
-            case 'a': opcode = OPHPR;     break;
-            case 'b': opcode = OPREP;     break;
-            case 'd': opcode = OPVPA;     break;
-            case 'e': opcode = OPVPR;     break;
-            case 'f': opcode = OPHVP;     break;
-            case 'g': opcode = OPTBC;     break;
-            case 'h': opcode = OPSM;      break;
-            case 'i': opcode = OPMC;      break;
-            case 'l': opcode = OPRM;      break;
-            case 'm': opcode = OPSGR;     break;
-            case 'n': opcode = OPDSR;     break;
-            case 'r': opcode = OPDECSTBM; break;
-            case 'c': opcode = OPDA;      break;
-            case 's': opcode = OPSCOSC;   break;
-            case 't': opcode = OPXTERMWM; break;
-            }
-            break;
-        case ' ':
-            switch (c) {
-            case 'q': opcode = OPDECSCUSR; break;
-            }
-            break;
-        case '!':
-            switch (c) {
-            case 'p': opcode = OPDECSTR; break;
-            }
-            break;
-        case '"':
-            switch (c) {
-            case 'p': opcode = OPDECSCL; break;
-            }
-            break;
-        case '$':
-            switch (c) {
-            case 't': opcode = OPDECCARA; break;
-            case 'v': opcode = OPDECCRA;  break;
-            case 'x': opcode = OPDECFRA;  break;
-            case 'z': opcode = OPDECERA;  break;
-            }
-            break;
-        case '\'':
-            switch (c) {
-            case '}': opcode = OPDECIC; break;
-            case '~': opcode = OPDECDC; break;
-            }
-            break;
-        case '>':
-            switch (c) {
-            case 'w': opcode = OPDECEFR;  break;
-            case 'z': opcode = OPDECELR;  break;
-            case '{': opcode = OPDECSLE;  break;
-            case '|': opcode = OPDECRQLP; break;
-            }
-            break;
-        case '?':
-            switch (c) {
-            case 'J': opcode = OPDECSED; break;
-            case 'K': opcode = OPDECSEL; break;
-            case 'h': opcode = OPDECSET; break;
-            case 'i': opcode = OPDECMC;  break;
-            case 'l': opcode = OPDECRST; break;
-            case 'n': opcode = OPDECDSR; break;
-            }
-            break;
-        case '}':
-            break;
-        case '~':
-            break;
-        default:
-            break;
-        }
-
-        dispatch_static(term, opcode);
-        break;
+        parser->chars[0] = c;
+        return OC_PACK3(CSI, parser->chars[2], parser->chars[1], parser->chars[0]);
     }
     default:
         break;
     }
+
+    return 0;
 }
 
 inline void
-emu_c0_ctrl(Term *term, char c)
+write_codepoint(Term *term, uint32 ucs4)
 {
-    switch (c) {
+    switch (ucs4) {
     case '\n':
     case '\v':
     case '\f':
@@ -1263,13 +1040,12 @@ emu_c0_ctrl(Term *term, char c)
     case '\a':
         break;
     default:
-        dbgprint("unhandled control character: %s", charstring(c));
+        write_printable(term, ucs4, CellTypeNormal);
         break;
     }
 }
 
-inline void
-emu_osc(Term *term, const char *str, const int *argv, int argc)
+FUNCDEFN(OSC)
 {
     /*
      * Leading arguments:
@@ -1287,18 +1063,18 @@ emu_osc(Term *term, const char *str, const int *argv, int argc)
     case 0:
     case 1:
         if (cb.seticon.func) {
-            cb.seticon.func(cb.seticon.param, str, arr_count(str));
+            cb.seticon.func(cb.seticon.param, data, arr_count(data));
         }
         if (argv[0] != 0) break;
         // fallthrough
     case 2:
         if (cb.settitle.func) {
-            cb.settitle.func(cb.settitle.param, str, arr_count(str));
+            cb.settitle.func(cb.settitle.param, data, arr_count(data));
         }
         break;
     case 3:
         if (cb.setprop.func) {
-            cb.setprop.func(cb.setprop.param, str, arr_count(str));
+            cb.setprop.func(cb.setprop.param, data, arr_count(data));
         }
         break;
     }
@@ -1306,8 +1082,7 @@ emu_osc(Term *term, const char *str, const int *argv, int argc)
     return;
 }
 
-void
-emu_c1_ri(Term *term, const int *argv, int argc)
+FUNCDEFN(RI)
 {
     UNUSED(argv);
     UNUSED(argc);
@@ -1319,88 +1094,76 @@ emu_c1_ri(Term *term, const int *argv, int argc)
     }
 }
 
-void
-emu_c1_decsc(Term *term, const int *argv, int argc)
+FUNCDEFN(DECSC)
 {
     UNUSED(argv);
     UNUSED(argc);
     cursor_save(term);
 }
 
-void
-emu_c1_decrc(Term *term, const int *argv, int argc)
+FUNCDEFN(DECRC)
 {
     UNUSED(argv);
     UNUSED(argc);
     cursor_restore(term);
 }
 
-void
-emu_csi_ich(Term *term, const int *argv, int argc)
+FUNCDEFN(ICH)
 {
     UNUSED(argc);
     cells_insert(term->ring, CELLINIT(term), term->x, term->y, MAX(argv[0], 1));
 }
 
-void
-emu_csi_cuu(Term *term, const int *argv, int argc)
+FUNCDEFN(CUU)
 {
     UNUSED(argc);
     move_cursor_rows(term, -MAX(argv[0], 1));
 }
 
-void
-emu_csi_cud(Term *term, const int *argv, int argc)
+FUNCDEFN(CUD)
 {
     UNUSED(argc);
     move_cursor_rows(term, +MAX(argv[0], 1));
 }
 
-void
-emu_csi_cuf(Term *term, const int *argv, int argc)
+FUNCDEFN(CUF)
 {
     UNUSED(argc);
     move_cursor_cols(term, +MAX(argv[0], 1));
 }
 
-void
-emu_csi_cub(Term *term, const int *argv, int argc)
+FUNCDEFN(CUB)
 {
     UNUSED(argc);
     move_cursor_cols(term, -MAX(argv[0], 1));
 }
 
-static
-void emu_csi_cnl(Term *term, const int *argv, int argc)
+FUNCDEFN(CNL)
 {
     UNUSED(argc);
     move_cursor_rows(term, +MAX(argv[0], 1));
 }
 
-static
-void emu_csi_cpl(Term *term, const int *argv, int argc)
+FUNCDEFN(CPL)
 {
     UNUSED(argc);
     move_cursor_rows(term, -MAX(argv[0], 1));
 }
 
-void
-emu_csi_cha(Term *term, const int *argv, int argc)
+FUNCDEFN(CHA)
 {
     UNUSED(argc);
     set_cursor_col(term, MAX(argv[0], 1) - 1);
 }
 
-void
-emu_csi_cup(Term *term, const int *argv, int argc)
+FUNCDEFN(CUP)
 {
     UNUSED(argc);
     set_cursor_col(term, MAX(argv[1], 1) - 1);
     set_cursor_row(term, MAX(argv[0], 1) - 1);
 }
 
-void
-emu_csi_cht(Term *term, const int *argv, int argc)
+FUNCDEFN(CHT)
 {
     UNUSED(argc);
     for (int n = DEFAULT(argv[0], 1); n > 0; n--) {
@@ -1408,29 +1171,25 @@ emu_csi_cht(Term *term, const int *argv, int argc)
     }
 }
 
-void
-emu_csi_dch(Term *term, const int *argv, int argc)
+FUNCDEFN(DCH)
 {
     UNUSED(argc);
     cells_delete(term->ring, term->x, term->y, argv[0]);
 }
 
-void
-emu_csi_vpa(Term *term, const int *argv, int argc)
+FUNCDEFN(VPA)
 {
     UNUSED(argc);
     set_cursor_row(term, MAX(argv[1], 1) - 1);
 }
 
-void
-emu_csi_vpr(Term *term, const int *argv, int argc)
+FUNCDEFN(VPR)
 {
     UNUSED(argc);
     move_cursor_rows(term, MAX(argv[1], 1) - 1);
 }
 
-void
-emu_csi_ed(Term *term, const int *argv, int argc)
+FUNCDEFN(ED)
 {
     switch (argv[0]) {
     case 0:
@@ -1448,8 +1207,7 @@ emu_csi_ed(Term *term, const int *argv, int argc)
     }
 }
 
-void
-emu_csi_el(Term *term, const int *argv, int argc)
+FUNCDEFN(EL)
 {
     switch (argv[0]) {
     case 0:
@@ -1465,8 +1223,7 @@ emu_csi_el(Term *term, const int *argv, int argc)
     }
 }
 
-void
-emu_csi_sgr(Term *term, const int *argv, int argc)
+FUNCDEFN(SGR)
 {
     int i = 0;
 
@@ -1569,8 +1326,7 @@ emu_csi_sgr(Term *term, const int *argv, int argc)
     } while (++i < argc);
 }
 
-void
-emu_csi_dsr(Term *term, const int *argv, int argc)
+FUNCDEFN(DSR)
 {
     UNUSED(argc);
 
@@ -1594,7 +1350,7 @@ emu_csi_dsr(Term *term, const int *argv, int argc)
 }
 
 static inline void
-emu__csi_decprv(Term *term, int mode, bool enable)
+decprv_helper(Term *term, int mode, bool enable)
 {
     switch (mode) {
     case 1: // DECCKM (application/normal cursor keys)
@@ -1615,23 +1371,20 @@ emu__csi_decprv(Term *term, int mode, bool enable)
 }
 
 // NOTE(ben): Wrapper
-void
-emu_csi_decset(Term *term, const int *argv, int argc)
+FUNCDEFN(DECSET)
 {
     UNUSED(argc);
-    emu__csi_decprv(term, argv[0], true);
+    decprv_helper(term, argv[0], true);
 }
 
 // NOTE(ben): Wrapper
-void
-emu_csi_decrst(Term *term, const int *argv, int argc)
+FUNCDEFN(DECRST)
 {
     UNUSED(argc);
-    emu__csi_decprv(term, argv[0], false);
+    decprv_helper(term, argv[0], false);
 }
 
-void
-emu_csi_decscusr(Term *term, const int *argv, int argc)
+FUNCDEFN(DECSCUSR)
 {
     UNUSED(argc);
     set_cursor_style(term, argv[0]);

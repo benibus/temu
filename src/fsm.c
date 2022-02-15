@@ -216,7 +216,11 @@ emit_esc2(uchar c)
     if (c < ' ') {
         EMIT(same, ActionExec);
     } else if (c < '0') {
+#if 1
+        EMIT(StateGround, 0);
+#else
         EMIT(same, ActionCollect);
+#endif
     } else if (c < 0x7f) {
         EMIT(StateGround, ActionEscDispatch);
     }
@@ -255,8 +259,10 @@ emit_csi2(uchar c)
 
     if (c < ' ') {
         EMIT(same, ActionExec);
+#if 0
     } else if (c < '0') {
         EMIT(same, ActionCollect);
+#endif
     } else if (c < '@') {
         EMIT(StateCsiIgnore, 0);
     } else if (c < 0x7f) {
@@ -335,8 +341,10 @@ emit_dcs2(uchar c)
 
     if (c < ' ') {
         EMIT(same, ActionExec);
+#if 0
     } else if (c < '0') {
         EMIT(same, ActionCollect);
+#endif
     } else if (c < '@') {
         EMIT(StateDcsIgnore, 0);
     } else if (c < 0x7f) {
@@ -368,7 +376,11 @@ emit_dcs_param(uchar c)
     if (c < ' ') {
         EMIT(same, ActionExec);
     } else if (c < '0') {
+#if 1
+        EMIT(StateDcsIgnore, 0);
+#else
         EMIT(StateDcs2, ActionCollect);
+#endif
     } else if (c < '<') {
         if (c == ':') {
             EMIT(StateDcsIgnore, 0);

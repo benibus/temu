@@ -81,6 +81,14 @@ static int run(App *app);
 int
 main(int argc, char **argv)
 {
+#if 0
+#include "term_opcodes.h"
+
+    if (test_opcodes()) {
+        return 0;
+    }
+#endif
+
     AppPrefs prefs = { 0 };
 
     for (int opt; (opt = getopt(argc, argv, "T:N:C:S:F:f:c:r:b:m:s:")) != -1; ) {

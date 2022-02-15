@@ -98,6 +98,7 @@ struct Term_ {
         int argv[16];    // Numeric parameters
         int argi;        // Numeric parameter index
         bool overflow;   // Numeric parameter overflowed
+        uchar chars[4+1];
     } parser;
 
     TermCallbacks callbacks;
