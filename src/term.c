@@ -496,7 +496,7 @@ term_resize(Term *term, uint width, uint height)
 }
 
 static inline void
-print_parsed_params(const struct Parser *parse)
+print_parsed_params(const TermParser *parse)
 {
     for (int i = 0; i < parse->argi + 1; i++) {
         fprintf(stderr, "%s%d", (i) ? ";" : "", parse->argv[i]);
@@ -504,7 +504,7 @@ print_parsed_params(const struct Parser *parse)
 }
 
 static inline void
-print_parsed_string(const struct Parser *parse)
+print_parsed_string(const TermParser *parse)
 {
     fprintf(stderr,
             "%d;%.*s",
@@ -514,7 +514,7 @@ print_parsed_string(const struct Parser *parse)
 }
 
 static inline void
-trace_dispatch(uint32 oc, uint16 idx, const struct Parser *parse)
+trace_dispatch(uint32 oc, uint16 idx, const TermParser *parse)
 {
     const char *const name = opcode_to_string(oc);
     const bool implemented = (OC_TAG(oc) == OPTAG_WRITE || !!func_table[idx]);
@@ -849,7 +849,7 @@ void term_print_history(const Term *term)
 }
 
 static inline void
-parser_clear(struct Parser *parser)
+parser_clear(TermParser *parser)
 {
     memset(parser->chars, 0, sizeof(parser->chars));
     memset(parser->tokens, 0, sizeof(parser->tokens));
@@ -861,7 +861,7 @@ parser_clear(struct Parser *parser)
 }
 
 static inline int
-parser_add_digit(struct Parser *parser, int digit)
+parser_add_digit(TermParser *parser, int digit)
 {
     ASSERT(digit >= 0 && digit < 10);
 
@@ -881,7 +881,7 @@ parser_add_digit(struct Parser *parser, int digit)
 }
 
 static inline bool
-parser_next_param(struct Parser *parser)
+parser_next_param(TermParser *parser)
 {
     if (parser->argi + 1 >= (int)LEN(parser->argv)) {
         dbgprint("warning: ignoring excess parameter");
@@ -901,7 +901,7 @@ parser_next_param(struct Parser *parser)
 uint32
 do_action(Term *term, StateCode state, ActionCode action, uchar c)
 {
-    struct Parser *parser = &term->parser;
+    TermParser *parser = &term->parser;
 
 #if 0
     dbgprint("FSM(%s|%#.02x): State%s -> State%s ... %s()",
