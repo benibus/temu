@@ -18,25 +18,13 @@
 #include "utils.h"
 #include "keycodes.h"
 #include "pty.h"
-#include "term_opcodes.h"
 #include "term_private.h"
+#include "term_opcodes.h"
+#include "term_parser.h"
 #include "term_ring.h"
-#include "fsm.h"
 #include "gfx_draw.h"
 
 #include <unistd.h> // for isatty()
-
-#if BUILD_DEBUG
-  #define DEBUG_PRINT_INPUT 1
-  #define DEBUG_PRINT_ESC   1
-#else
-  #define DEBUG_PRINT_INPUT 0
-  #define DEBUG_PRINT_ESC   0
-#endif
-
-#if DEBUG_PRINT_INPUT
-static uchar *dbginput; // For human-readable printing
-#endif
 
 #define CELLINIT(t)              \
     (Cell){                      \
@@ -71,8 +59,6 @@ static void set_cursor_col(Term *, int);
 static void set_cursor_row(Term *, int);
 static void set_cursor_visibility(Term *, bool);
 static void set_cursor_style(Term *, int);
-
-static uint32 do_action(Term *, StateCode, ActionCode, uchar);
 
 #define XCALLBACK_(M,T) \
 void term_callback_##M(Term *term, void *param, TermFunc##T *func) { \
@@ -275,14 +261,14 @@ init_parser(Term *term)
     term->cell.fg = term->colors.fg;
     term->cell.attrs = 0;
 
-    arr_reserve(term->parser.data, 4);
+    parser_init(&term->parser);
 }
 
 void
 term_destroy(Term *term)
 {
     ASSERT(term);
-    arr_free(term->parser.data);
+    parser_fini(&term->parser);
     if (term->frame.cells) {
         free(term->frame.cells);
     }
@@ -294,10 +280,6 @@ term_destroy(Term *term)
     term->ring = NULL;
     pty_hangup(term->pid);
     free(term);
-
-#if DEBUG_PRINT_INPUT
-    arr_free(dbginput);
-#endif
 }
 
 int
@@ -517,16 +499,16 @@ static inline void
 trace_dispatch(uint32 oc, uint16 idx, const TermParser *parse)
 {
     const char *const name = opcode_to_string(oc);
-    const bool implemented = (OC_TAG(oc) == OPTAG_WRITE || !!func_table[idx]);
+    const bool implemented = (OPCODE_TAG(oc) == OPTAG_WRITE || !!func_table[idx]);
 
     if (isatty(2)) {
         fprintf(stderr, "\033[1;%dm*\033[m ", implemented ? 36 : 33);
     } else {
         fprintf(stderr, "%c ", implemented ? '*' : ' ');
     }
-    fprintf(stderr, "$0x%x [%3u] %-16s ", oc, idx, name);
+    fprintf(stderr, "0x%x [%3u] %-16s ", oc, idx, name);
 
-    const uint tag = OC_TAG(oc);
+    const uint tag = OPCODE_TAG(oc);
 
     switch (tag) {
     case OPTAG_ESC:
@@ -565,55 +547,31 @@ trace_dispatch(uint32 oc, uint16 idx, const TermParser *parse)
 size_t
 consume(Term *term, const uchar *str, size_t len)
 {
-    uint i = 0;
+    size_t i = 0;
 
-    for (; str[i] && i < len; i++) {
-        StateTrans result = fsm_next_state(term->parser.state, str[i]);
+    while (i < len) {
+        size_t adv;
+        const uint32 opcode = parser_emit(&term->parser, &str[i], len - i, &adv);
 
-        for (uint n = 0; n < LEN(result.actions); n++) {
-#if 1
-            const uint32 oc = do_action(term, result.state, result.actions[n], str[i]);
+        if (opcode) {
+            const uint opidx = opcode_to_index(opcode);
 
-            if (!oc) continue;
+            // trace_dispatch(opcode, opidx, &term->parser);
 
-            const uint idx = opcode_to_index(oc);
-
-            trace_dispatch(oc, idx, &term->parser);
-
-            if (OC_TAG(oc) == OPTAG_WRITE) {
-                write_codepoint(term, OC_NO_TAG(oc));
-            } else if (oc) {
-                if (func_table[idx]) {
-                    func_table[idx](term, (char *)term->parser.data, term->parser.argv, term->parser.argi+1);
+            if (OPCODE_TAG(opcode) == OPTAG_WRITE) {
+                write_codepoint(term, OPCODE_NO_TAG(opcode));
+            } else if (opcode) {
+                if (func_table[opidx]) {
+                    func_table[opidx](term,
+                                      (char *)term->parser.data,
+                                      term->parser.argv,
+                                      term->parser.argi+1);
                 }
             }
-#else
-            do_action(term, result.state, result.actions[n], str[i]);
-#endif
         }
 
-        term->parser.state = result.state;
-
-#if DEBUG_PRINT_INPUT
-        {
-            const char *tmp = charstring(str[i]);
-            int len = strlen(tmp);
-            if (len) {
-                for (int j = 0; j < len; j++) {
-                    arr_push(dbginput, tmp[j]);
-                }
-                arr_push(dbginput, ' ');
-            }
-        }
-#endif
+        i += adv;
     }
-
-#if DEBUG_PRINT_INPUT
-    if (arr_count(dbginput)) {
-        dbgprint("Input: %.*s", (int)arr_count(dbginput), (char *)dbginput);
-        arr_clear(dbginput);
-    }
-#endif
 
     return i;
 }
@@ -846,177 +804,6 @@ cellslen(const Cell *cells, int lim)
 void term_print_history(const Term *term)
 {
     dbg_print_ring(term->ring);
-}
-
-static inline void
-parser_clear(TermParser *parser)
-{
-    memset(parser->chars, 0, sizeof(parser->chars));
-    memset(parser->tokens, 0, sizeof(parser->tokens));
-    parser->depth = 0;
-    memset(parser->argv, 0, sizeof(parser->argv));
-    parser->argi = 0;
-    parser->overflow = false;
-    arr_clear(parser->data);
-}
-
-static inline int
-parser_add_digit(TermParser *parser, int digit)
-{
-    ASSERT(digit >= 0 && digit < 10);
-
-    int *const argp = &parser->argv[parser->argi];
-
-    if (!parser->overflow) {
-        if (INT_MAX / 10 - digit > *argp) {
-            *argp = *argp * 10 + digit;
-        } else {
-            parser->overflow = true;
-            *argp = 0; // TODO(ben): Fallback to default param or abort the sequence?
-            dbgprint("warning: parameter integer overflow");
-        }
-    }
-
-    return *argp;
-}
-
-static inline bool
-parser_next_param(TermParser *parser)
-{
-    if (parser->argi + 1 >= (int)LEN(parser->argv)) {
-        dbgprint("warning: ignoring excess parameter");
-        return false;
-    }
-
-    parser->argv[++parser->argi] = 0;
-    parser->overflow = false;
-
-    return true;
-}
-
-/*
- * The central routine for performing actions emitted by the state machine - i.e. parsing,
- * UTF-8 validation, writing to the ring buffer, and executing control sequences
- */
-uint32
-do_action(Term *term, StateCode state, ActionCode action, uchar c)
-{
-    TermParser *parser = &term->parser;
-
-#if 0
-    dbgprint("FSM(%s|%#.02x): State%s -> State%s ... %s()",
-      charstring(c), c,
-      fsm_get_state_string(parser->state),
-      fsm_get_state_string(state),
-      fsm_get_action_string(action));
-#endif
-
-    // TODO(ben): DCS functions
-    switch (action) {
-    case ActionNone:
-    case ActionIgnore:
-        return 0;
-    case ActionPrint: {
-        const uint32 ucs4 = parser->ucs4|(c & 0x7f);
-        return OC_PACK1(WRITE, ucs4);
-    }
-    case ActionUtf8Start:
-        switch (state) {
-        case StateUtf8B3: parser->ucs4 |= (c & 0x07) << 18; break;
-        case StateUtf8B2: parser->ucs4 |= (c & 0x0f) << 12; break;
-        case StateUtf8B1: parser->ucs4 |= (c & 0x1f) <<  6; break;
-        default: break;
-        }
-        break;
-    case ActionUtf8Cont:
-        switch (state) {
-        case StateUtf8B2: parser->ucs4 |= (c & 0x3f) << 12; break;
-        case StateUtf8B1: parser->ucs4 |= (c & 0x3f) <<  6; break;
-        default: break;
-        }
-        break;
-    case ActionUtf8Fail:
-        dbgprint("discarding malformed UTF-8 sequence");
-        parser->ucs4 = 0;
-        break;
-    case ActionExec:
-        return OC_PACK1(WRITE, c);
-    case ActionHook:
-        // sets handler based on DCS parameters, intermediates, and new char
-        break;
-    case ActionUnhook:
-        break;
-    case ActionPut:
-        arr_push(parser->data, c);
-        break;
-    case ActionOscStart:
-        memset(parser->argv, 0, sizeof(parser->argv));
-        parser->argi = 0;
-        arr_clear(parser->data);
-        break;
-    case ActionOscPut:
-        // All OSC sequences take a leading numeric parameter, which we consume in the arg buffer.
-        // Semicolon-separated string parameters are handled by the OSC parser itself
-        if (parser->argi == 0) {
-            if (c >= '0' && c <= '9') {
-                parser_add_digit(parser, c - '0');
-            } else {
-                // NOTE(ben): Assuming OSC sequences take a default '0' parameter
-                if (c != ';') {
-                    parser->argv[parser->argi] = 0;
-                }
-                parser_next_param(parser);
-            }
-        } else {
-            arr_push(parser->data, c);
-        }
-        break;
-    case ActionOscEnd:
-        arr_push(parser->data, 0);
-        parser->chars[0] = c;
-        return OC_PACK3(OSC, parser->chars[2], parser->chars[1], parser->chars[0]);
-    case ActionCollect:
-        switch (state) {
-        case StateEsc2:
-            ASSERT(c >= OcMinC21);
-            ASSERT(c <= OcMaxC21);
-            parser->chars[1] = c;
-            break;
-        default:
-            if (c >= OcMinC32) {
-                ASSERT(c <= OcMaxC32);
-                parser->chars[2] = c;
-            } else {
-                ASSERT(c >= OcMinC31);
-                ASSERT(c <= OcMaxC31);
-                parser->chars[1] = c;
-            }
-            break;
-        }
-        break;
-    case ActionParam:
-        if (c == ';') {
-            parser_next_param(parser);
-        } else {
-            parser_add_digit(parser, c - '0');
-        }
-        break;
-    case ActionClear:
-        parser_clear(parser);
-        break;
-    case ActionEscDispatch: {
-        parser->chars[0] = c;
-        return OC_PACK2(ESC, parser->chars[1], parser->chars[0]);
-    }
-    case ActionCsiDispatch: {
-        parser->chars[0] = c;
-        return OC_PACK3(CSI, parser->chars[2], parser->chars[1], parser->chars[0]);
-    }
-    default:
-        break;
-    }
-
-    return 0;
 }
 
 inline void

@@ -52,15 +52,12 @@ struct TermColors_ {
 };
 
 struct TermParser_ {
-    uint state;      // Current FSM state
-    uint32 ucs4;     // Current codepoint being decoded
-    uchar *data;     // Dynamic buffer for OSC/DCS/APC string sequences
-    uchar tokens[2]; // Stashed intermediate tokens
-    int depth;       // Intermediate token index
-    int argv[16];    // Numeric parameters
-    int argi;        // Numeric parameter index
-    bool overflow;   // Numeric parameter overflowed
-    uchar chars[4+1];
+    uint state;       // Current FSM state
+    uchar *data;      // Dynamic buffer for OSC/DCS/APC string sequences
+    int argv[16];     // Numeric parameters
+    int argi;         // Numeric parameter index
+    bool overflow;    // Numeric parameter overflowed
+    uchar chars[8+1]; // Stored escape sequence/UTF-8 bytes
 };
 
 #define IOBUF_MAX (4096)

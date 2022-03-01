@@ -34,6 +34,7 @@
  * 111000000000000 C33 [3] (status bits)
  */
 enum {
+    // Tag information starts at this bit
     OcShiftTag = 24,
 
     // Range mask shift values
@@ -67,56 +68,47 @@ enum {
     OcMaxC32   = OcMinC32 + OcBitsC32,
 };
 
-#define OC_TAG(oc)       ((oc) >> OcShiftTag)
-#define OC_NO_TAG(oc)    ((oc) & ((1 << OcShiftTag) - 1))
-#define OC_PACK_TAG(tag) ((tag) << OcShiftTag)
+#define OPCODE_TAG(oc)    ((oc) >> OcShiftTag)
+#define OPCODE_NO_TAG(oc) ((oc) & ((1 << OcShiftTag) - 1))
 
-#define OC_HAS_C(x,y,n) (((n) >> (OcShiftC##x##x + (y))) & 1)
-#define OC_GET_C(x,y,n) \
-    (OC_HAS_C(x, y, n) * ((((n) >> OcShiftC##x##y) & OcBitsC##x##y) + OcMinC##x##y))
-#define OC_PACK_C(x,y,c)                            \
+// Helpers for header definitions
+#define PACK_TAG(tag) ((tag) << OcShiftTag)
+#define PACK_C(x,y,c)                               \
     (((c) >= OcMinC##x##y && (c) <= OcMaxC##x##y) ? \
     (                                               \
         (1 << (OcShiftC##x##x + (y))) |             \
         (((c) - OcMinC##x##y) << OcShiftC##x##y)    \
     ) : 0)
+#define PACK_1(t,n)         \
+    (                       \
+        OPCODE_NO_TAG(n) |  \
+        PACK_TAG(t)         \
+    )
+#define PACK_2(t,c1,c0)     \
+    (                       \
+        PACK_C(2, 0, c0) |  \
+        PACK_C(2, 1, c1) |  \
+        PACK_TAG(t)         \
+    )
+#define PACK_3(t,c2,c1,c0)  \
+    (                       \
+        PACK_C(3, 0, c0) |  \
+        PACK_C(3, 1, c1) |  \
+        PACK_C(3, 2, c2) |  \
+        PACK_TAG(t)         \
+    )
 
-#define OC_PACK1(t,n)          \
-    (                          \
-        OC_NO_TAG(n) |         \
-        OC_PACK_TAG(OPTAG_##t) \
-    )
-#define OC_PACK2(t,c1,c0)      \
-    (                          \
-        OC_PACK_C(2, 0, c0) |  \
-        OC_PACK_C(2, 1, c1) |  \
-        OC_PACK_TAG(OPTAG_##t) \
-    )
-#define OC_PACK3(t,c2,c1,c0)   \
-    (                          \
-        OC_PACK_C(3, 0, c0) |  \
-        OC_PACK_C(3, 1, c1) |  \
-        OC_PACK_C(3, 2, c2) |  \
-        OC_PACK_TAG(OPTAG_##t) \
-    )
-
-#define X_ESCAPE_SEQUENCES \
+// Expansion table for opcodes that encode multiple characters
+#define XTABLE_ESC_SEQS \
     X_(  ESC,       IND, 2,   0,  'D') \
     X_(  ESC,       NEL, 2,   0,  'E') \
     X_(  ESC,       HTS, 2,   0,  'H') \
     X_(  ESC,        RI, 2,   0,  'M') \
     X_(  ESC,       SS2, 2,   0,  'N') \
     X_(  ESC,       SS3, 2,   0,  'O') \
-    /* X_(  ESC,       DCS, 2,   0,  'P') */ \
     X_(  ESC,       SPA, 2,   0,  'V') \
     X_(  ESC,       EPA, 2,   0,  'W') \
-    /* X_(  ESC,       SOS, 2,   0,  'X') */ \
     X_(  ESC,     DECID, 2,   0,  'Z') \
-    /* X_(  ESC,       CSI, 2,   0,  '[') */ \
-    /* X_(  ESC,        ST, 2,   0, '\\') */ \
-    /* X_(  ESC,       OSC, 2,   0,  ']') */ \
-    /* X_(  ESC,        PM, 2,   0,  '^') */ \
-    /* X_(  ESC,       APC, 2,   0,  '_') */ \
     X_(  ESC,     S7CIT, 2, ' ',  'F') \
     X_(  ESC,     S8CIT, 2, ' ',  'G') \
     X_(  ESC,     ANSI1, 2, ' ',  'L') \
@@ -214,6 +206,7 @@ enum {
     X_(  DCS,  DECSIXEL, 3,   0,    0,  'q') \
     X_(  DCS,  DECREGIS, 3,   0,    0,  'p') \
 
+// Opcode tags stored in the upper 8 bits. Used to interpret the lower 24 bits
 enum {
     OPTAG_NONE,
     OPTAG_WRITE,
@@ -224,72 +217,51 @@ enum {
     OPTAG_APC
 };
 
+// Enumerate the opcodes for escape sequences. Opcodes with the WRITE tag don't have
+// associated symbols because they store arbitrary codepoints in their lower 24 bits
 enum {
-#define X_(t,x,n,...) OP_##x = OC_PACK##n(t, __VA_ARGS__),
-    X_ESCAPE_SEQUENCES
+#define X_(t,x,n,...) OP_##x = PACK_##n(OPTAG_##t, __VA_ARGS__),
+    XTABLE_ESC_SEQS
 #undef X_
 };
 
-#undef X_ENCODE_1
-#undef X_ENCODE_2
-#undef X_ENCODE_3
-
+// Map opcodes to parallel indices for table lookups
 enum {
     OPIDX_NONE,
     OPIDX_WRITE,
 #define X_(t,x,...) OPIDX_##x,
-    X_ESCAPE_SEQUENCES
+    XTABLE_ESC_SEQS
 #undef X_
     NumOpcodes
 };
 
-static inline const char *
-opcode_to_string(uint32 oc)
-{
-    switch (OC_TAG(oc)) {
-    case OPTAG_WRITE: return "WRITE";
-    }
+const char *opcode_to_string(uint32 opcode);
+uint opcode_to_index(uint32 opcode);
+void opcode_get_chars(uint32 opcode, char *buf);
 
-    switch (oc) {
-#define X_(t,x,...) case OP_##x: return #t "::" #x;
-    X_ESCAPE_SEQUENCES
-#undef X_
-    default: return "NONE";
-    }
+static inline uint32
+opcode_encode(uint8 tag, uint32 val)
+{
+    return PACK_1(tag, val);
 }
 
-static inline uint
-opcode_to_index(uint32 oc)
+static inline uint32
+opcode_encode_2c(uint8 tag, uchar c0, uchar c1)
 {
-    switch (OC_TAG(oc)) {
-    case OPTAG_WRITE: return OPIDX_WRITE;
-    }
-
-    switch (oc) {
-#define X_(t,x,...) case OP_##x: return OPIDX_##x;
-    X_ESCAPE_SEQUENCES
-#undef X_
-    default: return OPIDX_NONE;
-    }
+    return PACK_2(tag, c0, c1);
 }
 
-static inline void
-opcode_get_chars(uint32 oc, char *buf)
+static inline uint32
+opcode_encode_3c(uint8 tag, uchar c0, uchar c1, uchar c3)
 {
-    switch (OC_TAG(oc)) {
-    case OPTAG_CSI:
-    case OPTAG_DCS:
-        buf[0] = OC_GET_C(3, 0, oc);
-        buf[1] = OC_GET_C(3, 1, oc);
-        buf[2] = OC_GET_C(3, 2, oc);
-        break;
-    case OPTAG_ESC:
-        buf[0] = OC_GET_C(2, 0, oc);
-        buf[1] = OC_GET_C(2, 1, oc);
-        buf[2] = 0;
-        break;
-    }
+    return PACK_3(tag, c0, c1, c3);
 }
+
+#undef PACK_TAG
+#undef PACK_C
+#undef PACK_1
+#undef PACK_2
+#undef PACK_3
 
 #endif
 

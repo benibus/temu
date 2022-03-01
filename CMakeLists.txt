@@ -15,14 +15,16 @@ endif()
 set(BIN ${PROJECT_NAME})
 set(SOURCES
     src/fonts.c
-    src/fsm.c
     src/gfx_context.c
     src/gfx_renderer.c
     src/main.c
     src/opengl.c
     src/pty.c
     src/term.c
+    src/term_fsm.c
     src/term_keyboard.c
+    src/term_opcodes.c
+    src/term_parser.c
     src/term_ring.c
     src/utf8.c
     src/utils.c
