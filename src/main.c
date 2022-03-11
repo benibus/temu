@@ -22,12 +22,15 @@
 
 #include "utils.h"
 #include "platform.h"
+#include "events.h"
 #include "fonts.h"
 #include "term.h"
 
-#define MAX_CFG_COLORS (2+16)
-#define MIN_HISTLINES 128
-#define MAX_HISTLINES 4096
+enum {
+    MAX_CFG_COLORS = 2 + 16,
+    MIN_HISTLINES  = 128,
+    MAX_HISTLINES  = 4096,
+};
 
 typedef struct {
     char *wm_class;
@@ -43,32 +46,32 @@ typedef struct {
     uint border;
     uint tabcols;
     uint histlines;
+    uint refresh;
 } AppPrefs;
 // NOTE: must include *after* definitions
 #include "config.h"
 
 typedef struct {
     AppPrefs prefs;
-
     Win *win;
     Term *term;
     FontSet *fontset;
-
     int width;
     int height;
     int cell_width;
     int cell_height;
-
     int argc;
     const char **argv;
 } App;
 
 static App app_;
 
-static WinFuncResize on_event_resize;
-static WinFuncKeyPress on_event_keypress;
 static TermFuncSetTitle on_osc_set_title;
 static TermFuncSetIcon on_osc_set_icon;
+
+static WinEventHandler on_event;
+static void on_resize_event(App *app, const WinGeomEvent *event);
+static void on_keypress_event(App *app, const WinKeyEvent *event);
 
 static void setup(App *app, const AppPrefs *prefs);
 static void setup_preferences(App *app, const AppPrefs *restrict prefs);
@@ -77,18 +80,12 @@ static void setup_window(App *app);
 static void setup_display(App *app);
 static void setup_terminal(App *app);
 static int run(App *app);
+static int run_frame(App *app, struct pollfd *pollset);
+static bool run_updates(App *app, struct pollfd *pollset, int timeout, int *r_error);
 
 int
 main(int argc, char **argv)
 {
-#if 0
-#include "term_opcodes.h"
-
-    if (test_opcodes()) {
-        return 0;
-    }
-#endif
-
     AppPrefs prefs = { 0 };
 
     for (int opt; (opt = getopt(argc, argv, "T:N:C:S:F:f:c:r:b:m:s:")) != -1; ) {
@@ -98,7 +95,7 @@ main(int argc, char **argv)
             ulong u;
             double f;
         } arg;
-        char *errp; // for strtol()
+        char *errp;
 
         switch (opt) {
         case 'T': prefs.wm_title = (!strempty(optarg)) ? optarg : NULL; break;
@@ -199,10 +196,6 @@ setup_preferences(App *app, const AppPrefs *restrict prefs)
 void
 setup_fonts(App *app, float dpi)
 {
-    // DEPENDS:
-    // app->prefs.font
-    // app->prefs.fontpath
-
     if (!fontmgr_init(dpi)) {
         dbgprint("Failed to initialize font manager");
         exit(EXIT_FAILURE);
@@ -241,17 +234,6 @@ setup_fonts(App *app, float dpi)
 void
 setup_window(App *app)
 {
-    // DEPENDS:
-    // app->prefs.cols
-    // app->prefs.rows
-    // app->prefs.border
-    // app->prefs.wm_title
-    // app->prefs.wm_name
-    // app->prefs.wm_class
-    // app->win
-    // app->cell_width
-    // app->cell_height
-
     ASSERT(app);
     ASSERT(app->win);
 
@@ -265,17 +247,11 @@ setup_window(App *app)
     if (!window_resize(app->win, width, height)) {
         exit(EXIT_FAILURE);
     }
-
-    window_callback_resize(app->win, app, &on_event_resize);
-    window_callback_keypress(app->win, app, &on_event_keypress);
 }
 
 void
 setup_display(App *app)
 {
-    // DEPENDS:
-    // app->win
-
     if (!window_init(app->win)) {
         dbgprint("Failed to display window");
         exit(EXIT_FAILURE);
@@ -300,14 +276,6 @@ setup_display(App *app)
 void
 setup_terminal(App *app)
 {
-    // DEPENDS:
-    // app->prefs.histlines
-    // app->prefs.tabcols
-    // app->prefs.colors
-    // app->fontset
-    // app->width
-    // app->height
-
     Term *const term = term_create(app->prefs.histlines, app->prefs.tabcols);
 
     term_set_display(term, app->fontset, app->width, app->height);
@@ -364,67 +332,119 @@ run(App *app)
         { .fd = srvfd, .events = POLLIN, .revents = 0 }
     };
 
-    static const int rate = 16;
-    bool hangup = false;
-    bool draw = true;
+    while (!result && window_is_online(app->win)) {
+        result = run_frame(app, pollset);
+    }
 
-    while (!result && !hangup && window_is_online(app->win)) {
-        if (draw) {
-            term_draw(term);
-            window_update(app->win);
-        }
+    return (result && result != ECHILD) ? result : 0;
+}
 
-        draw = false;
+bool
+run_updates(App *app, struct pollfd *pollset, int timeout, int *r_error)
+{
+    ASSERT(r_error);
+    *r_error = 0;
 
-        errno = 0;
-        const int status = poll(pollset, LEN(pollset), rate);
+    int nbytes = 0;
+    int nevents = 0;
+    errno = 0;
 
-        if (status < 0) {
-            printerr("ERROR poll: %s\n", strerror(errno));
-            result = DEFAULT(errno, EXIT_FAILURE); // paranoia
-        } else if (!status) {
-            draw = !!window_poll_events(app->win);
-        } else if ((pollset[0].revents|pollset[1].revents) & POLLHUP) {
-            hangup = true;
-        } else {
-            if (pollset[0].revents & POLLIN) {
-                draw = !!term_pull(term, 0);
-            }
-            if (pollset[1].revents & POLLIN) {
-                draw = !!window_poll_events(app->win);
-            }
+    const int res = poll(pollset, 2, timeout);
+    if (res < 0) {
+        printerr("ERROR poll: %s\n", strerror(errno));
+        *r_error = DEFAULT(errno, EXIT_FAILURE); // paranoia
+    } else if ((pollset[0].revents|pollset[1].revents) & POLLHUP) {
+        *r_error = ECHILD;
+    } else {
+        nevents = window_pump_events(app->win, on_event, app);
+        if (res && pollset[0].revents & POLLIN) {
+            nbytes = term_pull(app->term);
         }
     }
 
-    return result;
+    return (nevents || nbytes);
+}
+
+int
+run_frame(App *app, struct pollfd *pollset)
+{
+    const int t0 = timer_msec(NULL);
+    int t1 = t0;
+
+    bool need_draw = false;
+    int error = 0;
+
+    // Slightly faster than 60 hz. The refresh rate should become configurable at some point
+    const int min_time = 1e3 / (60 * 1.15);
+    const int max_time = min_time * 2;
+
+    for (int limit = min_time;;) {
+        const bool res = run_updates(app, pollset, 2, &error);
+        t1 = timer_msec(NULL);
+        if (error) {
+            goto done_frame;
+        }
+        need_draw |= res;
+        // We try to extend this frame into the next one if we receive updates in the
+        // last polling interval. It usually means there's more input coming, but the
+        // PTY hasn't given it to us yet
+        if ((t1 - t0 >= limit &&
+             (!res || (limit += min_time) > max_time)))
+        {
+            break;
+        }
+    }
+
+    if (need_draw) {
+        term_draw(app->term);
+        window_update(app->win);
+    }
+
+done_frame:
+    return error;
 }
 
 void
-on_event_resize(void *param, int width, int height)
+on_event(void *arg, const WinEvent *event)
 {
-    App *const app = param;
+    App *app = arg;
 
-    ASSERT(width > app->cell_width);
-    ASSERT(height > app->cell_height);
-
-    if (width == app->width && height == app->height) {
+    if (event->info.error) {
         return;
     }
 
-    term_resize(app->term, width, height);
-
-    app->width  = width;
-    app->height = height;
+    switch (event->tag) {
+    case EVENT_RESIZE:
+        on_resize_event(app, &event->as_geom);
+        break;
+    case EVENT_KEYPRESS:
+        on_keypress_event(app, &event->as_key);
+        break;
+    }
 }
 
 void
-on_event_keypress(void *param, uint key, uint mods, const uchar *text, int len)
+on_resize_event(App *app, const WinGeomEvent *event)
 {
-    App *const app = param;
+    ASSERT(event->width > app->cell_width);
+    ASSERT(event->height > app->cell_height);
 
-    switch (mods & ~KEYMOD_NUMLK) {
+    if (event->width == app->width && event->height == app->height) {
+        return;
+    }
+
+    term_resize(app->term, event->width, event->height);
+
+    app->width  = event->width;
+    app->height = event->height;
+}
+
+void
+on_keypress_event(App *app, const WinKeyEvent *event)
+{
+    switch (event->mods & ~KEYMOD_NUMLK) {
     case KEYMOD_SHIFT:
-        switch (key) {
+        switch (event->key) {
         case KeyPgUp:
             term_scroll(app->term, -term_rows(app->term));
             return;
@@ -434,7 +454,7 @@ on_event_keypress(void *param, uint key, uint mods, const uchar *text, int len)
         }
         break;
     case KEYMOD_ALT:
-        switch (key) {
+        switch (event->key) {
         case 'k':
             term_scroll(app->term, -1);
             return;
@@ -450,7 +470,7 @@ on_event_keypress(void *param, uint key, uint mods, const uchar *text, int len)
         break;
     }
 
-    if (term_push_input(app->term, key, mods, text, len)) {
+    if (term_push_input(app->term, event->key, event->mods, event->data, event->len)) {
         term_reset_scroll(app->term);
     }
 }

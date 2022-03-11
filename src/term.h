@@ -32,7 +32,7 @@ void term_destroy(Term *term);
 void term_resize(Term *term, uint width, uint height);
 int term_exec(Term *term, const char *shell, int argc, const char *const *argv);
 void term_draw(Term *term);
-size_t term_pull(Term *term, uint32 timeout);
+size_t term_pull(Term *term);
 size_t term_push(Term *term, const void *data, size_t len);
 size_t term_push_input(Term *term, uint key, uint mod, const uchar *text, size_t len);
 void term_scroll(Term *term, int lines);

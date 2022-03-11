@@ -43,14 +43,4 @@ void window_update(const Win *win);
 int window_width(const Win *win);
 int window_height(const Win *win);
 
-typedef void WinFuncResize(void *, int, int);
-typedef void WinFuncKeyPress(void *, uint, uint, const uchar *, int);
-typedef void WinFuncKeyRelease(void *, uint, uint);
-typedef void WinFuncExpose(void *);
-
-void window_callback_resize(Win *win, void *param, WinFuncResize *func);
-void window_callback_keypress(Win *win, void *param, WinFuncKeyPress *func);
-void window_callback_keyrelease(Win *win, void *param, WinFuncKeyRelease *func);
-void window_callback_expose(Win *win, void *param, WinFuncExpose *func);
-
 #endif

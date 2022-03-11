@@ -28,13 +28,6 @@
 #include <X11/XF86keysym.h>
 #include <X11/Xatom.h>
 
-typedef struct {
-    struct { void *param; WinFuncResize     *func; } resize;
-    struct { void *param; WinFuncKeyPress   *func; } keypress;
-    struct { void *param; WinFuncKeyRelease *func; } keyrelease;
-    struct { void *param; WinFuncExpose     *func; } expose;
-} WinCallbacks;
-
 typedef struct Server_ Server;
 
 struct Win_ {
@@ -50,10 +43,6 @@ struct Win_ {
     int width;
     int height;
     int border;
-    WinCallbacks callbacks;
-    // TODO(ben): temporary
-    int inc_width;
-    int inc_height;
 };
 
 struct Server_ {

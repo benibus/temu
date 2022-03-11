@@ -16,6 +16,8 @@
  *------------------------------------------------------------------------------*/
 
 #include "utils.h"
+#include "platform.h"
+#include "events.h"
 #include "x11_platform.h"
 
 #include <errno.h>
@@ -40,29 +42,50 @@
    LeaveWindowMask      | \
    PropertyChangeMask     \
 )
+typedef struct {
+    Win *win;
+    WinEventHandler *handler;
+    void *arg;
+    XEvent *xevent;
+} X11EventProcParams;
 
-#define X11_EVENT_TABLE \
-    X_(KeyPress,         &xhandler_keypress) \
-    X_(KeyRelease,       NULL) \
-    X_(ButtonPress,      NULL) \
-    X_(ButtonRelease,    NULL) \
-    X_(MotionNotify,     NULL) \
+typedef bool X11EventProc(const X11EventProcParams *params);
+
+static X11EventProc process_clientmessage;
+static X11EventProc process_configurenotify;
+static X11EventProc process_keypress;
+static X11EventProc process_keyrelease;
+static X11EventProc process_buttonpress;
+static X11EventProc process_buttonrelease;
+static X11EventProc process_motionnotify;
+static X11EventProc process_focusin;
+static X11EventProc process_focusout;
+static X11EventProc process_expose;
+static X11EventProc process_visibilitynotify;
+
+
+#define XTABLE_X11_EVENTS \
+    X_(KeyPress,         &process_keypress) \
+    X_(KeyRelease,       &process_keyrelease) \
+    X_(ButtonPress,      &process_buttonpress) \
+    X_(ButtonRelease,    &process_buttonrelease) \
+    X_(MotionNotify,     &process_motionnotify) \
     X_(EnterNotify,      NULL) \
     X_(LeaveNotify,      NULL) \
-    X_(FocusIn,          NULL) \
-    X_(FocusOut,         NULL) \
+    X_(FocusIn,          &process_focusin) \
+    X_(FocusOut,         &process_focusout) \
     X_(KeymapNotify,     NULL) \
-    X_(Expose,           NULL) \
+    X_(Expose,           &process_expose) \
     X_(GraphicsExpose,   NULL) \
     X_(NoExpose,         NULL) \
-    X_(VisibilityNotify, NULL) \
+    X_(VisibilityNotify, &process_visibilitynotify) \
     X_(CreateNotify,     NULL) \
     X_(DestroyNotify,    NULL) \
     X_(UnmapNotify,      NULL) \
     X_(MapNotify,        NULL) \
     X_(MapRequest,       NULL) \
     X_(ReparentNotify,   NULL) \
-    X_(ConfigureNotify,  &xhandler_configurenotify ) \
+    X_(ConfigureNotify,  &process_configurenotify ) \
     X_(ConfigureRequest, NULL) \
     X_(GravityNotify,    NULL) \
     X_(ResizeRequest,    NULL) \
@@ -73,28 +96,19 @@
     X_(SelectionRequest, NULL) \
     X_(SelectionNotify,  NULL) \
     X_(ColormapNotify,   NULL) \
-    X_(ClientMessage,    &xhandler_clientmessage) \
+    X_(ClientMessage,    &process_clientmessage) \
     X_(MappingNotify,    NULL) \
     X_(GenericEvent,     NULL)
 
-typedef void X11EventFunc(XEvent *event, Win *win, uint32 time);
-
-static X11EventFunc xhandler_clientmessage;
-static X11EventFunc xhandler_configurenotify;
-static X11EventFunc xhandler_keypress;
-
-struct X11Event {
+typedef struct {
     const char *name;
-    X11EventFunc *handler;
-};
+    X11EventProc *proc;
+} X11EventEntry;
 
-static const struct X11Event xevent_table[] = {
-#define X_(symbol_,handler_) [symbol_] = { .name = #symbol_, .handler = handler_ },
-    X11_EVENT_TABLE
+#define X_(name_,proc_) [name_] = { .name = #name_, .proc = proc_ },
+static const X11EventEntry xevent_table[LASTEvent] = { XTABLE_X11_EVENTS };
 #undef X_
-    { 0 }
-};
-#undef X11_EVENT_TABLE
+#undef XTABLE_X11_EVENTS
 
 enum {
     WM_PROTOCOLS,
@@ -131,18 +145,7 @@ static void query_coordinates(Win *, int *, int *);
 static bool is_literal_ascii(KeySym);
 static uint convert_keysym(KeySym);
 static uint convert_modmask(uint);
-
-#define XCALLBACK_(M,T) \
-void window_callback_##M(Win *win, void *param, WinFunc##T *func) { \
-    ASSERT(win);                                                    \
-    win->callbacks.M.param = DEFAULT(param, win);                   \
-    win->callbacks.M.func  = func;                                  \
-}
-XCALLBACK_(resize,     Resize)
-XCALLBACK_(keypress,   KeyPress)
-XCALLBACK_(keyrelease, KeyRelease)
-XCALLBACK_(expose,     Expose)
-#undef XCALLBACK_
+static int queue_length(bool);
 
 static inline int add_border(int dim, int border) { return MAX(0, dim + 2 * border); }
 static inline int sub_border(int dim, int border) { return MAX(0, dim - 2 * border); }
@@ -297,7 +300,7 @@ window_get_fileno(const Win *win)
 int
 window_events_pending(const Win *win)
 {
-    return XPending(server.dpy);
+    return queue_length(true);
 }
 
 bool
@@ -491,7 +494,6 @@ window_create(void)
 
     gfx_set_debug_object(win);
     gfx_print_info(server.gfx);
-    gfx_set_vsync(server.gfx, false);
     gfx_target_init(win->target);
 
     return win;
@@ -626,8 +628,6 @@ window_set_size_hints(Win *win, uint inc_width, uint inc_height, uint border)
     XFree(hints);
 
     win->border = border;
-    win->inc_width = inc_width;
-    win->inc_height = inc_height;
 }
 
 void
@@ -745,29 +745,33 @@ window_set_icon(Win *win, const char *str, size_t len)
 }
 
 int
-window_poll_events(Win *win)
+queue_length(bool flush)
 {
-    ASSERT(win);
+    return XEventsQueued(server.dpy, (flush) ? QueuedAfterFlush : QueuedAlready);
+}
 
-    if (!win->online) {
-        return 0;
-    }
-
+int
+window_pump_events(Win *win, WinEventHandler *handler, void *arg)
+{
     int count = 0;
 
-    for (; XPending(server.dpy); count++) {
-        XEvent event = { 0 };
-        XNextEvent(server.dpy, &event);
+    XEvent xevent;
+    X11EventProcParams params = {
+        .win = win,
+        .arg = DEFAULT(arg, win),
+        .handler = handler,
+        .xevent = &xevent,
+    };
 
-        if (!XFilterEvent(&event, None) && event.xany.window == win->xid) {
-            const struct X11Event entry = xevent_table[event.type];
-            if (entry.handler) {
-                entry.handler(&event, win, 0);
+    for (bool flush = true; queue_length(flush); flush = false) {
+        XNextEvent(server.dpy, &xevent);
+        if (!XFilterEvent(&xevent, None) && xevent.xany.window == win->xid) {
+            const X11EventEntry entry = xevent_table[xevent.type];
+            if (entry.proc) {
+                count += !!entry.proc(&params);
             }
         }
     }
-
-    XFlush(server.dpy);
 
     return count;
 }
@@ -882,70 +886,113 @@ convert_modmask(uint xmods)
     return mods;
 }
 
-inline void
-xhandler_configurenotify(XEvent *event_, Win *win, uint32 time)
-{
-    UNUSED(time);
-    XConfigureEvent *event = &event_->xconfigure;
-
-    const WinCallbacks cb = win->callbacks;
-    if (cb.resize.func) {
-        cb.resize.func(cb.resize.param,
-                       sub_border(event->width, win->border),
-                       sub_border(event->height, win->border));
-    }
-
-    gfx_target_resize(win->target, event->width, event->height);
-
-    win->width  = event->width;
-    win->height = event->height;
+#define DEFAULT_HANDLER(suffix,tag) \
+inline bool                                        \
+process_##suffix(const X11EventProcParams *params) \
+{                                                  \
+    WinEvent event;                                \
+    event_init(&event, (tag), 0);                  \
+    if (params->handler) {                         \
+        params->handler(params->arg, &event);      \
+    }                                              \
+    return true;                                   \
 }
 
-inline void
-xhandler_keypress(XEvent *event_, Win *win, uint32 time)
-{
-    UNUSED(time);
-    XKeyEvent *event = &event_->xkey;
+DEFAULT_HANDLER(buttonpress, EVENT_BUTTONPRESS)
+DEFAULT_HANDLER(buttonrelease, EVENT_BUTTONRELEASE)
+DEFAULT_HANDLER(motionnotify, EVENT_POINTER)
+DEFAULT_HANDLER(focusin, EVENT_FOCUS)
+DEFAULT_HANDLER(focusout, EVENT_UNFOCUS)
+DEFAULT_HANDLER(expose, EVENT_EXPOSE)
+DEFAULT_HANDLER(visibilitynotify, EVENT_OPEN)
+DEFAULT_HANDLER(keyrelease, EVENT_KEYRELEASE)
+#undef DEFAULT_HANDLER
 
-    uchar local[128] = { 0 };
-    uchar *text = local;
-    int len = 0;
+inline bool
+process_configurenotify(const X11EventProcParams *params)
+{
+    XConfigureEvent *xevent = &params->xevent->xconfigure;
+    WinGeomEvent event;
+
+    event_init((WinEvent *)&event, EVENT_RESIZE, 0);
+    event.x = xevent->x;
+    event.y = xevent->y;
+    event.width  = sub_border(xevent->width, params->win->border);
+    event.height = sub_border(xevent->height, params->win->border);
+
+    if (params->handler) {
+        params->handler(params->arg, (WinEvent *)&event);
+    }
+
+    gfx_target_resize(params->win->target, xevent->width, xevent->height);
+    params->win->width  = xevent->width;
+    params->win->height = xevent->height;
+
+    return true;
+}
+
+inline bool
+process_keypress(const X11EventProcParams *params)
+{
+    XKeyEvent *xevent = &params->xevent->xkey;
+    WinKeyEvent event;
+
+    char buf[sizeof(event.data)] = { 0 };
+    int len;
     KeySym xkey;
 
-    if (!win->ic) {
-        len = XLookupString(event, (char *)text, sizeof(local) - 1, &xkey, NULL);
+    event_init((WinEvent *)&event, EVENT_KEYPRESS, 0);
+
+    if (!params->win->ic) {
+        len = XLookupString(xevent, buf, sizeof(buf), &xkey, NULL);
     } else {
         Status status;
-        len = XmbLookupString(win->ic, event, (char *)text, sizeof(local) - 1, &xkey, &status);
+        len = XmbLookupString(params->win->ic, xevent, buf, sizeof(buf), &xkey, &status);
         if (status == XBufferOverflow) {
-            text = xcalloc(len + 1, sizeof(*text));
-            len = XmbLookupString(win->ic, event, (char *)text, len, &xkey, &status);
+            event.info.error = EMSGSIZE;
+            len = 0;
         }
     }
 
-    const uint key = convert_keysym(xkey);
-    const uint mods = convert_modmask(event->state);
+    event.key  = convert_keysym(xkey);
+    event.mods = convert_modmask(xevent->state);
+    event.len  = len;
 
-    if (key || mods || len) {
-        const WinCallbacks cb = win->callbacks;
-        if (cb.keypress.func) {
-            cb.keypress.func(cb.keypress.param, key, mods, text, len);
-        }
+    if (!event.len  &&
+        !event.key  &&
+        !event.mods &&
+        !event.info.error)
+    {
+        return false;
     }
 
-    if (text != local) {
-        free(text);
+    if (params->handler) {
+        memcpy(event.data, buf, len);
+        params->handler(params->arg, (WinEvent *)&event);
     }
+
+    return true;
 }
 
-inline void
-xhandler_clientmessage(XEvent *event_, Win *win, uint32 time)
+inline bool
+process_clientmessage(const X11EventProcParams *params)
 {
-    UNUSED(time);
-    XClientMessageEvent *event = &event_->xclient;
+    XClientMessageEvent *xevent = &params->xevent->xclient;
+    WinEvent event;
+    bool send = false;
 
-    if ((Atom)event->data.l[0] == ATOM(WM_DELETE_WINDOW)) {
-        win->online = false;
+    if ((Atom)xevent->data.l[0] == ATOM(WM_DELETE_WINDOW)) {
+        event_init(&event, EVENT_CLOSE, 0);
+        params->win->online = false;
+        send = true;
     }
+
+    if (send) {
+        if (params->handler) {
+            params->handler(params->arg, &event);
+        }
+    }
+
+    return send;
 }
 

@@ -349,22 +349,19 @@ term_push(Term *term, const void *data, size_t len)
 }
 
 size_t
-term_pull(Term *term, uint32 msec)
+term_pull(Term *term)
 {
-    ASSERT(msec < 1E3);
+    ASSERT(term && term->pid);
 
-    size_t accum = 0;
-    size_t len;
-    const int basetime = timer_msec(NULL);
-    int timeout = msec;
+    const size_t len = pty_read(term->mfd, term->input, LEN(term->input), 0);
+#if 0
+    dbgprint("len: %zu", len);
+#endif
+    if (len > 0) {
+        consume(term, term->input, len);
+    }
 
-    do {
-        len = pty_read(term->mfd, term->input, LEN(term->input), timeout);
-        accum += len;
-        timeout -= timer_msec(NULL) - basetime;
-    } while (consume(term, term->input, len) && timeout > 0);
-
-    return accum;
+    return len;
 }
 
 void
