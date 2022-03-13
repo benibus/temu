@@ -52,11 +52,9 @@ const char *gl_type_string(GLenum type);
   #else
     #define gl_set_debug_object(...)
   #endif
-  #define OPENGL_FAIL dbgbreak
 #else
   #define gl_get_error(...)
   #define gl_set_debug_object(...)
-  #define OPENGL_FAIL abort
 #endif
 
 void gl__get_error(const char *file, const char *func, int line);

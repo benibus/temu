@@ -353,10 +353,7 @@ term_pull(Term *term)
 {
     ASSERT(term && term->pid);
 
-    const size_t len = pty_read(term->mfd, term->input, LEN(term->input), 0);
-#if 0
-    dbgprint("len: %zu", len);
-#endif
+    const size_t len = pty_read(term->mfd, term->input, LEN(term->input));
     if (len > 0) {
         consume(term, term->input, len);
     }
@@ -1085,7 +1082,7 @@ FUNCDEFN(SGR)
                 }
             } else {
                 // TODO(ben): confirm whether errors reset the defaults
-                dbgprint("skiping invalid CSI:SGR sequence");
+                dbg_printf("skiping invalid CSI:SGR sequence\n");
                 set_active_attrs(term, 0);
                 reset_active_bg(term);
                 reset_active_fg(term);

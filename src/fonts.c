@@ -212,19 +212,15 @@ fontmgr_init(double dpi)
     }
 
     if (FT_Init_FreeType(&instance.library)) {
-        dbgprint("Failed to initialize freetype");
+        err_printf("Failed to initialize freetype\n");
         return false;
     }
 
     instance.dpi = dpi;
 
-    dbgprint(
-        "Font manager initialized\n"
-        "    DPI = %.02f\n"
-        "    GL_MAX_TEXTURE_SIZE = %d",
-        instance.dpi,
-        GL_MAX_TEXTURE_SIZE
-    );
+    dbg_printf("Font manager initialized: dpi=%.02f GL_MAX_TEXTURE_SIZE=%d\n",
+               instance.dpi,
+               GL_MAX_TEXTURE_SIZE);
 
     return true;
 }
@@ -237,7 +233,7 @@ pattern_create_from_file(const char *filepath)
 
     FcPattern *result = NULL;
 
-    dbgprint("Opening font from path: %s", filepath);
+    dbg_printf("Opening font from path: %s\n", filepath);
 
     if (filepath && FcConfigAppFontAddFile(NULL, (const FcChar8 *)filepath)) {
         FcFontSet *fcset = FcConfigGetFonts(NULL, FcSetApplication);
@@ -256,7 +252,7 @@ pattern_create_from_file(const char *filepath)
     if (result) {
         pattern_set_defaults(result);
     } else {
-        dbgprint("Failed to open font... falling back to defaults");
+        dbg_printf("Failed to open font... falling back to defaults\n");
         result = pattern_create_from_name(NULL);
     }
 
@@ -269,13 +265,13 @@ pattern_create_from_name(const char *name)
     FcPattern *result = NULL;
     name = DEFAULT(name, FONT_DEFAULT);
 
-    dbgprint("Opening font from name: \"%s\"", name);
+    dbg_printf("Opening font from name: \"%s\"\n", name);
 
     FcPattern *pat = FcNameParse((FcChar8 *)name);
     if (pat) {
         result = FcPatternDuplicate(pat);
     } else if (!strequal(name, FONT_DEFAULT)) {
-        dbgprint("Failed to open font... falling back to defaults");
+        dbg_printf("Failed to open font... falling back to defaults\n");
         result = pattern_create_from_name(NULL);
     }
     if (result) {
@@ -323,7 +319,7 @@ pattern_expand_set(FcPattern *pat)
 
     FcFontSet *fcset = FcFontSetCreate();
     if (!fcset) {
-        dbgprint("Failed to create FcFontSet\n");
+        err_printf("Failed to create FcFontSet\n");
         goto done;
     }
 
@@ -360,7 +356,7 @@ pattern_expand_set(FcPattern *pat)
 #endif
 
         if (fcset->nfont < i + 1) {
-            dbgprint("Failed to find matching FcPattern for style %d", i);
+            err_printf("Failed to find matching FcPattern for style %d\n", i);
             FcFontSetDestroy(fcset);
             fcset = NULL;
             goto done;
@@ -460,7 +456,7 @@ fontset_init(FontSet *set)
 
     glGenTextures(1, &atlas->tex);
     ASSERT(atlas->tex);
-    dbgprint("Generated texture: %u", atlas->tex);
+    dbg_printf("Generated texture: %u\n", atlas->tex);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, atlas->tex);
@@ -555,7 +551,7 @@ pattern_extract_desc(FcPattern *pat, struct FontDesc *desc_)
     FcValue fcval;
 
     if (FcPatternGetString(pat, FC_FILE, 0, (FcChar8 **)&desc.filepath) != FcResultMatch) {
-        dbgprint("Failed to extract font file from FcPattern");
+        err_printf("Failed to extract font file from FcPattern\n");
         return false;
     }
     if (FcPatternGet(pat, FC_PIXEL_SIZE, 0, &fcval) == FcResultMatch) {
@@ -656,11 +652,11 @@ font_create_from_desc(Font *font_, struct FontDesc desc)
     FT_Error fterr;
     fterr = FT_New_Face(instance.library, desc.filepath, 0, &font.face);
     if (fterr) {
-        dbgprint("Failed to initialize font file: %s", desc.filepath);
+        err_printf("Failed to initialize font file: %s\n", desc.filepath);
         exit(EXIT_FAILURE);
     }
 
-    dbgprint("Opened freetype face for %s", desc.filepath);
+    dbg_printf("Opened freetype face for %s\n", desc.filepath);
 
     FT_Set_Char_Size(font.face, desc.pixsize * 64, 0, 72 * desc.aspect, 72);
     FT_Set_Transform(font.face, &desc.matrix, NULL);
@@ -870,9 +866,9 @@ font_render_glyph(Font *font, uint32 idx)
         FT_Error err;
         err = FT_Load_Glyph(face, idx, font->loadflags|font->loadtarget);
         if (err) {
-            dbgprint(
+            dbg_printf(
                 "Failed to load glyph (%u) from %s... "
-                "style: %ld flags: %#x target: %#x",
+                "style: %ld flags: %#x target: %#x\n",
                 idx,
                 font->filepath,
                 font - font->set->fonts,
@@ -887,9 +883,9 @@ font_render_glyph(Font *font, uint32 idx)
             if (!err) {
                 glyph = &font->glyphs[idx];
             } else {
-                dbgprint(
+                dbg_printf(
                     "Failed to render glyph (%u) from %s... "
-                    "style: %ld flags: %#x target: %#x mode: %d",
+                    "style: %ld flags: %#x target: %#x mode: %d\n",
                     idx,
                     font->filepath,
                     font - font->set->fonts,

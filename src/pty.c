@@ -33,12 +33,11 @@
 #include <pty.h>
 #endif
 
-#define FATAL(...) do {    \
-    const int e__ = errno; \
-    printerr("SYS ERROR (%d) %s: ", e__, strerror(e__)); \
-    printerr(__VA_ARGS__); \
-    printerr("\n");        \
-    exit(1);               \
+#define FATAL(...) do {      \
+    const int e__ = errno;   \
+    err_printf(__VA_ARGS__); \
+    fprintf(stderr, ": (%d) %s\n", e__, strerror(e__)); \
+    exit(e__ ? e__ : 1);     \
 } while (0)
 
 static void setup_parent_signals(void);
@@ -128,7 +127,7 @@ pty_hangup(int cpid)
 }
 
 size_t
-pty_read(int mfd, uchar *buf, size_t len, uint32 msec)
+pty_read(int mfd, uchar *buf, size_t len)
 {
     ASSERT(mfd > 0);
 
@@ -138,18 +137,19 @@ pty_read(int mfd, uchar *buf, size_t len, uint32 msec)
     FD_ZERO(&rset);
     FD_SET(mfd, &rset);
 
-    switch (select(mfd + 1, &rset, NULL, NULL, &(struct timeval){ 0, msec * 1E3 })) {
-    case -1: FATAL("select");
-    case  0: return 0;
+    const int res = pselect(mfd + 1, &rset, NULL, NULL, NULL, NULL);
+    if (res < 0 && errno != EINTR) {
+        FATAL("pselect");
+    } else if (res <= 0) {
+        return 0;
     }
 
-    ssize_t nread = read(mfd, buf, len);
-    switch (nread) {
-    case -1: FATAL("read");
-    case  0: exit(0);
+    const ssize_t nread = read(mfd, buf, len);
+    if (nread < 0 && errno != EINTR) {
+        FATAL("read");
     }
 
-    return nread;
+    return MAX(0, nread);
 }
 
 size_t
@@ -167,16 +167,19 @@ pty_write(int mfd, const uchar *buf, size_t len)
         FD_SET(mfd, &wset);
 
         if (pselect(mfd + 1, NULL, &wset, NULL, NULL, NULL) < 0) {
-            FATAL("pselect");
+            if (errno != EINTR) {
+                FATAL("pselect");
+            }
+            continue;
         }
 
         if (FD_ISSET(mfd, &wset)) {
-            ssize_t result = write(mfd, buf + idx, len - idx);
-            if (result < 0) {
+            const ssize_t nwrite = write(mfd, buf + idx, len - idx);
+            if (nwrite >= 0) {
+                idx += nwrite;
+            } else if (errno != EINTR) {
                 FATAL("write");
             }
-
-            idx += result;
         }
     }
 
@@ -212,11 +215,6 @@ on_signal(int signo, siginfo_t *info, void *context)
     if (signo == SIGCHLD) {
         // Acknowledge the child's exit to avoid creating a zombie process
         waitpid(info->si_pid, &status, WNOHANG);
-#if 0
-        if (WIFEXITED(status) && WEXITSTATUS(status)) {
-            dbgprint("(CPID: %d) exited with code %d", info->si_pid, WEXITSTATUS(status));
-        }
-#endif
     }
 }
 
@@ -226,7 +224,7 @@ reset_signal(int signo)
     errno = 0;
 
     if (sigaction(signo, &(struct sigaction){ .sa_handler = SIG_DFL }, NULL) < 0) {
-        FATAL("Failed to install signal(%d) handler", signo);
+        FATAL("sigaction %d", signo);
     }
 
 }
@@ -240,7 +238,7 @@ setup_parent_signals(void)
     };
 
     if (sigaction(SIGCHLD, &sa, NULL) < 0) {
-        FATAL("Failed to install SIGCHLD handler");
+        FATAL("sigaction SIGCHLD");
     }
 
     reset_signal(SIGINT);

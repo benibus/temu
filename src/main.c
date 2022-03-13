@@ -143,7 +143,7 @@ error_invalid:
 
     setup(app, &prefs);
 
-    dbgprint("Running temu...");
+    dbg_printf("Running temu...\n");
     int result = run(app);
 
     term_destroy(app->term);
@@ -161,7 +161,7 @@ setup(App *app, const AppPrefs *prefs)
     app->win = window_create();
 
     if (!app->win) {
-        dbgprint("Failed to initialize window server");
+        err_printf("Failed to initialize window server\n");
         exit(EXIT_FAILURE);
     }
 
@@ -197,7 +197,7 @@ void
 setup_fonts(App *app, float dpi)
 {
     if (!fontmgr_init(dpi)) {
-        dbgprint("Failed to initialize font manager");
+        err_printf("Failed to initialize font manager\n");
         exit(EXIT_FAILURE);
     }
 
@@ -205,30 +205,30 @@ setup_fonts(App *app, float dpi)
     if (app->prefs.fontpath) {
         fontpath = realpath(app->prefs.fontpath, NULL);
         if (fontpath) {
-            dbgprint("Resolved file path: %s -> %s", app->prefs.fontpath, fontpath);
+            dbg_printf("Resolved file path: %s -> %s\n", app->prefs.fontpath, fontpath);
             app->fontset = fontmgr_create_fontset_from_file(fontpath);
             FREE(fontpath);
         } else {
-            dbgprint("Failed to resolve file path: %s", app->prefs.fontpath);
+            dbg_printf("Failed to resolve file path: %s\n", app->prefs.fontpath);
         }
     }
     if (!app->fontset) {
         app->fontset = fontmgr_create_fontset(app->prefs.font);
         if (!app->fontset) {
-            dbgprint("Failed to open fallback fonts. aborting...");
+            err_printf("Failed to open fallback fonts. aborting...\n");
             exit(EXIT_FAILURE);
         }
     }
 
-    dbgprint("Fonts opened");
+    dbg_printf("Fonts opened\n");
     fontset_get_metrics(app->fontset, &app->cell_width, &app->cell_height, NULL, NULL);
 
     if (!fontset_init(app->fontset)) {
-        dbgprint("Failed to initialize font cache");
+        err_printf("Failed to initialize font cache\n");
         exit(EXIT_FAILURE);
     }
 
-    dbgprint("Font cache initialized");
+    dbg_printf("Font cache initialized\n");
 }
 
 void
@@ -253,24 +253,18 @@ void
 setup_display(App *app)
 {
     if (!window_init(app->win)) {
-        dbgprint("Failed to display window");
+        err_printf("Failed to display window\n");
         exit(EXIT_FAILURE);
     }
 
     app->width = window_width(app->win);
     app->height = window_height(app->win);
 
-    dbgprint(
-        "Window displayed\n"
-        "    width       = %d\n"
-        "    height      = %d\n"
-        "    cell_width  = %d\n"
-        "    cell_height = %d\n",
-        app->width,
-        app->height,
-        app->cell_width,
-        app->cell_height
-    );
+    dbg_printf("Window displayed: w=%d h=%d cw=%d ch=%d\n",
+               app->width,
+               app->height,
+               app->cell_width,
+               app->cell_height);
 }
 
 void
@@ -285,7 +279,7 @@ setup_terminal(App *app)
         uint32 color;
 
         if (!window_query_color(app->win, app->prefs.colors[i], &color)) {
-            dbgprint("Failed to parse RGB string: %s", app->prefs.colors[i]);
+            err_printf("Failed to parse RGB string: %s\n", app->prefs.colors[i]);
             exit(EXIT_FAILURE);
         }
 
@@ -310,7 +304,7 @@ run(App *app)
     window_make_current(app->win);
 
     if (!window_is_online(app->win)) {
-        dbgprint("Window is not online");
+        err_printf("Window is not online\n");
         return EXIT_FAILURE;
     }
 
@@ -321,9 +315,9 @@ run(App *app)
     const int ptyfd = term_exec(term, app->prefs.shell, app->argc, app->argv);
 
     if (ptyfd) {
-        dbgprint("Terminal online. FD = %d", ptyfd);
+        dbg_printf("Terminal online: fd=%d\n", ptyfd);
     } else {
-        dbgprint("Failed to start terminal");
+        err_printf("Failed to start terminal\n");
         result = EXIT_FAILURE;
     }
 
@@ -351,7 +345,7 @@ run_updates(App *app, struct pollfd *pollset, int timeout, int *r_error)
 
     const int res = poll(pollset, 2, timeout);
     if (res < 0) {
-        printerr("ERROR poll: %s\n", strerror(errno));
+        err_printf("poll: %s\n", strerror(errno));
         *r_error = DEFAULT(errno, EXIT_FAILURE); // paranoia
     } else if ((pollset[0].revents|pollset[1].revents) & POLLHUP) {
         *r_error = ECHILD;

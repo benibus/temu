@@ -19,6 +19,7 @@
 
 #include <stdarg.h>
 #include <math.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <time.h>
@@ -28,15 +29,20 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-static struct timespec time_get_ts(const TimeRec *);
-static struct timeval time_get_tv(const TimeRec *);
-static TimeRec time_conv_ts(const struct timespec *);
-static TimeRec time_conv_tv(const struct timeval *);
+static inline size_t
+safe_mul(size_t a, size_t b, size_t max)
+{
+    if (a && b && b > max / a) {
+        err_printf("%s(%zu, %zu): %s\n", __func__, a, b, strerror(EOVERFLOW));
+        exit(EOVERFLOW);
+    }
+    return a * b;
+}
 
 void *
 xmalloc(size_t count, size_t stride)
 {
-    void *ptr = malloc(count * stride);
+    void *ptr = malloc(safe_mul(count, stride, SIZE_MAX));
 
     if (!ptr) {
         fprintf(stderr, "%s() failure: aborting...\n", "malloc");
@@ -62,7 +68,7 @@ xcalloc(size_t count, size_t stride)
 void *
 xrealloc(void *ptr, size_t count, size_t stride)
 {
-    ptr = realloc(ptr, count * stride);
+    ptr = realloc(ptr, safe_mul(count, stride, SIZE_MAX));
 
     if (!ptr) {
         fprintf(stderr, "%s() failure: aborting...\n", "realloc");
@@ -75,19 +81,21 @@ xrealloc(void *ptr, size_t count, size_t stride)
 uint64
 round_pow2(uint64 n)
 {
-    n += !n;
-
-    if ((n & (n - 1)) != 0) {
-        n |= (n >> 1);
-        n |= (n >> 2);
-        n |= (n >> 4);
-        n |= (n >> 8);
-        n |= (n >> 16);
-        n |= (n >> 32);
-        n++;
+    if (IS_POW2(n)) {
+        return n;
+    } else if (n > (1UL << 63)) {
+        err_printf("%s(0x%016lx): %s\n", __func__, n, strerror(EOVERFLOW));
+        exit(EOVERFLOW);
     }
 
-    return n;
+    n |= (n >> 1);
+    n |= (n >> 2);
+    n |= (n >> 4);
+    n |= (n >> 8);
+    n |= (n >> 16);
+    n |= (n >> 32);
+
+    return n + 1;
 }
 
 bool
@@ -135,34 +143,73 @@ file_unload(FileBuf *fbp)
     close(fbp->fd);
 }
 
-#ifndef DBGPRINT_FMT
-  #define DBGPRINT_FMT "@ %s:%d->%s() :: "
-#endif
-#ifndef DBGPRINT_FULLPATH
-  #define DBGPRINT_FULLPATH 0
-#endif
+void
+assert_fail(const char *file,
+            uint line,
+            const char *func,
+            const char *expr)
+{
+    trace_fprintf__(file, line, func, stderr, "Assertion '%s' failed\n", expr);
+}
+
+static inline int
+get_basename(const char *path)
+{
+    const char *sep = strrchr(path, '/');
+    return sep ? &sep[1] - path : 0;
+}
 
 int
-dbgprint__(const char *file_, int line, const char *func, const char *fmt, ...)
+trace_fprintf__(const char *restrict file,
+                uint line,
+                const char *restrict func,
+                FILE *restrict fp,
+                const char *restrict fmt,
+                ...)
 {
-    const char *file;
-#if DBGPRINT_FULLPATH
-    file = file_;
-#else
-    file = (file = strrchr(file_, '/')) ? file + 1 : file_;
-#endif
-
+    int n = 0;
+    file += get_basename(file);
+    n += fprintf(fp, TRACEPRINTF_FMT, file, line, func);
     va_list args;
     va_start(args, fmt);
-
-    int n = 0;
-    n += fprintf(stderr, DBGPRINT_FMT, file, line, func);
-    n += vfprintf(stderr, fmt, args);
-    fputc('\n', stderr);
-
+    n += vfprintf(fp, fmt, args);
     va_end(args);
 
-    return n + 1;
+    return n;
+}
+
+int
+err_fprintf(FILE *restrict fp, const char *restrict fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    int n = err_vfprintf(fp, fmt, args);
+    va_end(args);
+
+    return n;
+}
+
+int
+err_vfprintf(FILE *restrict fp, const char *restrict fmt, va_list args)
+{
+    static const char *heading = "[error]";
+
+    int n = 0;
+    int res;
+#if ERRPRINTF_ENABLE_COLOR
+    if (isatty(fileno(fp))) {
+        res = fprintf(fp, "\033[%d;%dm%s\033[m ", 1, 31, heading);
+    } else
+#endif
+    {
+        res = fprintf(fp, "%s ", heading);
+    }
+    if (res >= 0) {
+        n += res;
+        res = vfprintf(fp, fmt, args);
+    }
+
+    return (res < 0) ? res : res + n;
 }
 
 // For debug output only
@@ -200,57 +247,31 @@ charstring(uint32 ucs4)
     return buf;
 }
 
-struct timespec
-time_get_ts(const TimeRec *t)
-{
-    struct timespec ts = { 0 };
-
-    ts.tv_sec = t->sec;
-    ts.tv_nsec += t->msec * 1E6;
-    ts.tv_nsec += t->usec * 1E3;
-    ts.tv_nsec += t->nsec;
-
-    return ts;
-}
-
-struct timeval
-time_get_tv(const TimeRec *t)
-{
-    struct timeval tv = { 0 };
-
-    tv.tv_sec = t->sec;
-    tv.tv_usec += t->msec * 1E3;
-    tv.tv_usec += t->usec;
-    tv.tv_usec += t->nsec / 1E3;
-
-    return tv;
-}
-
-TimeRec
-time__conv_ts(const struct timespec *ts)
+static inline TimeRec
+from_timespec(const struct timespec *ts)
 {
     TimeRec t = { 0 };
 
-    size_t nsec = ts->tv_sec * 1E9 + ts->tv_nsec;
+    size_t nsec = ts->tv_sec * 1e9 + ts->tv_nsec;
 
-    t.sec  = nsec / 1E9, nsec -= t.sec  * 1E9;
-    t.msec = nsec / 1E6, nsec -= t.msec * 1E6;
-    t.usec = nsec / 1E3, nsec -= t.usec * 1E3;
+    t.sec  = nsec * 1e-9, nsec -= t.sec  * 1e9;
+    t.msec = nsec * 1e-6, nsec -= t.msec * 1e6;
+    t.usec = nsec * 1e-3, nsec -= t.usec * 1e3;
     t.nsec = nsec;
 
     return t;
 }
 
-TimeRec
-time__conv_tv(const struct timeval *tv)
+static inline TimeRec
+from_timeval(const struct timeval *tv)
 {
     TimeRec t = { 0 };
 
-    size_t nsec = tv->tv_sec * 1E9 + tv->tv_usec * 1E3;
+    size_t nsec = tv->tv_sec * 1e9 + tv->tv_usec * 1e3;
 
-    t.sec  = nsec / 1E9, nsec -= t.sec  * 1E9;
-    t.msec = nsec / 1E6, nsec -= t.msec * 1E6;
-    t.usec = nsec / 1E3, nsec -= t.usec * 1E3;
+    t.sec  = nsec * 1e-9, nsec -= t.sec  * 1e9;
+    t.msec = nsec * 1e-6, nsec -= t.msec * 1e6;
+    t.usec = nsec * 1e-3, nsec -= t.usec * 1e3;
     t.nsec = nsec;
 
     return t;
@@ -263,10 +284,10 @@ timer_msec(TimeRec *ret)
     uint32 t = 0;
 
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    t += ts.tv_sec * 1E3;
-    t += ts.tv_nsec / 1E6;
+    t += ts.tv_sec * 1e3;
+    t += ts.tv_nsec * 1e-6;
 
-    if (ret) *ret = time__conv_ts(&ts);
+    if (ret) *ret = from_timespec(&ts);
 
     return t;
 }
@@ -278,10 +299,10 @@ timer_usec(TimeRec *ret)
     uint32 t = 0;
 
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    t += ts.tv_sec * 1E6;
-    t += ts.tv_nsec / 1E3;
+    t += ts.tv_sec * 1e6;
+    t += ts.tv_nsec * 1e-3;
 
-    if (ret) *ret = time__conv_ts(&ts);
+    if (ret) *ret = from_timespec(&ts);
 
     return t;
 }
@@ -293,93 +314,11 @@ timer_nsec(TimeRec *ret)
     uint32 t = 0;
 
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    t += ts.tv_sec * 1E9;
+    t += ts.tv_sec * 1e9;
     t += ts.tv_nsec;
 
-    if (ret) *ret = time__conv_ts(&ts);
+    if (ret) *ret = from_timespec(&ts);
 
     return t;
-}
-
-#define DIFF_SIGNED(a,b,O_,m) (((int64)(a) - (int64)(b)) O_ (m))
-int64
-timediff_msec(const TimeRec *t0, const TimeRec *t1)
-{
-    int64 res = 0;
-
-    res += DIFF_SIGNED(t0->sec,  t1->sec,  *, 1E3);
-    res += DIFF_SIGNED(t0->msec, t1->msec, *, 1);
-    res += DIFF_SIGNED(t0->usec, t1->usec, /, 1E3);
-    res += DIFF_SIGNED(t0->nsec, t1->nsec, /, 1E6);
-
-    return res;
-}
-
-int64
-timediff_usec(const TimeRec *t0, const TimeRec *t1)
-{
-    int64 res = 0;
-
-    res += DIFF_SIGNED(t0->sec,  t1->sec,  *, 1E6);
-    res += DIFF_SIGNED(t0->msec, t1->msec, *, 1E3);
-    res += DIFF_SIGNED(t0->usec, t1->usec, *, 1);
-    res += DIFF_SIGNED(t0->nsec, t1->nsec, /, 1E6);
-
-    return res;
-}
-#undef DIFF_SIGNED
-
-#define TIME_ISSET(t) ((t)->sec || (t)->msec || (t)->usec || (t)->nsec)
-void
-timeblk_update(TimeBlock *blk)
-{
-    ASSERT(blk);
-
-    TimeRec tmp = { 0 };
-    timer_msec(&tmp);
-
-    if (TIME_ISSET(&blk->t0)) {
-        blk->t1 = blk->t2;
-    } else {
-        blk->t0 = tmp;
-        blk->t1 = tmp;
-    }
-    blk->t2 = tmp;
-}
-#undef TIME_ISSET
-
-void *
-memshift(void *base, ptrdiff_t shift, size_t count, size_t stride)
-{
-    if (!(base && shift && count))
-        return base;
-    stride = DEFAULT(stride, 1);
-
-    uchar *p1 = (uchar *)base;
-    uchar *p2 = p1 + (shift * (ptrdiff_t)stride);
-
-    return memmove(p2, p1, count * stride);
-}
-
-void *
-memcshift(void *base, ptrdiff_t shift, size_t count, size_t stride)
-{
-    if (!(base && shift && count))
-        return base;
-    stride = DEFAULT(stride, 1);
-
-    ptrdiff_t offset = shift * (ptrdiff_t)stride;
-    size_t bytes = count * stride;
-
-    uchar *p1 = (uchar *)base;
-    uchar *p2 = p1 + offset;
-    uchar *vacant = (offset < 0) ? p2 + bytes : p1;
-
-    void *res = memmove(p2, p1, bytes);
-    if (res != NULL) {
-        memset(vacant, 0, ABS(offset));
-    }
-
-    return res;
 }
 

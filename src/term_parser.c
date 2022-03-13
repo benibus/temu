@@ -53,34 +53,16 @@ parser_emit(TermParser *ctx, const uchar *data, size_t max, size_t *adv)
 {
     uint32 opcode = 0;
     size_t idx;
-    uint8 prev_state = ctx->state;
 
     for (idx = 0; !opcode && idx < max; idx++) {
         const uchar c = data[idx];
         const uint16 pair = globals.fsm.table[c][ctx->state];
 
         opcode = do_action(ctx, pair, c);
-        prev_state = ctx->state;
         ctx->state = GET_STATE(pair);
     }
 
     SETPTR(adv, idx);
-
-    // TODO(ben): Temporary
-#if 0
-    dbgprint("len:[%zu] state:[%s->%s] opcode:[%s|0x%08x]",
-             idx,
-             fsm_state_to_string(prev_state),
-             fsm_state_to_string(ctx->state),
-             opcode_to_string(opcode),
-             opcode);
-    for (size_t n = 0; n < idx; n++) {
-        fprintf(stderr, "%c%s", n ? ' ' : '\t', charstring(data[n]));
-    }
-    fprintf(stderr, "\n");
-#else
-    UNUSED(prev_state);
-#endif
 
     return opcode;
 }
@@ -108,7 +90,7 @@ add_digit(TermParser *ctx, int digit)
         } else {
             ctx->overflow = true;
             *argp = 0; // TODO(ben): Fallback to default param or abort the sequence?
-            dbgprint("warning: parameter integer overflow");
+            dbg_printf("warning: parameter integer overflow\n");
         }
     }
 
@@ -119,7 +101,7 @@ static inline bool
 next_param(TermParser *ctx)
 {
     if (ctx->argi + 1 >= (int)LEN(ctx->argv)) {
-        dbgprint("warning: ignoring excess parameter");
+        dbg_printf("warning: ignoring excess parameter\n");
         return false;
     }
 
@@ -170,7 +152,7 @@ do_action(TermParser *ctx, uint16 pair, uchar c)
         ctx->chars[0] = c;
         break;
     case ActionUtf8Error:
-        dbgprint("discarding malformed UTF-8 sequence");
+        dbg_printf("discarding malformed UTF-8 sequence\n");
         memset(ctx->chars, 0, sizeof(ctx->chars));
         break;
     case ActionExec:

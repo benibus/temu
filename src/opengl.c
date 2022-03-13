@@ -34,7 +34,7 @@ gl_compile_shader(const char *src, GLenum type)
         char local[BUFSIZ];
         GLsizei len = 0;
         glGetShaderInfoLog(shader, sizeof(local), &len, local);
-        dbgprint("OpenGLError > %.*s", len, local);
+        err_printf("OpenGL: %.*s\n", len, local);
         return 0;
     }
 
@@ -57,7 +57,7 @@ gl_link_shaders(GLuint *shaders, uint count)
         char local[BUFSIZ];
         GLsizei len = 0;
         glGetProgramInfoLog(program, sizeof(local), &len, local);
-        dbgprint("OpenGLError > %.*s", len, local);
+        err_printf("OpenGL: %.*s\n", len, local);
         return 0;
     }
 
@@ -81,7 +81,7 @@ gl_define_attr(GLuint idx, GLint count, GLenum type, GLsizei stride, uintptr_t o
         is_float = true;
         break;
     default:
-        dbgprint("Unhandled GLenum: 0x%x", type);
+        dbg_printf("Unhandled GLenum: 0x%x\n", type);
         return;
     }
 
@@ -129,7 +129,7 @@ gl__get_error(const char *file, const char *func, int line)
     }
 
     if (count) {
-        OPENGL_FAIL();
+        exit(1);
     }
 }
 
@@ -193,7 +193,7 @@ gl__message_callback(GLenum source_,
     }
 
     if (type_ == GL_DEBUG_TYPE_ERROR) {
-        OPENGL_FAIL();
+        exit(1);
     }
 }
 

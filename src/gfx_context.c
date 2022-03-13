@@ -92,7 +92,7 @@ gfx_context_init(Gfx *gfx)
         });
 
     if (!gfx->ctx) {
-        dbgprint("Failed to open EGL context");
+        err_printf("Failed to open EGL context\n");
         return false;
     }
 
@@ -275,11 +275,9 @@ gfx_print_info(const Gfx *gfx)
     ASSERT(gfx);
 
     fprintf(stderr,
-        "\n"
         "EGL_VERSION     = %s\n"
         "EGL_VENDOR      = %s\n"
         "EGL_CLIENT_APIS = %s\n"
-        "\n"
         "GL_VERSION      = %s\n"
         "GL_VENDOR       = %s\n"
         "GL_RENDERER     = %s\n"

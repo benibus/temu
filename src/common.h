@@ -56,17 +56,17 @@
   #define STDC 2018L
 #endif
 
-#if defined(NDEBUG) && (defined(BUILD_DEBUG) || !defined(BUILD_RELEASE))
-  #error "Build-type definition mismatch"
+#if defined(NDEBUG) && (BUILD_DEBUG || !BUILD_RELEASE)
+    #error "Build-type definition mismatch"
 #endif
-#if defined(BUILD_RELEASE) && !defined(NDEBUG)
-  #define NDEBUG 1
+#if BUILD_RELEASE && !defined(NDEBUG)
+    #define NDEBUG 1
 #endif
 
-#if defined(COMPILER_GCC) || defined(COMPILER_CLANG)
-  #define attribute__ __attribute__
-#else
-  #define attribute__(...)
+#if !defined(COMPILER_GCC) && !defined(COMPILER_CLANG)
+    #ifndef __attribute__
+    #define __attribute__(x)
+    #endif
 #endif
 
 #include <stdio.h>
@@ -82,28 +82,14 @@ typedef unsigned long ulong;
 typedef long long llong;
 typedef unsigned long long ullong;
 
-typedef int8_t    int8;
-typedef int16_t   int16;
-typedef int32_t   int32;
-typedef int64_t   int64;
-typedef uint8_t   uint8;
-typedef uint16_t  uint16;
-typedef uint32_t  uint32;
-typedef uint64_t  uint64;
-typedef int8_t    i8;
-typedef int16_t   i16;
-typedef int32_t   i32;
-typedef int64_t   i64;
-typedef uint8_t   u8;
-typedef uint16_t  u16;
-typedef uint32_t  u32;
-typedef uint64_t  u64;
-
-typedef struct {
-    char *data;
-    uint32 len;
-    uint32 max;
-} String;
+typedef int8_t   int8;
+typedef int16_t  int16;
+typedef int32_t  int32;
+typedef int64_t  int64;
+typedef uint8_t  uint8;
+typedef uint16_t uint16;
+typedef uint32_t uint32;
+typedef uint64_t uint64;
 
 #define XPASTE__(a,b) a##b
 #define XPASTE(a,b)   XPASTE__(a,b)
@@ -117,6 +103,7 @@ typedef struct {
 #define ABS(n)          (((n) < 0) ? -(n) : (n))
 #define LEN(arr)        (sizeof((arr)) / sizeof((arr)[0]))
 #define DEFAULT(v1,v2)  ((!!(v1)) ? (v1) : (v2))
+#define IS_POW2(n)      ((n) > 0 && ((n) & ((n) - 1)) == 0)
 #define ALIGN_DOWN(n,a) ((n) & ~((a) - 1))
 #define ALIGN_UP(n,a)   (((n) + ((a) - 1)) & ~((a) - 1))
 

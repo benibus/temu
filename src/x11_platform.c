@@ -432,7 +432,7 @@ window_create(void)
     {
         XWMHints *hints = XAllocWMHints();
         if (!hints) {
-            printerr("ERROR: XAllocWMHints failure\n");
+            err_printf("XAllocWMHints failure\n");
             abort();
         }
         hints->flags         = (StateHint|InputHint);
@@ -476,7 +476,7 @@ window_create(void)
     win->target = gfx_target_create(server.gfx, win->xid);
 
     if (!win->target) {
-        dbgprint("Failed to create EGL surface");
+        err_printf("Failed to create EGL surface\n");
         return NULL;
     }
 
@@ -488,7 +488,7 @@ window_create(void)
     }
 
     if (!window_make_current(win)) {
-        dbgprint("Failed to set current window");
+        err_printf("Failed to set current window\n");
         return NULL;
     }
 
@@ -614,7 +614,7 @@ window_set_size_hints(Win *win, uint inc_width, uint inc_height, uint border)
 
     XSizeHints *hints = XAllocSizeHints();
     if (!hints) {
-        printerr("ERROR: XAllocSizeHints failure\n");
+        err_printf("XAllocSizeHints failure\n");
         abort();
     }
 
@@ -645,7 +645,7 @@ window_set_class_hints(Win *win, char *wm_name, char *wm_class)
 
     XClassHint *hints = XAllocClassHint();
     if (!hints) {
-        printerr("ERROR: XAllocClassHint failure\n");
+        err_printf("XAllocClassHint failure\n");
         abort();
     }
 
@@ -717,7 +717,7 @@ set_utf8_property(Win *win,
     char *name;
     errno = 0;
     if (!(name = strndup(str, len))) {
-        printerr("ERROR strndup: %s", strerror(errno));
+        err_printf("strndup(%s, %zu): %s\n", str, len, strerror(errno));
         abort();
     }
 

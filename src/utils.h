@@ -37,35 +37,54 @@
 #define strequal(s1,s2)    (strcmp((s1), (s2)) == 0)
 #define strnequal(s1,s2,n) (strncmp((s1), (s2), (n)) == 0)
 #define memequal(s1,s2,n)  (memcmp((s1), (s2), (n)) == 0)
-#define memclear(p,n,sz)   (memset((p), 0, (n) * (sz)))
 
-#define printout(...) fprintf(stdout, __VA_ARGS__)
-#define printerr(...) fprintf(stderr, __VA_ARGS__)
+#ifndef TRACEPRINTF_FMT
+#define TRACEPRINTF_FMT "[%s:%u][%s] "
+#endif
+#ifndef TRACEPRINTF_ARGS
+#define TRACEPRINTF_ARGS __FILE__, __LINE__, __func__
+#endif
 
-int dbgprint__(const char *, int, const char *, const char *, ...)
-  attribute__((format(printf, 4, 5)));
-#define DBGPRINT_ARG __FILE__, __LINE__, __func__
+int trace_fprintf__(const char *restrict file,
+                    uint line,
+                    const char *restrict func,
+                    FILE *restrict fp,
+                    const char *restrict fmt,
+                    ...)
+    __attribute__((format(printf, 5, 6)));
+#define trace_fprintf(...) trace_fprintf__(TRACEPRINTF_ARGS, __VA_ARGS__)
+#define trace_printf(...)  trace_fprintf(stderr, __VA_ARGS__)
 
-#ifdef BUILD_DEBUG
-  #define dbgprint(...) dbgprint__(DBGPRINT_ARG, __VA_ARGS__)
-  #define dbgbreak(...) raise(SIGTRAP)
-  #define ASSERT(cond) do {                      \
-    if (!(cond)) {                               \
-        dbgprint("assertion failed: %s", #cond); \
-        dbgbreak();                              \
-    }                                            \
-  } while (0)
+#ifndef ERRPRINTF_ENABLE_COLOR
+#define ERRPRINTF_ENABLE_COLOR 1
+#endif
+
+int err_vfprintf(FILE *restrict fp, const char *restrict fmt, va_list args);
+int err_fprintf(FILE *restrict fp, const char *restrict fmt, ...)
+    __attribute__((format(printf, 2, 3)));
+#define err_printf(...) err_fprintf(stderr, __VA_ARGS__)
+
+#if BUILD_DEBUG
+#define dbg_printf(...) trace_printf(__VA_ARGS__)
 #else
-  #define dbgprint(...)
-  #define dbgbreak(...)
-  #define ASSERT(...)
+#define dbg_printf(...)
+#endif
+
+extern void
+assert_fail(const char *file,
+            uint line,
+            const char *func,
+            const char *expr);
+
+#if BUILD_DEBUG
+#define ASSERT(expr) (!(expr) ? (assert_fail(TRACEPRINTF_ARGS, #expr), raise(SIGTRAP)) : 0)
+#else
+#define ASSERT(expr)
 #endif
 
 void *xmalloc(size_t, size_t);
 void *xcalloc(size_t, size_t);
 void *xrealloc(void *, size_t, size_t);
-void *memshift(void *, ptrdiff_t, size_t, size_t);
-void *memcshift(void *, ptrdiff_t, size_t, size_t);
 uint64 round_pow2(uint64);
 bool isprime(int32);
 const char *charstring(uint32);
@@ -89,18 +108,9 @@ typedef union {
     };
 } TimeRec;
 
-typedef struct {
-    TimeRec t0;
-    TimeRec t1;
-    TimeRec t2;
-} TimeBlock;
-
 uint32 timer_msec(TimeRec *);
 uint32 timer_usec(TimeRec *);
 uint64 timer_nsec(TimeRec *);
-int64 timediff_msec(const TimeRec *, const TimeRec *);
-int64 timediff_usec(const TimeRec *, const TimeRec *);
-void timeblk_update(TimeBlock *);
 
 static inline bool strempty(const char *str) { return !(str && str[0]); }
 
