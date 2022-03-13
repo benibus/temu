@@ -1,6 +1,6 @@
 # temu
 
-A hardware-accelerated UTF-8 terminal emulator for POSIX environments
+![screenshot](./assets/screenshot.png)
 
 ## About
 

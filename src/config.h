@@ -32,26 +32,26 @@ static const AppPrefs default_prefs = {
     .border = 0,
     .histlines = 128,
     .colors = {
-        "#18191B", // Background
-        "#BCBFBD", // Foreground
+        "#1b1c1e", // Background
+        "#a5a8a6", // Foreground
 
-        "#282A2E", // Black
-        "#A54242", // Red
-        "#448D65", // Green
-        "#DE935F", // Yellow
-        "#4A7096", // Blue
-        "#85678F", // Magenta
-        "#558D86", // Cyan
-        "#747C84", // White
+        "#34373c", // Black
+        "#b25449", // Red
+        "#698754", // Green
+        "#d88e61", // Yellow
+        "#547991", // Blue
+        "#887190", // Magenta
+        "#578d85", // Cyan
+        "#8e929b", // White
 
-        "#41464D", // Bright Black
-        "#CC6666", // Bright Red
-        "#55A679", // Bright Green
-        "#F0B674", // Bright Yellow
-        "#638EB3", // Bright Blue
-        "#A884BB", // Bright Magenta
-        "#70AFAB", // Bright Cyan
-        "#C5C8C6"  // Bright White
+        "#56575f", // Bright Black
+        "#cb695c", // Bright Red
+        "#749c61", // Bright Green
+        "#e3ac72", // Bright Yellow
+        "#6494af", // Bright Blue
+        "#a085a6", // Bright Magenta
+        "#6aa9a5", // Bright Cyan
+        "#c5c8c6"  // Bright White
     }
 };
 
