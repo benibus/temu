@@ -22,24 +22,18 @@
 
 #include <EGL/egl.h>
 
-typedef struct Gfx_ Gfx;
-typedef struct GfxTarget_ GfxTarget;
+typedef struct Gfx Gfx;
 
-Gfx *gfx_context_create(EGLNativeDisplayType dpy);
-void gfx_context_destroy(Gfx *gfx);
-bool gfx_context_init(Gfx *gfx);
-EGLint gfx_get_visual_id(Gfx *gfx);
-GfxTarget *gfx_target_create(Gfx *gfx, EGLNativeWindowType win);
-bool gfx_target_destroy(GfxTarget *target);
-bool gfx_target_init(GfxTarget *target);
-bool gfx_target_query_size(const GfxTarget *target, int *r_width, int *r_height);
-void gfx_target_resize(GfxTarget *target, uint width, uint height);
-GfxTarget *gfx_get_target(const Gfx *gfx);
-bool gfx_set_target(Gfx *gfx, GfxTarget *target);
-void gfx_target_post(const GfxTarget *target);
-void gfx_set_vsync(const Gfx *gfx, bool enable);
+Gfx *gfx_create_context(EGLNativeDisplayType dpy);
+void gfx_destroy_context(Gfx *gfx);
+EGLint gfx_get_native_visual(Gfx *gfx);
+bool gfx_bind_surface(Gfx *gfx, EGLNativeWindowType win);
+bool gfx_get_size(const Gfx *gfx, int *r_width, int *r_height);
+void gfx_resize(Gfx *gfx, uint width, uint height);
+void gfx_swap_buffers(const Gfx *gfx);
 void gfx_print_info(const Gfx *gfx);
 void gfx_set_debug_object(const void *obj);
+void gfx_set_vsync(const Gfx *gfx, bool enable);
 
 #endif
 

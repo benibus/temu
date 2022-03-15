@@ -28,7 +28,7 @@ set(SOURCES
     src/term_ring.c
     src/utf8.c
     src/utils.c
-    src/x11_platform.c
+    src/x11.c
 )
 
 add_executable(${BIN} ${SOURCES})

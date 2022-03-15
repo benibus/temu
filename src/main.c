@@ -21,7 +21,7 @@
 #include <unistd.h>
 
 #include "utils.h"
-#include "platform.h"
+#include "window.h"
 #include "events.h"
 #include "fonts.h"
 #include "term.h"
@@ -60,6 +60,7 @@ typedef struct {
     int height;
     int cell_width;
     int cell_height;
+    int border;
     int argc;
     const char **argv;
 } App;
@@ -77,7 +78,6 @@ static void setup(App *app, const AppPrefs *prefs);
 static void setup_preferences(App *app, const AppPrefs *restrict prefs);
 static void setup_fonts(App *app, float dpi);
 static void setup_window(App *app);
-static void setup_display(App *app);
 static void setup_terminal(App *app);
 static int run(App *app);
 static int run_frame(App *app, struct pollfd *pollset);
@@ -162,12 +162,11 @@ setup(App *app, const AppPrefs *prefs)
 
     if (!app->win) {
         err_printf("Failed to initialize window server\n");
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 
     setup_fonts(app, window_get_dpi(app->win));
     setup_window(app);
-    setup_display(app);
     setup_terminal(app);
 }
 
@@ -198,7 +197,7 @@ setup_fonts(App *app, float dpi)
 {
     if (!fontmgr_init(dpi)) {
         err_printf("Failed to initialize font manager\n");
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 
     char *fontpath = NULL;
@@ -216,7 +215,7 @@ setup_fonts(App *app, float dpi)
         app->fontset = fontmgr_create_fontset(app->prefs.font);
         if (!app->fontset) {
             err_printf("Failed to open fallback fonts. aborting...\n");
-            exit(EXIT_FAILURE);
+            exit(1);
         }
     }
 
@@ -225,7 +224,7 @@ setup_fonts(App *app, float dpi)
 
     if (!fontset_init(app->fontset)) {
         err_printf("Failed to initialize font cache\n");
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 
     dbg_printf("Font cache initialized\n");
@@ -237,34 +236,42 @@ setup_window(App *app)
     ASSERT(app);
     ASSERT(app->win);
 
-    const int width  = app->prefs.cols * app->cell_width;
-    const int height = app->prefs.rows * app->cell_height;
+    WinConfig cfg = {
+        .wm_name    = app->prefs.wm_name,
+        .wm_class   = app->prefs.wm_class,
+        .wm_title   = app->prefs.wm_title,
+        .width      = app->prefs.cols * app->cell_width,
+        .height     = app->prefs.rows * app->cell_height,
+        .inc_width  = app->cell_width,
+        .inc_height = app->cell_height,
+        .min_width  = app->cell_width + 2 * app->prefs.border,
+        .min_height = app->cell_height + 2 * app->prefs.border,
+    };
 
-    window_set_class_hints(app->win, app->prefs.wm_name, app->prefs.wm_class);
-    window_set_title(app->win, app->prefs.wm_title, strlen(app->prefs.wm_title));
-
-    window_set_size_hints(app->win, app->cell_width, app->cell_height, app->prefs.border);
-    if (!window_resize(app->win, width, height)) {
-        exit(EXIT_FAILURE);
+    if (!window_configure(app->win, cfg)) {
+        err_printf("Failed to configure window\n");
+        exit(1);
     }
-}
-
-void
-setup_display(App *app)
-{
-    if (!window_init(app->win)) {
-        err_printf("Failed to display window\n");
-        exit(EXIT_FAILURE);
+    if (!window_open(app->win, &app->width, &app->height)) {
+        err_printf("Failed to open window\n");
+        exit(1);
     }
 
-    app->width = window_width(app->win);
-    app->height = window_height(app->win);
-
-    dbg_printf("Window displayed: w=%d h=%d cw=%d ch=%d\n",
+    app->border = app->prefs.border;
+    if ((app->width - 2 * app->border) / app->cell_width <= 0 ||
+        (app->height - 2 * app->border) / app->cell_height <= 0)
+    {
+        err_printf("Insufficient initial window size: w=%d, h=%d\n",
+                   app->width,
+                   app->height);
+        exit(1);
+    }
+    dbg_printf("Window opened: w=%d h=%d cw=%d ch=%d b=%d\n",
                app->width,
                app->height,
                app->cell_width,
-               app->cell_height);
+               app->cell_height,
+               app->border);
 }
 
 void
@@ -272,7 +279,10 @@ setup_terminal(App *app)
 {
     Term *const term = term_create(app->prefs.histlines, app->prefs.tabcols);
 
-    term_set_display(term, app->fontset, app->width, app->height);
+    term_set_display(term,
+                     app->fontset,
+                     app->width - 2 * app->border,
+                     app->height - 2 * app->border);
 
     for (uint i = 0; i < LEN(app->prefs.colors); i++) {
         ASSERT(app->prefs.colors[i]);
@@ -280,7 +290,7 @@ setup_terminal(App *app)
 
         if (!window_query_color(app->win, app->prefs.colors[i], &color)) {
             err_printf("Failed to parse RGB string: %s\n", app->prefs.colors[i]);
-            exit(EXIT_FAILURE);
+            exit(1);
         }
 
         switch (i) {
@@ -301,11 +311,9 @@ run(App *app)
 {
     Term *term = app->term;
 
-    window_make_current(app->win);
-
-    if (!window_is_online(app->win)) {
+    if (!window_online(app->win)) {
         err_printf("Window is not online\n");
-        return EXIT_FAILURE;
+        return 1;
     }
 
     int result = 0;
@@ -318,7 +326,7 @@ run(App *app)
         dbg_printf("Terminal online: fd=%d\n", ptyfd);
     } else {
         err_printf("Failed to start terminal\n");
-        result = EXIT_FAILURE;
+        result = 1;
     }
 
     struct pollfd pollset[2] = {
@@ -326,7 +334,7 @@ run(App *app)
         { .fd = srvfd, .events = POLLIN, .revents = 0 }
     };
 
-    while (!result && window_is_online(app->win)) {
+    while (!result && window_online(app->win)) {
         result = run_frame(app, pollset);
     }
 
@@ -346,7 +354,7 @@ run_updates(App *app, struct pollfd *pollset, int timeout, int *r_error)
     const int res = poll(pollset, 2, timeout);
     if (res < 0) {
         err_printf("poll: %s\n", strerror(errno));
-        *r_error = DEFAULT(errno, EXIT_FAILURE); // paranoia
+        *r_error = errno;
     } else if ((pollset[0].revents|pollset[1].revents) & POLLHUP) {
         *r_error = ECHILD;
     } else {
@@ -391,7 +399,7 @@ run_frame(App *app, struct pollfd *pollset)
 
     if (need_draw) {
         term_draw(app->term);
-        window_update(app->win);
+        window_refresh(app->win);
     }
 
 done_frame:
@@ -414,20 +422,21 @@ on_event(void *arg, const WinEvent *event)
     case EVENT_KEYPRESS:
         on_keypress_event(app, &event->as_key);
         break;
+    default:
+        break;
     }
 }
 
 void
 on_resize_event(App *app, const WinGeomEvent *event)
 {
-    ASSERT(event->width > app->cell_width);
-    ASSERT(event->height > app->cell_height);
-
     if (event->width == app->width && event->height == app->height) {
         return;
     }
 
-    term_resize(app->term, event->width, event->height);
+    term_resize(app->term,
+                imax(0, event->width - 2 * app->border),
+                imax(0, event->height - 2 * app->border));
 
     app->width  = event->width;
     app->height = event->height;

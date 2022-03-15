@@ -20,13 +20,12 @@
 #include "gfx_context.h"
 #include "gfx_renderer.h"
 
-struct GfxTarget_ {
-    Gfx *gfx;
+typedef struct {
+    EGLSurface id;
     EGLNativeWindowType win;
-    EGLSurface surf;
-};
+} GfxSurface;
 
-struct Gfx_ {
+struct Gfx {
     bool online;
     EGLDisplay dpy;
     EGLContext ctx;
@@ -35,47 +34,29 @@ struct Gfx_ {
         EGLint major;
         EGLint minor;
     } ver;
-    GfxTarget *target;
+    GfxSurface surface;
 };
 
 static struct {
     Gfx gfx;
-    GfxTarget targets[1];
 } globals;
 
 Gfx *
-gfx_context_create(EGLNativeDisplayType dpy)
+gfx_create_context(EGLNativeDisplayType dpy)
 {
     Gfx *const gfx = &globals.gfx;
 
-    if (!gfx->online) {
-        if (!(gfx->dpy = eglGetDisplay(dpy))) {
-            return NULL;
-        } else if (!(eglInitialize(gfx->dpy, &gfx->ver.major, &gfx->ver.minor))) {
-            gfx->dpy = 0;
-            return NULL;
-        }
+    if (gfx->ctx) return gfx;
 
-        gfx->online = true;
+    if (!(gfx->dpy = eglGetDisplay(dpy))) {
+        return NULL;
+    } else if (!(eglInitialize(gfx->dpy, &gfx->ver.major, &gfx->ver.minor))) {
+        gfx->dpy = 0;
+        return NULL;
     }
 
-    return gfx;
-}
-
-void
-gfx_context_destroy(Gfx *gfx)
-{
-    ASSERT(gfx);
-
-    eglDestroyContext(gfx->dpy, gfx->ctx);
-    eglTerminate(gfx->dpy);
-    memset(gfx, 0, sizeof(*gfx));
-}
-
-bool
-gfx_context_init(Gfx *gfx)
-{
-    ASSERT(gfx);
+    gfx->surface.id  = EGL_NO_SURFACE;
+    gfx->surface.win = 0;
 
     eglBindAPI(EGL_OPENGL_ES_API);
 
@@ -92,21 +73,58 @@ gfx_context_init(Gfx *gfx)
         });
 
     if (!gfx->ctx) {
-        err_printf("Failed to open EGL context\n");
-        return false;
+        err_printf("eglCreateContext failed\n");
+        goto bail;
     }
 
     EGLint result = 0;
     eglQueryContext(gfx->dpy, gfx->ctx, EGL_CONTEXT_CLIENT_TYPE, &result);
     ASSERT(result == EGL_OPENGL_ES_API);
 
-    return true;
+    if (!eglMakeCurrent(gfx->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, gfx->ctx)) {
+        err_printf("eglMakeCurrent failed to bind context\n");
+        goto bail;
+    }
+    if (!gfx_renderer_init()) {
+        err_printf("Failed to initialize renderer\n");
+        goto bail;
+    }
+
+    return gfx;
+bail:
+    gfx_destroy_context(gfx);
+    return NULL;
+}
+
+void
+gfx_destroy_context(Gfx *gfx)
+{
+    if (!gfx || !gfx->dpy) {
+        return;
+    }
+
+    eglMakeCurrent(gfx->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+
+    if (gfx->surface.id != EGL_NO_SURFACE) {
+        eglDestroySurface(gfx->dpy, gfx->surface.id);
+    }
+
+    if (gfx->ctx) {
+        gfx_renderer_fini();
+        eglDestroyContext(gfx->dpy, gfx->ctx);
+    }
+
+    eglTerminate(gfx->dpy);
+
+    memset(gfx, 0, sizeof(*gfx));
 }
 
 EGLint
-gfx_get_visual_id(Gfx *gfx)
+gfx_get_native_visual(Gfx *gfx)
 {
-    ASSERT(gfx);
+    if (!gfx || !gfx->dpy) {
+        return 0;
+    }
 
     EGLint visid, count;
     static const EGLint attrs[] = {
@@ -130,39 +148,43 @@ gfx_get_visual_id(Gfx *gfx)
     return visid;
 }
 
-GfxTarget *
-gfx_target_create(Gfx *gfx, EGLNativeWindowType win)
-{
-    ASSERT(gfx);
-
-    GfxTarget *target = &globals.targets[0];
-    ASSERT(!target->gfx);
-
-    target->surf = eglCreateWindowSurface(gfx->dpy, gfx->cfg, win, NULL);
-
-    if (!target->surf) {
-        return NULL;
-    }
-
-    target->gfx = gfx;
-    target->win = win;
-
-    if (!gfx_target_query_size(target, NULL, NULL)) {
-        eglDestroySurface(gfx->dpy, target->surf);
-        memset(target, 0, sizeof(*target));
-        return NULL;
-    }
-
-    return target;
-}
-
 bool
-gfx_target_init(GfxTarget *target)
+gfx_bind_surface(Gfx *gfx, EGLNativeWindowType win)
 {
-    ASSERT(target);
-    ASSERT(target->gfx);
+    if (!gfx || !gfx->dpy || !gfx->ctx) {
+        return false;
+    }
 
-    if (!gfx_renderer_init()) {
+    GfxSurface *const surface = &gfx->surface;
+
+    if (win == surface->win) {
+        return true;
+    }
+
+    if (surface->win) {
+        ASSERT(surface->id != EGL_NO_SURFACE);
+        eglDestroySurface(gfx->dpy, surface->id);
+        surface->id = EGL_NO_SURFACE;
+        surface->win = 0;
+    }
+
+    if (win) {
+        ASSERT(gfx->cfg);
+        surface->id = eglCreateWindowSurface(gfx->dpy, gfx->cfg, win, NULL);
+        if (surface->id == EGL_NO_SURFACE) {
+            err_printf("eglCreateWindowSurface failed\n");
+            return false;
+        }
+        surface->win = win;
+    }
+
+    if (!eglMakeCurrent(gfx->dpy, surface->id, surface->id, gfx->ctx)) {
+        err_printf("eglMakeCurrent failed\n");
+        if (surface->id != EGL_NO_SURFACE) {
+            eglDestroySurface(gfx->dpy, surface->id);
+        }
+        surface->id = EGL_NO_SURFACE;
+        surface->win = 0;
         return false;
     }
 
@@ -170,40 +192,15 @@ gfx_target_init(GfxTarget *target)
 }
 
 bool
-gfx_target_destroy(GfxTarget *target)
+gfx_get_size(const Gfx *gfx, int *r_width, int *r_height)
 {
-    ASSERT(target);
-    ASSERT(target->gfx);
-
-    Gfx *const gfx = target->gfx;
-
-    eglDestroySurface(gfx->dpy, target->surf);
-
-    if (!gfx_set_target(gfx, NULL)) {
+    if (!gfx || gfx->surface.id == EGL_NO_SURFACE) {
         return false;
     }
-    if (gfx->target == target) {
-        gfx->target = NULL;
-    }
-
-    gfx_renderer_fini();
-
-    memset(target, 0, sizeof(*target));
-
-    return true;
-}
-
-bool
-gfx_target_query_size(const GfxTarget *target, int *r_width, int *r_height)
-{
-    ASSERT(target);
-    ASSERT(target->gfx);
-
-    const Gfx *const gfx = target->gfx;
 
     int width, height;
-    if (!eglQuerySurface(gfx->dpy, target->surf, EGL_WIDTH, &width) ||
-        !eglQuerySurface(gfx->dpy, target->surf, EGL_HEIGHT, &height))
+    if (!eglQuerySurface(gfx->dpy, gfx->surface.id, EGL_WIDTH, &width) ||
+        !eglQuerySurface(gfx->dpy, gfx->surface.id, EGL_HEIGHT, &height))
     {
         return false;
     }
@@ -215,58 +212,33 @@ gfx_target_query_size(const GfxTarget *target, int *r_width, int *r_height)
 }
 
 void
-gfx_target_resize(GfxTarget *target, uint width, uint height)
+gfx_resize(Gfx *gfx, uint width, uint height)
 {
-    ASSERT(target);
-    ASSERT(target->gfx);
-
-    gfx_renderer_resize(width, height);
-}
-
-GfxTarget *
-gfx_get_target(const Gfx *gfx)
-{
-    ASSERT(gfx);
-
-    return gfx->target;
-}
-
-bool
-gfx_set_target(Gfx *gfx, GfxTarget *target)
-{
-    ASSERT(gfx);
-
-    if (!eglMakeCurrent(gfx->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT)) {
-        return false;
+    if (gfx && gfx->ctx) {
+        gfx_renderer_resize(width, height);
     }
-    if (target && target->surf != EGL_NO_SURFACE &&
-        !eglMakeCurrent(gfx->dpy, target->surf, target->surf, gfx->ctx))
-    {
-        return false;
-    }
-
-    gfx->target = target;
-
-    return true;
 }
 
 void
 gfx_set_vsync(const Gfx *gfx, bool enable)
 {
-    ASSERT(gfx);
-
-    eglSwapInterval(gfx->dpy, (enable) ? 1 : 0);
+    if (gfx && gfx->dpy) {
+        eglSwapInterval(gfx->dpy, (enable) ? 1 : 0);
+    }
 }
 
 void
-gfx_target_post(const GfxTarget *target)
+gfx_swap_buffers(const Gfx *gfx)
 {
-    ASSERT(target);
-    ASSERT(target->gfx);
+    if (gfx && gfx->surface.id) {
+        eglSwapBuffers(gfx->dpy, gfx->surface.id);
+    }
+}
 
-    const Gfx *const gfx = target->gfx;
-
-    eglSwapBuffers(gfx->dpy, target->surf);
+void
+gfx_set_debug_object(const void *obj)
+{
+    gl_set_debug_object(obj);
 }
 
 void
@@ -291,11 +263,5 @@ gfx_print_info(const Gfx *gfx)
         glGetString(GL_RENDERER),
         glGetString(GL_SHADING_LANGUAGE_VERSION)
     );
-}
-
-void
-gfx_set_debug_object(const void *obj)
-{
-    gl_set_debug_object(obj);
 }
 

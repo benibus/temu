@@ -19,7 +19,7 @@
 #define EVENTS_H__
 
 #include "common.h"
-#include "platform.h"
+#include "window.h"
 
 enum {
     EVENT_NONE,

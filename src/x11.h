@@ -15,12 +15,12 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  *------------------------------------------------------------------------------*/
 
-#ifndef X11_PLATFORM_H__
-#define X11_PLATFORM_H__
+#ifndef X11_H__
+#define X11_H__
 
 #include "common.h"
 #include "gfx_context.h"
-#include "platform.h"
+#include "window.h"
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -28,24 +28,25 @@
 #include <X11/XF86keysym.h>
 #include <X11/Xatom.h>
 
-typedef struct Server_ Server;
+typedef struct Server Server;
 
-struct Win_ {
+struct Win {
     Server *srv;
     Window xid;
     XIC ic;
     GC gc;
-    GfxTarget *target;
     bool online;
+    bool mapped;
+    bool visible;
     int pid;
-    int xpos;
-    int ypos;
+    int x;
+    int y;
     int width;
     int height;
     int border;
 };
 
-struct Server_ {
+struct Server {
     Display *dpy;
     int screen;
     Window root;
