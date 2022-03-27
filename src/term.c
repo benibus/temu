@@ -23,6 +23,7 @@
 #include "term_parser.h"
 #include "term_ring.h"
 #include "gfx_draw.h"
+#include "app.h"
 
 #include <unistd.h> // for isatty()
 
@@ -59,17 +60,6 @@ static void set_cursor_col(Term *, int);
 static void set_cursor_row(Term *, int);
 static void set_cursor_visibility(Term *, bool);
 static void set_cursor_style(Term *, int);
-
-#define XCALLBACK_(M,T) \
-void term_callback_##M(Term *term, void *param, TermFunc##T *func) { \
-    ASSERT(term);                                                    \
-    term->callbacks.M.param = DEFAULT(param, term);                  \
-    term->callbacks.M.func  = func;                                  \
-}
-XCALLBACK_(settitle, SetTitle)
-XCALLBACK_(seticon,  SetIcon)
-XCALLBACK_(setprop,  SetProp)
-#undef XCALLBACK_
 
 static void alloc_frame(Frame *, uint16, uint16);
 static void alloc_tabstops(uint8 **, uint16, uint16, uint16);
@@ -838,26 +828,23 @@ FUNCDEFN(OSC)
      */
     UNUSED(argc);
 
-    const TermCallbacks cb = term->callbacks;
+    uint8 props = 0;
 
     switch (argv[0]) {
     case 0:
     case 1:
-        if (cb.seticon.func) {
-            cb.seticon.func(cb.seticon.param, data, arr_count(data));
-        }
-        if (argv[0] != 0) break;
+        props |= APPPROP_ICON;
+        if (argv[0]) break;
         // fallthrough
     case 2:
-        if (cb.settitle.func) {
-            cb.settitle.func(cb.settitle.param, data, arr_count(data));
-        }
+        props |= APPPROP_TITLE;
         break;
     case 3:
-        if (cb.setprop.func) {
-            cb.setprop.func(cb.setprop.param, data, arr_count(data));
-        }
         break;
+    }
+
+    if (props) {
+        app_set_properties(0, props, data, arr_count(data));
     }
 
     return;

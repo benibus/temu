@@ -25,6 +25,7 @@
 #include "events.h"
 #include "fonts.h"
 #include "term.h"
+#include "app.h"
 
 enum {
     MAX_CFG_COLORS = 2 + 16,
@@ -51,7 +52,7 @@ typedef struct {
 // NOTE: must include *after* definitions
 #include "config.h"
 
-typedef struct {
+struct App {
     AppPrefs prefs;
     Win *win;
     Term *term;
@@ -63,12 +64,9 @@ typedef struct {
     int border;
     int argc;
     const char **argv;
-} App;
+};
 
 static App app_;
-
-static TermFuncSetTitle on_osc_set_title;
-static TermFuncSetIcon on_osc_set_icon;
 
 static WinEventHandler on_event;
 static void on_resize_event(App *app, const WinGeomEvent *event);
@@ -300,9 +298,6 @@ setup_terminal(App *app)
         }
     }
 
-    term_callback_settitle(term, app, &on_osc_set_title);
-    term_callback_seticon(term, app, &on_osc_set_icon);
-
     app->term = term;
 }
 
@@ -479,28 +474,23 @@ on_keypress_event(App *app, const WinKeyEvent *event)
 }
 
 void
-on_osc_set_title(void *param, const char *str, size_t len)
+app_set_properties(App *app, uint8 props, const char *str, size_t len)
 {
-    const App *app = param;
-    ASSERT(app == &app_);
+    app = DEFAULT(app, &app_);
 
-    if (str && len) {
-        window_set_title(app->win, str, len);
-    } else {
-        window_set_title(app->win, app->prefs.wm_title, strlen(app->prefs.wm_title));
+    if (len >= INT_MAX) return;
+
+    dbg_printf("props=0x%01x str=\"%.*s\"\n", props, (int)len, str);
+
+    if (strempty(str) || !len) {
+        str = app->prefs.wm_title;
+        len = strlen(str);
     }
-}
-
-void
-on_osc_set_icon(void *param, const char *str, size_t len)
-{
-    const App *app = param;
-    ASSERT(app == &app_);
-
-    if (str && len) {
+    if (props & APPPROP_ICON) {
         window_set_icon(app->win, str, len);
-    } else {
-        window_set_icon(app->win, app->prefs.wm_title, strlen(app->prefs.wm_title));
+    }
+    if (props & APPPROP_TITLE) {
+        window_set_title(app->win, str, len);
     }
 }
 

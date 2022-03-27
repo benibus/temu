@@ -28,19 +28,8 @@ static_assert(FontStyleBold == ATTR_BOLD, "Bitmask mismatch.");
 static_assert(FontStyleItalic == ATTR_ITALIC, "Bitmask mismatch.");
 static_assert(FontStyleBoldItalic == (ATTR_BOLD|ATTR_ITALIC), "Bitmask mismatch.");
 
-typedef struct TermCallbacks_ TermCallbacks;
 typedef struct TermColors_ TermColors;
 typedef struct TermParser_ TermParser;
-
-typedef struct { void *param; TermFuncSetTitle *func; } TermCallbackSetTitle;
-typedef struct { void *param; TermFuncSetIcon  *func; } TermCallbackSetIcon;
-typedef struct { void *param; TermFuncSetProp  *func; } TermCallbackSetProp;
-
-struct TermCallbacks_ {
-    TermCallbackSetTitle settitle;
-    TermCallbackSetIcon  seticon;
-    TermCallbackSetProp  setprop;
-};
 
 struct TermColors_ {
     union {
@@ -100,8 +89,6 @@ struct Term_ {
     TermColors colors;
 
     TermParser parser;
-
-    TermCallbacks callbacks;
 };
 
 #endif

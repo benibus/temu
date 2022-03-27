@@ -23,10 +23,6 @@
 
 typedef struct Term_ Term;
 
-typedef void TermFuncSetTitle(void *, const char *, size_t);
-typedef void TermFuncSetIcon(void *, const char *, size_t);
-typedef void TermFuncSetProp(void *, const char *, size_t);
-
 Term *term_create(uint16 histlines, uint8 tabcols);
 void term_destroy(Term *term);
 void term_resize(Term *term, uint width, uint height);
@@ -45,9 +41,6 @@ void term_set_foreground_color(Term *term, uint32 color);
 void term_set_base16_color(Term *term, uint8 idx, uint32 color);
 void term_set_base256_color(Term *term, uint8 idx, uint32 color);
 void term_set_display(Term *term, FontSet *fonts, uint width, uint height);
-void term_callback_settitle(Term *term, void *param, TermFuncSetTitle *func);
-void term_callback_seticon(Term *term, void *param, TermFuncSetIcon *func);
-void term_callback_setprop(Term *term, void *param, TermFuncSetProp *func);
 void term_print_history(const Term *);
 void term_print_stream(const Term *);
 
