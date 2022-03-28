@@ -15,29 +15,13 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  *------------------------------------------------------------------------------*/
 
-#ifndef TERM_H__
-#define TERM_H__
+#ifndef INIT_H__
+#define INIT_H__
 
 #include "common.h"
-#include "fonts.h"
-#include "app.h"
+#include "options.h"
 
-typedef struct Term Term;
-
-Term *term_create(App *app);
-void term_destroy(Term *term);
-void term_resize(Term *term, uint width, uint height);
-int term_exec(Term *term, const char *shell, int argc, const char *const *argv);
-void term_draw(Term *term);
-size_t term_pull(Term *term);
-size_t term_push(Term *term, const void *data, size_t len);
-size_t term_push_input(Term *term, uint key, uint mod, const uchar *text, size_t len);
-void term_scroll(Term *term, int lines);
-void term_reset_scroll(Term *term);
-int term_cols(const Term *term);
-int term_rows(const Term *term);
-void term_print_history(const Term *);
-void term_print_stream(const Term *);
+int app_main(const Options *opts);
 
 #endif
 

@@ -23,7 +23,6 @@
 #include "term_parser.h"
 #include "term_ring.h"
 #include "gfx_draw.h"
-#include "app.h"
 
 #include <unistd.h> // for isatty()
 
@@ -63,8 +62,7 @@ static void set_cursor_style(Term *, int);
 
 static void alloc_frame(Frame *, uint16, uint16);
 static void alloc_tabstops(uint8 **, uint16, uint16, uint16);
-static void init_color_table(Term *);
-static void init_parser(Term *);
+static void init_palette(Palette *);
 static void update_dimensions(Term *, uint16, uint16);
 
 #define FUNCPROTO(x) void x(Term *term, const char *data, const int *argv, int argc)
@@ -111,62 +109,68 @@ static const DispatchFunc func_table[NumOpcodes] = {
 };
 
 Term *
-term_create(uint16 histlines, uint8 tabcols)
+term_create(App *app)
 {
     Term *term = xcalloc(1, sizeof(*term));
 
-    term->histlines = round_pow2(DEFAULT(histlines, 1024));
-    term->tabcols = DEFAULT(tabcols, 8);
-    init_color_table(term);
+    // Query known metrics/settings/resources from application
+    term->fonts   = app_fonts(app);
+    term->tabcols = app_tabcols(app);
+    term->colpx   = app_font_width(app);
+    term->rowpx   = app_font_height(app);
+    term->width   = app_width(app);
+    term->height  = app_height(app);
+    term->border  = app_border(app);
+    ASSERT(term->colpx > 0 && term->rowpx > 0);
 
-    return term;
-}
+    // Compute initial cols/rows and scrollback length
+    term->cols = imax(0, term->width - 2 * term->border) / term->colpx;
+    term->rows = imax(0, term->height - 2 * term->border) / term->rowpx;
+    term->histlines = round_pow2(imax(term->rows, app_histlines(app)));
 
-void
-term_set_display(Term *term, FontSet *fonts, uint width, uint height)
-{
-    // Sanity checks, since we can only be half-initialized by this point
-    ASSERT(term);
-    ASSERT(!term->ring);
-    ASSERT(term->histlines);
-    ASSERT(term->tabcols);
-    ASSERT(fonts);
-    ASSERT(width);
-    ASSERT(height);
+    // Initialize colors
+    init_palette(&term->colors);
+    app_get_palette(app, &term->colors);
 
-    // Query the nominal cell resolution. This was already done by the caller to set the
-    // initial window size, but we're doing it again here since we're going to start using
-    // the primary font API within the terminal anyway
-    fontset_get_metrics(fonts, &term->colpx, &term->rowpx, NULL, NULL);
+    // Default starting cell
+    term->cell.width = 1;
+    term->cell.bg    = term->colors.bg;
+    term->cell.fg    = term->colors.fg;
+    term->cell.attrs = 0;
 
-    ASSERT(term->rowpx > 0);
-    ASSERT(term->colpx > 0);
-
-    term->fonts = fonts;
-    term->cols = (int)width / term->colpx;
-    term->rows = (int)height / term->rowpx;
-
-    if (term->rows > term->histlines) {
-        term->histlines = round_pow2(term->rows);
-    }
-
+    // Allocate buffers, set target ring to default
     term->rings[0] = ring_create(term->histlines, term->cols, term->rows);
     term->rings[1] = ring_create(term->rows, term->cols, term->rows);
     term->ring = term->rings[0];
 
     alloc_frame(&term->frame, term->cols, term->rows);
     alloc_tabstops(&term->tabstops, 0, term->cols, term->tabcols);
-
     update_dimensions(term, term->cols, term->rows);
+
+    // Done
+    term->app = app;
+
+    dbg_printf("Terminal created: x=%d y=%d tx=%d w=%d h=%d cw=%d ch=%d b=%d l=%d\n",
+               term->cols,
+               term->rows,
+               term->tabcols,
+               term->width,
+               term->height,
+               term->colpx,
+               term->rowpx,
+               term->border,
+               term->histlines);
+
+    return term;
 }
 
 void
-init_color_table(Term *term)
+init_palette(Palette *palette)
 {
-    ASSERT(term);
-    static_assert(LEN(term->colors.base256) == 256, "Invalid color table size");
+    static_assert(LEN(palette->base256) == 256, "Invalid color table size");
+    ASSERT(palette);
 
-    memset(term->colors.base256, 0, sizeof(term->colors.base256));
+    memset(palette->base256, 0, sizeof(palette->base256));
 
     // Default standard colors (0-15)
     static const uint32 base16[16] = {
@@ -174,7 +178,7 @@ init_color_table(Term *term)
         0x808080, 0xff0000, 0x00ff00, 0xffff00, 0x0000ff, 0xff00ff, 0x00ffff, 0xffffff
     };
 
-    uint32 *const table = term->colors.base256;
+    uint32 *const table = palette->base256;
 
     for (uint i = 0; i < 256; i++) {
         if (i < 16) {
@@ -194,64 +198,8 @@ init_color_table(Term *term)
         }
     }
 
-    term->colors.bg = table[0];
-    term->colors.fg = table[7];
-}
-
-void
-term_set_background_color(Term *term, uint32 color)
-{
-    ASSERT(term);
-
-    term->colors.bg = (color & 0xffffff);
-}
-
-void
-term_set_foreground_color(Term *term, uint32 color)
-{
-    ASSERT(term);
-
-    term->colors.fg = (color & 0xffffff);
-}
-
-void
-term_set_default_colors(Term *term, uint32 bg_color, uint32 fg_color)
-{
-    ASSERT(term);
-
-    term_set_background_color(term, bg_color);
-    term_set_foreground_color(term, fg_color);
-}
-
-void
-term_set_base16_color(Term *term, uint8 idx, uint32 color)
-{
-    ASSERT(term);
-    ASSERT(idx < 16);
-
-    term_set_base256_color(term, (idx & 0xf), color);
-}
-
-void
-term_set_base256_color(Term *term, uint8 idx, uint32 color)
-{
-    ASSERT(term);
-
-    term->colors.base256[idx] = (color & 0xffffff);
-}
-
-void
-init_parser(Term *term)
-{
-    ASSERT(term);
-
-    // Default cell
-    term->cell.width = 1;
-    term->cell.bg = term->colors.bg;
-    term->cell.fg = term->colors.fg;
-    term->cell.attrs = 0;
-
-    parser_init(&term->parser);
+    palette->bg = table[0];
+    palette->fg = table[7];
 }
 
 void
@@ -281,7 +229,7 @@ term_exec(Term *term, const char *shell, int argc, const char *const *argv)
     ASSERT(term);
 
     if (!term->pid) {
-        init_parser(term);
+        parser_init(&term->parser);
         term->pid = pty_init(shell, &term->mfd, &term->sfd);
         pty_resize(term->mfd, term->cols, term->rows, term->colpx, term->rowpx);
     }
@@ -354,10 +302,8 @@ term_pull(Term *term)
 void
 term_scroll(Term *term, int delta)
 {
-    /*
-     * (delta < 0): scroll back in history
-     * (delta > 0): scroll forward in history
-     */
+    // (delta < 0): scroll back in history
+    // (delta > 0): scroll forward in history
     ring_adjust_scroll(term->ring, -delta);
 }
 

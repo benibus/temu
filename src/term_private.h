@@ -28,19 +28,9 @@ static_assert(FontStyleBold == ATTR_BOLD, "Bitmask mismatch.");
 static_assert(FontStyleItalic == ATTR_ITALIC, "Bitmask mismatch.");
 static_assert(FontStyleBoldItalic == (ATTR_BOLD|ATTR_ITALIC), "Bitmask mismatch.");
 
-typedef struct TermColors_ TermColors;
-typedef struct TermParser_ TermParser;
+typedef struct TermParser TermParser;
 
-struct TermColors_ {
-    union {
-        uint32 base16[16];
-        uint32 base256[256];
-    };
-    uint32 bg;
-    uint32 fg;
-};
-
-struct TermParser_ {
+struct TermParser {
     uint state;       // Current FSM state
     uchar *data;      // Dynamic buffer for OSC/DCS/APC string sequences
     int argv[16];     // Numeric parameters
@@ -51,7 +41,9 @@ struct TermParser_ {
 
 #define IOBUF_MAX (4096)
 
-struct Term_ {
+struct Term {
+    App *app; // Global application handle
+
     int pid; // PTY PID
     int mfd; // PTY master file descriptor
     int sfd; // PTY slave file descriptor
@@ -69,6 +61,9 @@ struct Term_ {
     int rows;      // Current screen rows
     int max_cols;  // Maximum prior screen columns
     int max_rows;  // Maximum prior screen rows
+    int width;
+    int height;
+    int border;
     int colpx;     // Horizontal cell size in pixels
     int rowpx;     // Vertical cell size in pixels
     int histlines; // Maximum lines in scrollback history
@@ -86,7 +81,7 @@ struct Term_ {
     uint32 crs_color;
     CursorDesc saved_crs;
 
-    TermColors colors;
+    Palette colors;
 
     TermParser parser;
 };
