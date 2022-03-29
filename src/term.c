@@ -654,13 +654,13 @@ set_active_fg(Term *term, uint8 idx)
 void
 set_active_bg_rgb(Term *term, uint8 r, uint8 g, uint8 b)
 {
-    term->cell.bg = pack_argb(r, g, b, 0xff);
+    term->cell.bg = PACK_4x8(0xff, r, g, b);
 }
 
 void
 set_active_fg_rgb(Term *term, uint8 r, uint8 g, uint8 b)
 {
-    term->cell.fg = pack_argb(r, g, b, 0xff);
+    term->cell.fg = PACK_4x8(0xff, r, g, b);
 }
 
 void

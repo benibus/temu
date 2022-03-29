@@ -106,15 +106,16 @@ typedef uint64_t uint64;
 #define IS_POW2(n)      ((n) > 0 && ((n) & ((n) - 1)) == 0)
 #define ALIGN_DOWN(n,a) ((n) & ~((a) - 1))
 #define ALIGN_UP(n,a)   (((n) + ((a) - 1)) & ~((a) - 1))
+#define BITMASK(n)      ((1ULL << (n)) - 1)
 
-// TODO(ben): Move these
-#define pack_rgb(r,g,b)    ((((r)&0xff)<<16)|(((g)&0xff)<<8)|((b)&0xff))
-#define pack_bgr(r,g,b)    ((((b)&0xff)<<16)|(((g)&0xff)<<8)|((r)&0xff))
-#define pack_rgba(r,g,b,a) ((((r)&0xff)<<24)|(((g)&0xff)<<16)|(((b)&0xff)<<8)|((a)&0xff))
-#define pack_argb(r,g,b,a) ((((a)&0xff)<<24)|(((r)&0xff)<<16)|(((g)&0xff)<<8)|((b)&0xff))
-#define pack_abgr(r,g,b,a) ((((a)&0xff)<<24)|(((b)&0xff)<<16)|(((g)&0xff)<<8)|((r)&0xff))
-#define pack_rgbx(rgb,a)   ((((rgb)&0x00ffffff)<<8)|((a)&0xff))
-#define pack_xrgb(rgb,a)   (((rgb)&0x00ffffff)|(((a)&0xff)<<24))
+#define PACK_4xN(n,a,b,c,d) \
+    (                                       \
+        (((a) & BITMASK(n)) << ((n) * 3)) | \
+        (((b) & BITMASK(n)) << ((n) * 2)) | \
+        (((c) & BITMASK(n)) << ((n) * 1)) | \
+        (((d) & BITMASK(n)) << ((n) * 0))   \
+    )
+#define PACK_4x8(a,b,c,d) PACK_4xN(8, a, b, c, d)
 
 #endif
 

@@ -316,12 +316,10 @@ window_query_color(const Win *win, const char *name, uint32 *color)
     }
 
     if (color) {
-        *color = pack_argb(
-            xcolor.red   >> 8,
-            xcolor.green >> 8,
-            xcolor.blue  >> 8,
-            0x00
-        );
+        *color = PACK_4x8(0x00,
+                          xcolor.red   >> 8,
+                          xcolor.green >> 8,
+                          xcolor.blue  >> 8);
     }
 
     return true;

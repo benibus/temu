@@ -70,14 +70,11 @@ int err_fprintf(FILE *restrict fp, const char *restrict fmt, ...)
 #define dbg_printf(...)
 #endif
 
-extern void
-assert_fail(const char *file,
-            uint line,
-            const char *func,
-            const char *expr);
+void assert_fail(const char *file, uint line, const char *func, const char *expr);
 
 #if BUILD_DEBUG
-#define ASSERT(expr) (!(expr) ? (assert_fail(TRACEPRINTF_ARGS, #expr), raise(SIGTRAP)) : 0)
+#define ASSERT(expr) \
+    (!(expr) ? (void)(assert_fail(TRACEPRINTF_ARGS, #expr), raise(SIGTRAP)) : (void)0)
 #else
 #define ASSERT(expr)
 #endif
