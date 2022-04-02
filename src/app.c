@@ -23,6 +23,7 @@
 #include "events.h"
 #include "fonts.h"
 #include "term.h"
+#include "color.h"
 #include "options.h"
 #include "app.h"
 
@@ -37,7 +38,7 @@ enum {
 
 static const struct {
     Options opts;
-    const char *colors[2+16];
+    const char *colors[NUM_COLORS];
 } defaults = {
     .opts = {
         .wm_class  = "Temu",
@@ -54,26 +55,25 @@ static const struct {
         .histlines = 128,
     },
     .colors = {
-        "#1b1c1e", // Background
-        "#a5a8a6", // Foreground
+        [BLACK]    = "#34373c",
+        [RED]      = "#b25449",
+        [GREEN]    = "#698754",
+        [YELLOW]   = "#d88e61",
+        [BLUE]     = "#547991",
+        [MAGENTA]  = "#887190",
+        [CYAN]     = "#578d85",
+        [WHITE]    = "#8e929b",
+        [LBLACK]   = "#56575f",
+        [LRED]     = "#cb695c",
+        [LGREEN]   = "#749c61",
+        [LYELLOW]  = "#e3ac72",
+        [LBLUE]    = "#6494af",
+        [LMAGENTA] = "#a085a6",
+        [LCYAN]    = "#6aa9a5",
+        [LWHITE]   = "#c5c8c6",
 
-        "#34373c", // Black
-        "#b25449", // Red
-        "#698754", // Green
-        "#d88e61", // Yellow
-        "#547991", // Blue
-        "#887190", // Magenta
-        "#578d85", // Cyan
-        "#8e929b", // White
-
-        "#56575f", // Bright Black
-        "#cb695c", // Bright Red
-        "#749c61", // Bright Green
-        "#e3ac72", // Bright Yellow
-        "#6494af", // Bright Blue
-        "#a085a6", // Bright Magenta
-        "#6aa9a5", // Bright Cyan
-        "#c5c8c6", // Bright White
+        [BACKGROUND] = "#1b1c1e",
+        [FOREGROUND] = "#a5a8a6",
     },
 };
 
@@ -167,23 +167,17 @@ setup(App *app)
 
     app->dpi = window_get_dpi(app->win);
 
+    // Set palette default values
+    palette_init(&app->palette, false);
     // Translate color strings to integer palette (Requires a server connection)
     for (uint i = 0; i < LEN(defaults.colors); i++) {
         const char *const str = defaults.colors[i];
-        ASSERT(str);
-
-        uint32 color;
-        if (!window_query_color(app->win, str, &color)) {
+        if (strempty(str)) {
+            continue;
+        }
+        if (!window_query_color(app->win, str, &app->palette.table[i])) {
             err_printf("Failed to parse color string: \"%s\"\n", str);
             exit(1);
-        }
-
-        switch (i) {
-        case 0: app->palette.bg = color; break;
-        case 1: app->palette.fg = color; break;
-        default:
-            app->palette.base16[i-2] = color;
-            break;
         }
     }
 
@@ -476,6 +470,7 @@ int app_font_height(const App *app) { return (app) ? app->cheight : 0; }
 int app_border(const App *app) { return (app) ? app->opts.border : 0; }
 int app_histlines(const App *app) { return (app) ? app->opts.histlines : 0; }
 int app_tabcols(const App *app) { return (app) ? app->opts.tabcols : 0; }
+Palette *app_palette(App *app) { return (app) ? &app->palette : NULL; }
 
 void
 app_get_dimensions(const App *app, int *r_width, int *r_height, int *r_border)
@@ -500,17 +495,6 @@ app_get_font_metrics(const App *app,
         SETPTR(r_ascent, (app) ? app->ascent : 0);
         SETPTR(r_descent, (app) ? app->descent : 0);
     }
-}
-
-void
-app_get_palette(const App *app, Palette *palette)
-{
-    if (!app || !palette) return;
-
-    static_assert(LEN(palette->base16) == 16);
-    palette->bg = app->palette.bg;
-    palette->fg = app->palette.fg;
-    memcpy(palette->base16, app->palette.base16, sizeof(palette->base16));
 }
 
 void

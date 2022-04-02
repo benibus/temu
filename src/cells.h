@@ -19,6 +19,7 @@
 #define CELLS_H__
 
 #include "common.h"
+#include "color.h"
 
 #define ATTR_NONE      (0)
 #define ATTR_BOLD      (1 << 0)
@@ -42,8 +43,8 @@ typedef enum {
 
 typedef struct {
     uint32 ucs4;
-    uint32 bg;
-    uint32 fg;
+    Color bg;
+    Color fg;
     CellType type:8;
     uint8 width;
     uint16 attrs;
@@ -66,12 +67,11 @@ typedef struct {
 
 typedef struct {
     Cell *cells;
+    const Palette *palette;
     int cols, rows;
     int width, height;
     CursorDesc cursor;
     uint32 time;
-    uint32 default_bg;
-    uint32 default_fg;
 } Frame;
 
 #endif

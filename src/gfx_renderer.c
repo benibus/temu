@@ -221,6 +221,7 @@ draw_quads(const GfxQuad *quads, int count)
  * Glyph texture querying is also a mess - but that's part of a more complicated
  * architectural problem
  */
+#include <ctype.h>
 void
 gfx_draw_frame(const Frame *frame, FontSet *fontset)
 {
@@ -263,19 +264,21 @@ gfx_draw_frame(const Frame *frame, FontSet *fontset)
                 cell.ucs4
             );
 
-            /* FIXME(ben):
-             * Screen coords arent't normalized but texture coords are. Pretty weird
-             */
+            // FIXME(ben):
+            // Screen coords arent't normalized but texture coords are. Pretty weird
             quads[idx].dst = VEC4F(bx + col * dx, by + row * dy, dx, dy);
             quads[idx].src = VEC4F(tex.u, tex.v, tex.w, tex.h);
             quads[idx].tex = tex.id;
 
+            const uint32 bg = palette_query_color(frame->palette, cell.bg);
+            const uint32 fg = palette_query_color(frame->palette, cell.fg);
+
             if (cell.attrs & ATTR_INVERT) {
-                quads[idx].bg = unpack_argb(cell.fg);
-                quads[idx].fg = unpack_argb(cell.bg);
+                quads[idx].bg = unpack_argb(fg);
+                quads[idx].fg = unpack_argb(bg);
             } else {
-                quads[idx].bg = unpack_argb(cell.bg);
-                quads[idx].fg = unpack_argb(cell.fg);
+                quads[idx].bg = unpack_argb(bg);
+                quads[idx].fg = unpack_argb(fg);
             }
         }
 
@@ -295,8 +298,8 @@ gfx_draw_frame(const Frame *frame, FontSet *fontset)
             }
 
             // Always the same colors
-            quad->bg = unpack_argb(frame->default_fg);
-            quad->fg = unpack_argb(frame->default_bg);
+            quad->bg = unpack_argb(frame->palette->fg);
+            quad->fg = unpack_argb(frame->palette->bg);
         }
     }
 

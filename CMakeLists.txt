@@ -15,6 +15,7 @@ endif()
 set(BIN ${PROJECT_NAME})
 set(SOURCES
     src/app.c
+    src/color.c
     src/fonts.c
     src/gfx_context.c
     src/gfx_renderer.c

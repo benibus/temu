@@ -26,26 +26,25 @@
 
 #include <unistd.h> // for isatty()
 
-#define CELLINIT(t)              \
-    (Cell){                      \
-        .ucs4  = ' ',            \
-        .bg    = (t)->colors.bg, \
-        .fg    = (t)->colors.fg, \
-        .type  = CellTypeNormal, \
-        .width = 1,              \
-        .attrs = 0               \
+#define CELLINIT(t)                          \
+    (Cell){                                  \
+        .ucs4  = ' ',                        \
+        .bg    = color_from_key(BACKGROUND), \
+        .fg    = color_from_key(FOREGROUND), \
+        .type  = CellTypeNormal,             \
+        .width = 1,                          \
+        .attrs = 0                           \
     }
 
 static uint cellslen(const Cell *, int);
 
-// TODO(ben): Fix naming, move to internal header
 static size_t consume(Term *term, const uchar *data, size_t len);
 static void write_codepoint(Term *term, uint32 ucs4);
 static void write_printable(Term *, uint32, CellType);
 static void write_tab(Term *);
 static void write_newline(Term *);
-static void set_active_bg(Term *, uint8);
-static void set_active_fg(Term *, uint8);
+static void set_active_bg(Term *, uint16);
+static void set_active_fg(Term *, uint16);
 static void set_active_bg_rgb(Term *, uint8, uint8, uint8);
 static void set_active_fg_rgb(Term *, uint8, uint8, uint8);
 static void reset_active_bg(Term *);
@@ -62,7 +61,6 @@ static void set_cursor_style(Term *, int);
 
 static void alloc_frame(Frame *, uint16, uint16);
 static void alloc_tabstops(uint8 **, uint16, uint16, uint16);
-static void init_palette(Palette *);
 static void update_dimensions(Term *, uint16, uint16);
 
 #define FUNCPROTO(x) void x(Term *term, const char *data, const int *argv, int argc)
@@ -115,6 +113,7 @@ term_create(App *app)
 
     // Query known metrics/settings/resources from application
     term->fonts   = app_fonts(app);
+    term->palette = app_palette(app);
     term->tabcols = app_tabcols(app);
     term->colpx   = app_font_width(app);
     term->rowpx   = app_font_height(app);
@@ -128,14 +127,10 @@ term_create(App *app)
     term->rows = imax(0, term->height - 2 * term->border) / term->rowpx;
     term->histlines = round_pow2(imax(term->rows, app_histlines(app)));
 
-    // Initialize colors
-    init_palette(&term->colors);
-    app_get_palette(app, &term->colors);
-
     // Default starting cell
     term->cell.width = 1;
-    term->cell.bg    = term->colors.bg;
-    term->cell.fg    = term->colors.fg;
+    term->cell.bg = color_from_key(BACKGROUND);
+    term->cell.fg = color_from_key(FOREGROUND);
     term->cell.attrs = 0;
 
     // Allocate buffers, set target ring to default
@@ -162,44 +157,6 @@ term_create(App *app)
                term->histlines);
 
     return term;
-}
-
-void
-init_palette(Palette *palette)
-{
-    static_assert(LEN(palette->base256) == 256, "Invalid color table size");
-    ASSERT(palette);
-
-    memset(palette->base256, 0, sizeof(palette->base256));
-
-    // Default standard colors (0-15)
-    static const uint32 base16[16] = {
-        0x000000, 0x800000, 0x008000, 0x808000, 0x000080, 0x800080, 0x008080, 0xc0c0c0,
-        0x808080, 0xff0000, 0x00ff00, 0xffff00, 0x0000ff, 0xff00ff, 0x00ffff, 0xffffff
-    };
-
-    uint32 *const table = palette->base256;
-
-    for (uint i = 0; i < 256; i++) {
-        if (i < 16) {
-            table[i] = base16[i];
-        } else if (i < 232) {
-            // 6x6x6 color cube (16-231)
-            uint8 n;
-            table[i] |= ((n = ((i - 16) / 36) % 6) ? 40 * n + 55 : 0) << 16;
-            table[i] |= ((n = ((i - 16) /  6) % 6) ? 40 * n + 55 : 0) <<  8;
-            table[i] |= ((n = ((i - 16) /  1) % 6) ? 40 * n + 55 : 0) <<  0;
-        } else {
-            // Grayscale from darkest to lightest (232-255)
-            const uint8 k = (i - 232) * 10 + 8;
-            table[i] |= k << 16;
-            table[i] |= k <<  8;
-            table[i] |= k <<  0;
-        }
-    }
-
-    palette->bg = table[0];
-    palette->fg = table[7];
 }
 
 void
@@ -253,10 +210,8 @@ generate_frame(Term *term)
     frame->cursor.col = term->x;
     frame->cursor.row = term->y;
     frame->cursor.style = term->crs_style;
-    frame->cursor.color = term->colors.fg;
     frame->time = timer_msec(NULL);
-    frame->default_bg = term->colors.bg;
-    frame->default_fg = term->colors.fg;
+    frame->palette = term->palette;
 
     if (!term->hidecursor && check_visible(term->ring, term->x, term->y)) {
         frame->cursor.visible = true;
@@ -274,7 +229,7 @@ term_draw(Term *term)
 {
     ASSERT(term);
 
-    gfx_clear_rgb1u(term->colors.bg);
+    gfx_clear_rgb1u(term->palette->bg);
     if (term->pid) {
         gfx_draw_frame(generate_frame(term), term->fonts);
     }
@@ -624,7 +579,7 @@ cursor_save(Term *term)
         .col     = term->x,
         .row     = term->y,
         .style   = term->crs_style,
-        .color   = term->colors.fg,
+        .color   = term->palette->fg,
         .visible = !term->hidecursor
     };
 }
@@ -640,27 +595,27 @@ cursor_restore(Term *term)
 }
 
 void
-set_active_bg(Term *term, uint8 idx)
+set_active_bg(Term *term, uint16 idx)
 {
-    term->cell.bg = term->colors.base256[idx];
+    term->cell.bg = color_from_key(idx);
 }
 
 void
-set_active_fg(Term *term, uint8 idx)
+set_active_fg(Term *term, uint16 idx)
 {
-    term->cell.fg = term->colors.base256[idx];
+    term->cell.fg = color_from_key(idx);
 }
 
 void
 set_active_bg_rgb(Term *term, uint8 r, uint8 g, uint8 b)
 {
-    term->cell.bg = PACK_4x8(0xff, r, g, b);
+    term->cell.bg = color_from_rgb_3u(r, g, b);
 }
 
 void
 set_active_fg_rgb(Term *term, uint8 r, uint8 g, uint8 b)
 {
-    term->cell.fg = PACK_4x8(0xff, r, g, b);
+    term->cell.fg = color_from_rgb_3u(r, g, b);
 }
 
 void
@@ -678,13 +633,13 @@ term_use_screen_primary(Term *term)
 void
 reset_active_bg(Term *term)
 {
-    term->cell.bg = term->colors.bg;
+    set_active_bg(term, BACKGROUND);
 }
 
 void
 reset_active_fg(Term *term)
 {
-    term->cell.fg = term->colors.fg;
+    set_active_fg(term, FOREGROUND);
 }
 
 void

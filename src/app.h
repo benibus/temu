@@ -19,9 +19,9 @@
 #define APP_H__
 
 #include "common.h"
+#include "color.h"
 
 typedef struct App App;
-typedef struct Palette Palette;
 
 // Accessors for window dimensions
 int app_width(const App *app);
@@ -41,17 +41,7 @@ void app_get_font_metrics(const App *app,
 // Accessors for user-specified preferences
 int app_histlines(const App *app);
 int app_tabcols(const App *app);
-
-struct Palette {
-    union {
-        uint32 base16[16];
-        uint32 base256[256];
-    };
-    uint32 bg;
-    uint32 fg;
-};
-
-void app_get_palette(const App *app, Palette *palette);
+Palette *app_palette(App *app);
 
 // Flags for setting window properties
 enum {

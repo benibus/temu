@@ -81,7 +81,7 @@ struct Term {
     uint32 crs_color;
     CursorDesc saved_crs;
 
-    Palette colors;
+    Palette *palette;
 
     TermParser parser;
 };
