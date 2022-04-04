@@ -39,15 +39,16 @@ struct TermParser {
     uchar chars[8+1]; // Stored escape sequence/UTF-8 bytes
 };
 
-#define IOBUF_MAX (4096)
+enum { MAX_READ = 4096 };
 
 struct Term {
     App *app; // Global application handle
+    Palette *palette;
 
     int pid; // PTY PID
     int mfd; // PTY master file descriptor
     int sfd; // PTY slave file descriptor
-    uchar input[IOBUF_MAX]; // PTY input buffer
+    uchar input[MAX_READ]; // PTY input buffer
 
     FontSet *fonts;
 
@@ -68,20 +69,13 @@ struct Term {
     int rowpx;     // Vertical cell size in pixels
     int histlines; // Maximum lines in scrollback history
 
-    int x; // Current cursor column
-    int y; // Current cursor row
-
-    bool wrapnext;   // Wrap cursor before next write
-    bool hidecursor; // Cursor is manually hidden
-    bool altscreen;  // Alternate screen is active
+    Cursor cur;
+    struct {
+        Cursor cur;
+    } saved;
 
     Frame frame;
     Cell cell;
-    CursorStyle crs_style;
-    uint32 crs_color;
-    CursorDesc saved_crs;
-
-    Palette *palette;
 
     TermParser parser;
 };

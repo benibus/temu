@@ -39,7 +39,7 @@
 #define memequal(s1,s2,n)  (memcmp((s1), (s2), (n)) == 0)
 
 #ifndef TRACEPRINTF_FMT
-#define TRACEPRINTF_FMT "[%s:%u][%s] "
+#define TRACEPRINTF_FMT "[%s:%u][%s]"
 #endif
 #ifndef TRACEPRINTF_ARGS
 #define TRACEPRINTF_ARGS __FILE__, __LINE__, __func__
@@ -52,8 +52,8 @@ int trace_fprintf__(const char *restrict file,
                     const char *restrict fmt,
                     ...)
     __attribute__((format(printf, 5, 6)));
-#define trace_fprintf(...) trace_fprintf__(TRACEPRINTF_ARGS, __VA_ARGS__)
-#define trace_printf(...)  trace_fprintf(stderr, __VA_ARGS__)
+#define trace_fprintf(fp,...) trace_fprintf__(TRACEPRINTF_ARGS, (fp), " " __VA_ARGS__)
+#define trace_printf(...)     trace_fprintf(stderr, __VA_ARGS__)
 
 #ifndef ERRPRINTF_ENABLE_COLOR
 #define ERRPRINTF_ENABLE_COLOR 1

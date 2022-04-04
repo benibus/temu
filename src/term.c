@@ -26,6 +26,38 @@
 
 #include <unistd.h> // for isatty()
 
+static void cursor_init(Cursor *cur);
+static int cursor_set_x_abs(Cursor *cur, int x, int max);
+static int cursor_set_y_abs(Cursor *cur, int y, int max);
+static int cursor_set_x_rel(Cursor *cur, int x, int max);
+static int cursor_set_y_rel(Cursor *cur, int y, int max);
+
+static size_t term_consume(Term *term, const uchar *data, size_t len);
+static void term_write_codepoint(Term *term, uint32 ucs4);
+static void term_write_printable(Term *term, uint32 ucs4, CellType type);
+static void term_write_tab(Term *term);
+static void term_write_newline(Term *term);
+static int term_set_x_abs(Term *term, int x);
+static int term_set_y_abs(Term *term, int y);
+static int term_set_x_rel(Term *term, int x);
+static int term_set_y_rel(Term *term, int y);
+static void term_set_cursor_visibility(Term *term, bool visible);
+static void term_set_cursor_style(Term *term, uint style);
+static void term_set_cell_bg(Term *term, uint16 idx);
+static void term_set_cell_fg(Term *term, uint16 idx);
+static void term_set_cell_bg_rgb(Term *term, uint8 r, uint8 g, uint8 b);
+static void term_set_cell_fg_rgb(Term *term, uint8 r, uint8 g, uint8 b);
+static void term_reset_cell_bg(Term *term);
+static void term_reset_cell_fg(Term *term);
+static void term_set_cell_attrs(Term *term, uint16 mask, bool enable);
+static void term_reset_cell_attrs(Term *term);
+static void term_set_screen(Term *term, bool alt);
+
+static void alloc_frame(Frame *, uint16, uint16);
+static void alloc_tabstops(uint8 **, uint16, uint16, uint16);
+static void update_dimensions(Term *, uint16, uint16);
+
+static uint cellslen(const Cell *, int);
 #define CELLINIT(t)                          \
     (Cell){                                  \
         .ucs4  = ' ',                        \
@@ -35,33 +67,6 @@
         .width = 1,                          \
         .attrs = 0                           \
     }
-
-static uint cellslen(const Cell *, int);
-
-static size_t consume(Term *term, const uchar *data, size_t len);
-static void write_codepoint(Term *term, uint32 ucs4);
-static void write_printable(Term *, uint32, CellType);
-static void write_tab(Term *);
-static void write_newline(Term *);
-static void set_active_bg(Term *, uint16);
-static void set_active_fg(Term *, uint16);
-static void set_active_bg_rgb(Term *, uint8, uint8, uint8);
-static void set_active_fg_rgb(Term *, uint8, uint8, uint8);
-static void reset_active_bg(Term *);
-static void reset_active_fg(Term *);
-static void set_active_attrs(Term *, uint16);
-static void add_active_attrs(Term *, uint16);
-static void del_active_attrs(Term *, uint16);
-static void move_cursor_cols(Term *, int);
-static void move_cursor_rows(Term *, int);
-static void set_cursor_col(Term *, int);
-static void set_cursor_row(Term *, int);
-static void set_cursor_visibility(Term *, bool);
-static void set_cursor_style(Term *, int);
-
-static void alloc_frame(Frame *, uint16, uint16);
-static void alloc_tabstops(uint8 **, uint16, uint16, uint16);
-static void update_dimensions(Term *, uint16, uint16);
 
 #define FUNCPROTO(x) void x(Term *term, const char *data, const int *argv, int argc)
 #define FUNCNAME(x)  func_##x
@@ -127,6 +132,7 @@ term_create(App *app)
     term->rows = imax(0, term->height - 2 * term->border) / term->rowpx;
     term->histlines = round_pow2(imax(term->rows, app_histlines(app)));
 
+    cursor_init(&term->cur);
     // Default starting cell
     term->cell.width = 1;
     term->cell.bg = color_from_key(BACKGROUND);
@@ -207,13 +213,13 @@ generate_frame(Term *term)
     frame->rows = term->rows;
     frame->width = term->cols * term->colpx;
     frame->height = term->rows *term->rowpx;
-    frame->cursor.col = term->x;
-    frame->cursor.row = term->y;
-    frame->cursor.style = term->crs_style;
+    frame->cursor.col = term->cur.x;
+    frame->cursor.row = term->cur.y;
+    frame->cursor.style = term->cur.style;
     frame->time = timer_msec(NULL);
     frame->palette = term->palette;
 
-    if (!term->hidecursor && check_visible(term->ring, term->x, term->y)) {
+    if (!term->cur.hidden && check_visible(term->ring, term->cur.x, term->cur.y)) {
         frame->cursor.visible = true;
         frame->cursor.row += ring_get_scroll(term->ring);
         ASSERT(frame->cursor.row < term->rows);
@@ -248,7 +254,7 @@ term_pull(Term *term)
 
     const size_t len = pty_read(term->mfd, term->input, LEN(term->input));
     if (len > 0) {
-        consume(term, term->input, len);
+        term_consume(term, term->input, len);
     }
 
     return len;
@@ -335,16 +341,16 @@ term_resize(Term *term, uint width, uint height)
     }
 
     // Compress the screen vertically.
-    if (rows <= term->y) {
+    if (rows <= term->cur.y) {
         ring_adjust_head(term->rings[0], term->rows - rows);
-        term->y -= term->rows - rows;
+        term->cur.y -= term->rows - rows;
     }
 
     // Expand the screen vertically while history lines exist.
     if (rows > term->rows) {
         int delta = imin(rows - term->rows, ring_histlines(term->rings[0]));
         ring_adjust_head(term->rings[0], -delta);
-        term->y += delta;
+        term->cur.y += delta;
     }
 
     // Resize history
@@ -363,88 +369,71 @@ term_resize(Term *term, uint width, uint height)
 }
 
 static inline void
-print_parsed_params(const TermParser *parse)
+print_trace(FILE *fp,
+            uint64 time,
+            uint32 opcode,
+            const TermParser *ctx,
+            const uchar *input,
+            uint len)
 {
-    for (int i = 0; i < parse->argi + 1; i++) {
-        fprintf(stderr, "%s%d", (i) ? ";" : "", parse->argv[i]);
-    }
-}
+    const char *const opname = opcode_to_string(opcode);
+    const uint opidx = opcode_to_index(opcode);
+    const bool iswrite = (OPCODE_TAG(opcode) == OPTAG_WRITE);
+    const bool impl = (iswrite || !!func_table[opidx]);
+    const int color = isatty(fileno(fp)) ?
+                          (opidx) ? (iswrite) ? 34 : (impl) ? 36 : 33 : 31 : 0;
 
-static inline void
-print_parsed_string(const TermParser *parse)
-{
-    fprintf(stderr,
-            "%d;%.*s",
-            parse->argi ? parse->argv[0] : 0,
-            (int)arr_count(parse->data),
-            (char *)parse->data);
-}
-
-static inline void
-trace_dispatch(uint32 oc, uint16 idx, const TermParser *parse)
-{
-    const char *const name = opcode_to_string(oc);
-    const bool implemented = (OPCODE_TAG(oc) == OPTAG_WRITE || !!func_table[idx]);
-
-    if (isatty(2)) {
-        fprintf(stderr, "\033[1;%dm*\033[m ", implemented ? 36 : 33);
+    if (color) {
+        fprintf(fp, "\033[0;%dm%lu ", color, time);
     } else {
-        fprintf(stderr, "%c ", implemented ? '*' : ' ');
+        fprintf(fp, "%lu %c ", time, (opcode) ? (impl) ? '+' : '-' : '?');
     }
-    fprintf(stderr, "0x%x [%3u] %-16s ", oc, idx, name);
+    fprintf(fp, "%s(", opname);
 
-    const uint tag = OPCODE_TAG(oc);
-
-    switch (tag) {
-    case OPTAG_ESC:
-    case OPTAG_CSI:
-    case OPTAG_DCS: {
-        char buf[3] = {0};
-        opcode_get_chars(oc, buf);
-
-        switch (tag) {
-        case OPTAG_ESC:
-            fprintf(stderr, "\\e%.1s%.1s", &buf[1], &buf[0]);
-            break;
-        case OPTAG_CSI:
-            fprintf(stderr, "\\e[%.1s", &buf[2]);
-            print_parsed_params(parse);
-            fprintf(stderr, "%.1s%.1s", &buf[1], &buf[0]);
-            break;
-        case OPTAG_DCS:
-            fprintf(stderr, "\\eP%.1s%.1s%.1s", &buf[2], &buf[1], &buf[0]);
-            print_parsed_string(parse);
-            break;
+    switch (OPCODE_TAG(opcode)) {
+    case 0:
+        break;
+    case OPTAG_DCS:
+    case OPTAG_OSC:
+        fprintf(fp,
+                "\"%d;%.*s\"",
+                ctx->argi ? ctx->argv[0] : 0,
+                (int)arr_count(ctx->data),
+                (char *)ctx->data);
+        break;
+    case OPTAG_WRITE:
+        fprintf(fp, "%s", charstring(OPCODE_NO_TAG(opcode)));
+        break;
+    default:
+        for (int i = 0; i < ctx->argi + 1; i++) {
+            fprintf(fp, "%s%d", (i) ? ", " : "", ctx->argv[i]);
         }
         break;
-    case OPTAG_OSC:
-        fprintf(stderr, "\\e]");
-        print_parsed_string(parse);
-        break;
-    }
-    default:
-        break;
     }
 
-    fprintf(stderr, "\n");
+    fprintf(fp, ")%s ", (color) ? "\033[0;90m" : "");
+    for (uint i = 0; i < len; i++) {
+        fprintf(fp, "%s ", charstring(input[i]));
+    }
+    fprintf(fp, "%s\n", (color) ? "\033[m" : "");
 }
 
 size_t
-consume(Term *term, const uchar *str, size_t len)
+term_consume(Term *term, const uchar *str, size_t len)
 {
+    const uint64 time = timer_usec(NULL);
     size_t i = 0;
 
     while (i < len) {
         size_t adv;
         const uint32 opcode = parser_emit(&term->parser, &str[i], len - i, &adv);
-
+#if 0
+        print_trace(stdout, time, opcode, &term->parser, &str[i], adv);
+#endif
         if (opcode) {
             const uint opidx = opcode_to_index(opcode);
-
-            // trace_dispatch(opcode, opidx, &term->parser);
-
             if (OPCODE_TAG(opcode) == OPTAG_WRITE) {
-                write_codepoint(term, OPCODE_NO_TAG(opcode));
+                term_write_codepoint(term, OPCODE_NO_TAG(opcode));
             } else if (opcode) {
                 if (func_table[opidx]) {
                     func_table[opidx](term,
@@ -462,24 +451,32 @@ consume(Term *term, const uchar *str, size_t len)
 }
 
 void
-write_printable(Term *term, uint32 ucs4, CellType type)
+term_write_printable(Term *term, uint32 ucs4, CellType type)
 {
-    if (term->x + 1 < term->cols) {
-        term->wrapnext = false;
-    } else if (!term->wrapnext) {
-        term->wrapnext = true;
+    if (term->cur.x + 1 < term->cols) {
+        term->cur.wrapnext = false;
+    } else if (!term->cur.wrapnext) {
+        term->cur.wrapnext = true;
     } else {
-        term->wrapnext = false;
-        row_set_wrap(term->ring, term->y, true);
-        if (term->y + 1 == term->rows) {
+        term->cur.wrapnext = false;
+        row_set_wrap(term->ring, term->cur.y, true);
+        if (term->cur.y + 1 == term->rows) {
             ring_adjust_head(term->ring, 1);
         } else {
-            term->y++;
+            term->cur.y++;
         }
-        term->x = 0;
+        term->cur.x = 0;
     }
 
-    Cell *cell = cells_get(term->ring, term->x, term->y);
+    Cell *cell = cells_get(term->ring, term->cur.x, term->cur.y);
+
+    // If the cursor position was ever set independently, there may be unitialized cells
+    // preceding it - so we turn them into spaces
+    for (int n = 1; n <= term->cur.x; n++) {
+        Cell *c = &cell[-n];
+        if (c->ucs4) break;
+        *c = CELLINIT(term);
+    }
 
     cell[0] = (Cell){
         .ucs4  = ucs4,
@@ -490,174 +487,181 @@ write_printable(Term *term, uint32 ucs4, CellType type)
         .type  = type
     };
 
-    if (!term->wrapnext) {
-        ASSERT(term->x + 1 < term->cols);
-        term->x++;
+    if (!term->cur.wrapnext) {
+        ASSERT(term->cur.x + 1 < term->cols);
+        term->cur.x++;
     }
 }
 
 void
-write_newline(Term *term)
+term_write_newline(Term *term)
 {
-    if (term->y + 1 == term->rows) {
+    if (term->cur.y + 1 == term->rows) {
         ring_adjust_head(term->ring, 1);
-        rows_clear(term->ring, term->y, 1);
+        rows_clear(term->ring, term->cur.y, 1);
     } else {
-        term->y++;
+        term->cur.y++;
     }
 }
 
 void
-write_tab(Term *term)
+term_write_tab(Term *term)
 {
     int type = CellTypeTab;
 
-    for (int n = 0; term->x + 1 < term->cols; n++) {
-        if (term->tabstops[term->x] && n > 0) {
+    for (int n = 0; term->cur.x + 1 < term->cols; n++) {
+        if (term->tabstops[term->cur.x] && n > 0) {
             break;
         }
-        write_printable(term, ' ', type);
+        term_write_printable(term, ' ', type);
         type = CellTypeDummyTab;
     }
 }
 
 void
-move_cursor_cols(Term *term, int cols)
+cursor_init(Cursor *cur)
 {
-    Cell *cells = cells_get(term->ring, 0, term->y);
-
-    const int beg = term->x;
-    const int end = CLAMP(beg + cols, 0, term->cols - 1);
-
-    for (int at = beg; at < end; at++) {
-        if (!cells[at].ucs4) {
-            cells[at] = CELLINIT(term);
-        }
-    }
-
-    term->x = end;
-}
-
-void
-move_cursor_rows(Term *term, int rows)
-{
-    term->y = CLAMP(term->y + rows, 0, term->rows - 1);
-}
-
-void
-set_cursor_col(Term *term, int col)
-{
-    term->x = CLAMP(col, 0, term->cols - 1);
-}
-
-void
-set_cursor_row(Term *term, int row)
-{
-    term->y = CLAMP(row, 0, term->rows - 1);
-}
-
-void
-set_cursor_visibility(Term *term, bool ishidden)
-{
-    term->hidecursor = ishidden;
-}
-
-void
-set_cursor_style(Term *term, int style)
-{
-    ASSERT(style >= 0);
-
-    if (style <= 7) {
-        term->crs_style = style;
+    if (cur) {
+        memset(cur, 0, sizeof(*cur));
+        cur->bg = color_from_key(FOREGROUND);
+        cur->fg = color_from_key(BACKGROUND);
     }
 }
 
-void
-cursor_save(Term *term)
+static inline int
+set_dim__(int *val, int new, int max)
 {
-    term->saved_crs = (CursorDesc){
-        .col     = term->x,
-        .row     = term->y,
-        .style   = term->crs_style,
-        .color   = term->palette->fg,
-        .visible = !term->hidecursor
-    };
+    const int old = *val;
+    *val = iclamp(((new < 0) ? max : 0) + new, 0, max - 1);
+    return *val - old;
+}
+
+int
+cursor_set_x_abs(Cursor *cur, int x, int max)
+{
+    return set_dim__(&cur->x, x, max);
+}
+
+int
+cursor_set_y_abs(Cursor *cur, int y, int max)
+{
+    return set_dim__(&cur->y, y, max);
+}
+
+int
+cursor_set_x_rel(Cursor *cur, int x, int max)
+{
+    return cursor_set_x_abs(cur, imax(0, cur->x + x), max);
+}
+
+int
+cursor_set_y_rel(Cursor *cur, int y, int max)
+{
+    return cursor_set_y_abs(cur, imax(0, cur->y + y), max);
+}
+
+int
+term_set_x_abs(Term *term, int x)
+{
+    return cursor_set_x_abs(&term->cur, x, term->cols);
+}
+
+int
+term_set_y_abs(Term *term, int y)
+{
+    return cursor_set_y_abs(&term->cur, y, term->rows);
+}
+
+int
+term_set_x_rel(Term *term, int x)
+{
+    return cursor_set_x_rel(&term->cur, x, term->cols);
+}
+
+int
+term_set_y_rel(Term *term, int y)
+{
+    return cursor_set_y_rel(&term->cur, y, term->rows);
 }
 
 void
-cursor_restore(Term *term)
+term_set_cursor_visibility(Term *term, bool visible)
 {
-    CursorDesc saved = term->saved_crs;
-    term->x          = saved.col;
-    term->y          = saved.row;
-    term->crs_style  = saved.style;
-    term->hidecursor = !saved.visible;
+    term->cur.hidden = !visible;
 }
 
 void
-set_active_bg(Term *term, uint16 idx)
+term_set_cursor_style(Term *term, uint style)
+{
+    if (style < 8) {
+        term->cur.style = style;
+    }
+}
+
+void
+term_save_cursor(Term *term)
+{
+    term->saved.cur = term->cur;
+}
+
+void
+term_restore_cursor(Term *term)
+{
+    term->cur = term->saved.cur;
+}
+
+void
+term_set_cell_bg(Term *term, uint16 idx)
 {
     term->cell.bg = color_from_key(idx);
 }
 
 void
-set_active_fg(Term *term, uint16 idx)
+term_set_cell_fg(Term *term, uint16 idx)
 {
     term->cell.fg = color_from_key(idx);
 }
 
 void
-set_active_bg_rgb(Term *term, uint8 r, uint8 g, uint8 b)
+term_set_cell_bg_rgb(Term *term, uint8 r, uint8 g, uint8 b)
 {
     term->cell.bg = color_from_rgb_3u(r, g, b);
 }
 
 void
-set_active_fg_rgb(Term *term, uint8 r, uint8 g, uint8 b)
+term_set_cell_fg_rgb(Term *term, uint8 r, uint8 g, uint8 b)
 {
     term->cell.fg = color_from_rgb_3u(r, g, b);
 }
 
 void
-term_use_screen_alt(Term *term)
+term_reset_cell_bg(Term *term)
 {
-    term->ring = term->rings[1];
+    term_set_cell_bg(term, BACKGROUND);
 }
 
 void
-term_use_screen_primary(Term *term)
+term_reset_cell_fg(Term *term)
 {
-    term->ring = term->rings[0];
+    term_set_cell_fg(term, FOREGROUND);
 }
 
 void
-reset_active_bg(Term *term)
+term_reset_cell_attrs(Term *term)
 {
-    set_active_bg(term, BACKGROUND);
+    term->cell.attrs = 0;
 }
 
 void
-reset_active_fg(Term *term)
+term_set_cell_attrs(Term *term, uint16 mask, bool enable)
 {
-    set_active_fg(term, FOREGROUND);
+    BSET(term->cell.attrs, mask, enable);
 }
 
 void
-set_active_attrs(Term *term, uint16 attrs)
+term_set_screen(Term *term, bool alt)
 {
-    term->cell.attrs = attrs;
-}
-
-void
-add_active_attrs(Term *term, uint16 attrs)
-{
-    term->cell.attrs |= attrs;
-}
-
-void
-del_active_attrs(Term *term, uint16 attrs)
-{
-    term->cell.attrs &= ~attrs;
+    term->ring = term->rings[alt];
 }
 
 uint
@@ -692,27 +696,27 @@ void term_print_history(const Term *term)
 }
 
 inline void
-write_codepoint(Term *term, uint32 ucs4)
+term_write_codepoint(Term *term, uint32 ucs4)
 {
     switch (ucs4) {
     case '\n':
     case '\v':
     case '\f':
-        write_newline(term);
+        term_write_newline(term);
         break;
     case '\t':
-        write_tab(term);
+        term_write_tab(term);
         break;
     case '\r':
-        set_cursor_col(term, 0);
+        term_set_x_abs(term, 0);
         break;
     case '\b':
-        move_cursor_cols(term, -1);
+        term_set_x_rel(term, -1);
         break;
     case '\a':
         break;
     default:
-        write_printable(term, ucs4, CellTypeNormal);
+        term_write_printable(term, ucs4, CellTypeNormal);
         break;
     }
 }
@@ -756,8 +760,8 @@ FUNCDEFN(RI)
     UNUSED(argv);
     UNUSED(argc);
 
-    if (term->y > 0) {
-        move_cursor_rows(term, -1);
+    if (term->cur.y > 0) {
+        term_set_y_rel(term, -1);
     } else {
         rows_move(term->ring, 0, term->rows, 1);
     }
@@ -767,111 +771,111 @@ FUNCDEFN(DECSC)
 {
     UNUSED(argv);
     UNUSED(argc);
-    cursor_save(term);
+    term_save_cursor(term);
 }
 
 FUNCDEFN(DECRC)
 {
     UNUSED(argv);
     UNUSED(argc);
-    cursor_restore(term);
+    term_restore_cursor(term);
 }
 
 FUNCDEFN(ICH)
 {
     UNUSED(argc);
-    cells_insert(term->ring, CELLINIT(term), term->x, term->y, MAX(argv[0], 1));
+    cells_insert(term->ring, CELLINIT(term), term->cur.x, term->cur.y, MAX(argv[0], 1));
 }
 
 FUNCDEFN(CUU)
 {
     UNUSED(argc);
-    move_cursor_rows(term, -MAX(argv[0], 1));
+    term_set_y_rel(term, -MAX(argv[0], 1));
 }
 
 FUNCDEFN(CUD)
 {
     UNUSED(argc);
-    move_cursor_rows(term, +MAX(argv[0], 1));
+    term_set_y_rel(term, +MAX(argv[0], 1));
 }
 
 FUNCDEFN(CUF)
 {
     UNUSED(argc);
-    move_cursor_cols(term, +MAX(argv[0], 1));
+    term_set_x_rel(term, MAX(argv[0], 1));
 }
 
 FUNCDEFN(CUB)
 {
     UNUSED(argc);
-    move_cursor_cols(term, -MAX(argv[0], 1));
+    term_set_x_rel(term, -MAX(argv[0], 1));
 }
 
 FUNCDEFN(CNL)
 {
     UNUSED(argc);
-    move_cursor_rows(term, +MAX(argv[0], 1));
+    term_set_y_rel(term, +MAX(argv[0], 1));
 }
 
 FUNCDEFN(CPL)
 {
     UNUSED(argc);
-    move_cursor_rows(term, -MAX(argv[0], 1));
+    term_set_y_rel(term, -MAX(argv[0], 1));
 }
 
 FUNCDEFN(CHA)
 {
     UNUSED(argc);
-    set_cursor_col(term, MAX(argv[0], 1) - 1);
+    term_set_x_abs(term, MAX(argv[0], 1) - 1);
 }
 
 FUNCDEFN(CUP)
 {
     UNUSED(argc);
-    set_cursor_col(term, MAX(argv[1], 1) - 1);
-    set_cursor_row(term, MAX(argv[0], 1) - 1);
+    term_set_x_abs(term, MAX(argv[1], 1) - 1);
+    term_set_y_abs(term, MAX(argv[0], 1) - 1);
 }
 
 FUNCDEFN(CHT)
 {
     UNUSED(argc);
     for (int n = DEFAULT(argv[0], 1); n > 0; n--) {
-        write_tab(term);
+        term_write_tab(term);
     }
 }
 
 FUNCDEFN(DCH)
 {
     UNUSED(argc);
-    cells_delete(term->ring, term->x, term->y, argv[0]);
+    cells_delete(term->ring, term->cur.x, term->cur.y, argv[0]);
 }
 
 FUNCDEFN(VPA)
 {
     UNUSED(argc);
-    set_cursor_row(term, MAX(argv[1], 1) - 1);
+    term_set_y_abs(term, MAX(argv[1], 1) - 1);
 }
 
 FUNCDEFN(VPR)
 {
     UNUSED(argc);
-    move_cursor_rows(term, MAX(argv[1], 1) - 1);
+    term_set_y_rel(term, MAX(argv[1], 1) - 1);
 }
 
 FUNCDEFN(ED)
 {
     switch (argv[0]) {
     case 0:
-        rows_clear(term->ring, term->y + 1, term->rows);
-        cells_clear(term->ring, term->x, term->y, term->cols);
+        rows_clear(term->ring, term->cur.y + 1, term->rows);
+        cells_clear(term->ring, term->cur.x, term->cur.y, term->cols);
         break;
     case 1:
-        rows_clear(term->ring, 0, term->y);
-        cells_set(term->ring, CELLINIT(term), 0, term->y, term->x);
+        rows_clear(term->ring, 0, term->cur.y);
+        cells_set(term->ring, CELLINIT(term), 0, term->cur.y, term->cur.x);
         break;
     case 2:
         rows_clear(term->ring, 0, term->rows);
-        set_cursor_row(term, 0);
+        term_set_y_abs(term, 0);
         break;
     }
 }
@@ -880,14 +884,14 @@ FUNCDEFN(EL)
 {
     switch (argv[0]) {
     case 0:
-        cells_clear(term->ring, term->x, term->y, term->cols);
+        cells_clear(term->ring, term->cur.x, term->cur.y, term->cols);
         break;
     case 1:
-        cells_set(term->ring, CELLINIT(term), 0, term->y, term->x);
+        cells_set(term->ring, CELLINIT(term), 0, term->cur.y, term->cur.x);
         break;
     case 2:
-        cells_clear(term->ring, 0, term->y, term->cols);
-        set_cursor_col(term, 0);
+        cells_clear(term->ring, 0, term->cur.y, term->cols);
+        term_set_x_abs(term, 0);
         break;
     }
 }
@@ -901,42 +905,42 @@ FUNCDEFN(SGR)
 
         switch (argv[i]) {
         case 0:
-            set_active_attrs(term, 0);
-            reset_active_bg(term);
-            reset_active_fg(term);
+            term_reset_cell_attrs(term);
+            term_reset_cell_bg(term);
+            term_reset_cell_fg(term);
             break;
 
-        case 1:  add_active_attrs(term, ATTR_BOLD);      break;
-        case 3:  add_active_attrs(term, ATTR_ITALIC);    break;
-        case 4:  add_active_attrs(term, ATTR_UNDERLINE); break;
-        case 5:  add_active_attrs(term, ATTR_BLINK);     break;
-        case 7:  add_active_attrs(term, ATTR_INVERT);    break;
-        case 8:  add_active_attrs(term, ATTR_INVISIBLE); break;
-        case 22: del_active_attrs(term, ATTR_BOLD);      break;
-        case 23: del_active_attrs(term, ATTR_ITALIC);    break;
-        case 24: del_active_attrs(term, ATTR_UNDERLINE); break;
-        case 25: del_active_attrs(term, ATTR_BLINK);     break;
-        case 27: del_active_attrs(term, ATTR_INVERT);    break;
-        case 28: del_active_attrs(term, ATTR_INVISIBLE); break;
+        case 1:  term_set_cell_attrs(term, ATTR_BOLD,      1); break;
+        case 3:  term_set_cell_attrs(term, ATTR_ITALIC,    1); break;
+        case 4:  term_set_cell_attrs(term, ATTR_UNDERLINE, 1); break;
+        case 5:  term_set_cell_attrs(term, ATTR_BLINK,     1); break;
+        case 7:  term_set_cell_attrs(term, ATTR_INVERT,    1); break;
+        case 8:  term_set_cell_attrs(term, ATTR_INVISIBLE, 1); break;
+        case 22: term_set_cell_attrs(term, ATTR_BOLD,      0); break;
+        case 23: term_set_cell_attrs(term, ATTR_ITALIC,    0); break;
+        case 24: term_set_cell_attrs(term, ATTR_UNDERLINE, 0); break;
+        case 25: term_set_cell_attrs(term, ATTR_BLINK,     0); break;
+        case 27: term_set_cell_attrs(term, ATTR_INVERT,    0); break;
+        case 28: term_set_cell_attrs(term, ATTR_INVISIBLE, 0); break;
 
         case 30: case 31:
         case 32: case 33:
         case 34: case 35:
         case 36: case 37:
-            set_active_fg(term, argv[i] - 30);
+            term_set_cell_fg(term, argv[i] - 30);
             break;
         case 39:
-            reset_active_fg(term);
+            term_reset_cell_fg(term);
             break;
 
         case 40: case 41:
         case 42: case 43:
         case 44: case 45:
         case 46: case 47:
-            set_active_bg(term, argv[i] - 40);
+            term_set_cell_bg(term, argv[i] - 40);
             break;
         case 49:
-            reset_active_bg(term);
+            term_reset_cell_bg(term);
             break;
 
         case 38:
@@ -950,19 +954,19 @@ FUNCDEFN(SGR)
             }
             if (i - start == 2) {
                 if (argv[start] == 48) {
-                    set_active_bg(term, argv[i] & 0xff);
+                    term_set_cell_bg(term, argv[i] & 0xff);
                 } else if (argv[start] == 38) {
-                    set_active_fg(term, argv[i] & 0xff);
+                    term_set_cell_fg(term, argv[i] & 0xff);
                 }
             } else if (i - start == 4) {
                 if (argv[start] == 48) {
-                    set_active_bg_rgb(term,
+                    term_set_cell_bg_rgb(term,
                         argv[i-2] & 0xff,
                         argv[i-1] & 0xff,
                         argv[i-0] & 0xff
                     );
                 } else if (argv[start] == 38) {
-                    set_active_fg_rgb(term,
+                    term_set_cell_fg_rgb(term,
                         argv[i-2] & 0xff,
                         argv[i-1] & 0xff,
                         argv[i-0] & 0xff
@@ -971,9 +975,9 @@ FUNCDEFN(SGR)
             } else {
                 // TODO(ben): confirm whether errors reset the defaults
                 dbg_printf("skiping invalid CSI:SGR sequence\n");
-                set_active_attrs(term, 0);
-                reset_active_bg(term);
-                reset_active_fg(term);
+                term_reset_cell_attrs(term);
+                term_reset_cell_bg(term);
+                term_reset_cell_fg(term);
                 return;
             }
             break;
@@ -982,14 +986,14 @@ FUNCDEFN(SGR)
         case 92: case 93:
         case 94: case 95:
         case 96: case 97:
-            set_active_fg(term, argv[i] - 90 + 8);
+            term_set_cell_fg(term, argv[i] - 90 + 8);
             break;
 
         case 100: case 101:
         case 102: case 103:
         case 104: case 105:
         case 106: case 107:
-            set_active_bg(term, argv[i] - 100 + 8);
+            term_set_cell_bg(term, argv[i] - 100 + 8);
             break;
         }
     } while (++i < argc);
@@ -1007,7 +1011,7 @@ FUNCDEFN(DSR)
         len = snprintf(str, sizeof(str), "\033[0n");
         break;
     case 6: // Respond with current cursor coordinates
-        len = snprintf(str, sizeof(str), "\033[%d;%dR", term->y + 1, term->x + 1);
+        len = snprintf(str, sizeof(str), "\033[%d;%dR", term->cur.y + 1, term->cur.x + 1);
         break;
     }
 
@@ -1025,15 +1029,15 @@ decprv_helper(Term *term, int mode, bool enable)
     case 1: // DECCKM (application/normal cursor keys)
         break;
     case 25: // DECTCEM
-        set_cursor_visibility(term, !enable);
+        term_set_cursor_visibility(term, enable);
         break;
     case 1049: // DECSC/DECRC
         if (enable) {
-            cursor_save(term);
-            term_use_screen_alt(term);
+            term_save_cursor(term);
+            term_set_screen(term, 1);
         } else {
-            cursor_restore(term);
-            term_use_screen_primary(term);
+            term_restore_cursor(term);
+            term_set_screen(term, 0);
         }
         break;
     }
@@ -1056,6 +1060,6 @@ FUNCDEFN(DECRST)
 FUNCDEFN(DECSCUSR)
 {
     UNUSED(argc);
-    set_cursor_style(term, argv[0]);
+    term_set_cursor_style(term, argv[0]);
 }
 

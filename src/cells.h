@@ -21,6 +21,26 @@
 #include "common.h"
 #include "color.h"
 
+typedef struct Cursor Cursor;
+
+enum {
+    CURSOR_DEFAULT,
+    CURSOR_BLOCK      = 2,
+    CURSOR_UNDERSCORE = 4,
+    CURSOR_BAR        = 5,
+    CURSOR_OUTLINE    = 7,
+};
+
+struct Cursor {
+    int x;
+    int y;
+    Color bg;
+    Color fg;
+    uint8 style;
+    bool wrapnext;
+    bool hidden;
+};
+
 #define ATTR_NONE      (0)
 #define ATTR_BOLD      (1 << 0)
 #define ATTR_ITALIC    (1 << 1)
