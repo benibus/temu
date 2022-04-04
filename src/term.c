@@ -853,13 +853,13 @@ FUNCDEFN(DCH)
 FUNCDEFN(VPA)
 {
     UNUSED(argc);
-    term_set_y_abs(term, MAX(argv[1], 1) - 1);
+    term_set_y_abs(term, MAX(argv[0], 1) - 1);
 }
 
 FUNCDEFN(VPR)
 {
     UNUSED(argc);
-    term_set_y_rel(term, MAX(argv[1], 1) - 1);
+    term_set_y_rel(term, MAX(argv[0], 1) - 1);
 }
 
 FUNCDEFN(ED)
