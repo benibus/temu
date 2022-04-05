@@ -16,7 +16,7 @@
  *------------------------------------------------------------------------------*/
 
 #include "utils.h"
-#include "term_fsm.h"
+#include "fsm.h"
 
 typedef struct {
     uchar beg;

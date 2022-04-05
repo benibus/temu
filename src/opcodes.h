@@ -15,8 +15,8 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  *------------------------------------------------------------------------------*/
 
-#ifndef TERM_OPCODES_H__
-#define TERM_OPCODES_H__
+#ifndef OPCODES_H__
+#define OPCODES_H__
 
 #include "common.h"
 

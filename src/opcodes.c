@@ -16,7 +16,7 @@
  *------------------------------------------------------------------------------*/
 
 #include "utils.h"
-#include "term_opcodes.h"
+#include "opcodes.h"
 
 #define HAS_C(x,y,n) (((n) >> (OcShiftC##x##x + (y))) & 1)
 #define GET_C(x,y,n) \

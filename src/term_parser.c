@@ -16,9 +16,9 @@
  *------------------------------------------------------------------------------*/
 
 #include "utils.h"
+#include "opcodes.h"
+#include "fsm.h"
 #include "term_parser.h"
-#include "term_opcodes.h"
-#include "term_fsm.h"
 
 static uint32 do_action(TermParser *ctx, uint16 pair, uchar c);
 

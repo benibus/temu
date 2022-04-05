@@ -15,10 +15,10 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  *------------------------------------------------------------------------------*/
 
-#ifndef KEYS_H__
-#define KEYS_H__
+#ifndef KEYCODES_H__
+#define KEYCODES_H__
 
-#define KEYCODE_TABLE \
+#define XTABLE_KEYCODES \
     X_(None,        0)   \
     X_(Escape,      256) \
     X_(Return,      257) \
@@ -94,24 +94,25 @@
 
 enum {
 #define X_(key,val) Key##key = val,
-    KEYCODE_TABLE
+    XTABLE_KEYCODES
 #undef  X_
     KeyCount
 };
 
-static const char *keycode_names[] = {
-#define X_(key,val) [Key##key] = #key,
-    KEYCODE_TABLE
-#undef  X_
+enum {
+    KEYMOD_NONE  = (0),
+    KEYMOD_SHIFT = (1 << 0),
+    KEYMOD_ALT   = (1 << 1),
+    KEYMOD_CTRL  = (1 << 2),
+    KEYMOD_NUMLK = (1 << 3),
+    KEYMOD_MASK  = (KEYMOD_CTRL|KEYMOD_ALT|KEYMOD_SHIFT|KEYMOD_NUMLK),
 };
 
-#undef KEYCODE_TABLE
+#ifndef KEYCODES_C__
+#undef XTABLE_KEYCODES
+#endif
 
-#define KEYMOD_NONE  (0)
-#define KEYMOD_SHIFT (1 << 0)
-#define KEYMOD_ALT   (1 << 1)
-#define KEYMOD_CTRL  (1 << 2)
-#define KEYMOD_NUMLK (1 << 3)
-#define KEYMOD_MASK  (KEYMOD_CTRL|KEYMOD_ALT|KEYMOD_SHIFT|KEYMOD_NUMLK)
+const char *keycode_to_string(int key);
 
 #endif
+

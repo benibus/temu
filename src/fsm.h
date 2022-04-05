@@ -15,8 +15,8 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  *------------------------------------------------------------------------------*/
 
-#ifndef TERM_FSM_H__
-#define TERM_FSM_H__
+#ifndef FSM_H__
+#define FSM_H__
 
 #include "common.h"
 
