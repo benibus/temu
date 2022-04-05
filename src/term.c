@@ -94,6 +94,8 @@ static uint cellslen(const Cell *, int);
     X_(EL) \
     X_(SGR) \
     X_(DSR) \
+    X_(SM) \
+    X_(RM) \
     X_(DECSET) \
     X_(DECRST) \
     X_(DECSCUSR) \
@@ -274,6 +276,14 @@ term_reset_scroll(Term *term)
     ring_reset_scroll(term->ring);
 }
 
+bool
+term_toggle_trace(Term *term)
+{
+    term->tracing = !term->tracing;
+    fprintf(stderr, "[!] Trace %s\n", (term->tracing) ? "enabled" : "disabled");
+    return term->tracing;
+}
+
 void
 alloc_frame(Frame *frame, uint16 cols_, uint16 rows_)
 {
@@ -427,9 +437,11 @@ term_consume(Term *term, const uchar *str, size_t len)
     while (i < len) {
         size_t adv;
         const uint32 opcode = parser_emit(&term->parser, &str[i], len - i, &adv);
-#if 0
-        print_trace(stdout, time, opcode, &term->parser, &str[i], adv);
-#endif
+
+        if (term->tracing) {
+            print_trace(stdout, time, opcode, &term->parser, &str[i], adv);
+        }
+
         if (opcode) {
             const uint opidx = opcode_to_index(opcode);
             if (OPCODE_TAG(opcode) == OPTAG_WRITE) {
@@ -721,6 +733,7 @@ term_write_codepoint(Term *term, uint32 ucs4)
     }
 }
 
+// Operating system command
 FUNCDEFN(OSC)
 {
     /*
@@ -755,6 +768,7 @@ FUNCDEFN(OSC)
     return;
 }
 
+// Reverse index
 FUNCDEFN(RI)
 {
     UNUSED(argv);
@@ -767,6 +781,7 @@ FUNCDEFN(RI)
     }
 }
 
+// Save cursor
 FUNCDEFN(DECSC)
 {
     UNUSED(argv);
@@ -774,6 +789,7 @@ FUNCDEFN(DECSC)
     term_save_cursor(term);
 }
 
+// Restore cursor
 FUNCDEFN(DECRC)
 {
     UNUSED(argv);
@@ -781,54 +797,63 @@ FUNCDEFN(DECRC)
     term_restore_cursor(term);
 }
 
+// Insert characters
 FUNCDEFN(ICH)
 {
     UNUSED(argc);
     cells_insert(term->ring, CELLINIT(term), term->cur.x, term->cur.y, MAX(argv[0], 1));
 }
 
+// Cursor up
 FUNCDEFN(CUU)
 {
     UNUSED(argc);
     term_set_y_rel(term, -MAX(argv[0], 1));
 }
 
+// Cursor down
 FUNCDEFN(CUD)
 {
     UNUSED(argc);
     term_set_y_rel(term, +MAX(argv[0], 1));
 }
 
+// Cursor forward
 FUNCDEFN(CUF)
 {
     UNUSED(argc);
     term_set_x_rel(term, MAX(argv[0], 1));
 }
 
+// Cursor backward
 FUNCDEFN(CUB)
 {
     UNUSED(argc);
     term_set_x_rel(term, -MAX(argv[0], 1));
 }
 
+// Cursor next line
 FUNCDEFN(CNL)
 {
     UNUSED(argc);
     term_set_y_rel(term, +MAX(argv[0], 1));
 }
 
+// Cursor previous line
 FUNCDEFN(CPL)
 {
     UNUSED(argc);
     term_set_y_rel(term, -MAX(argv[0], 1));
 }
 
+// Cursor horizontal absolute
 FUNCDEFN(CHA)
 {
     UNUSED(argc);
     term_set_x_abs(term, MAX(argv[0], 1) - 1);
 }
 
+// Cursor position
 FUNCDEFN(CUP)
 {
     UNUSED(argc);
@@ -836,6 +861,7 @@ FUNCDEFN(CUP)
     term_set_y_abs(term, MAX(argv[0], 1) - 1);
 }
 
+// Cursor horizontal tabulation
 FUNCDEFN(CHT)
 {
     UNUSED(argc);
@@ -844,24 +870,28 @@ FUNCDEFN(CHT)
     }
 }
 
+// Delete characters
 FUNCDEFN(DCH)
 {
     UNUSED(argc);
     cells_delete(term->ring, term->cur.x, term->cur.y, argv[0]);
 }
 
+// Vertical position absolute
 FUNCDEFN(VPA)
 {
     UNUSED(argc);
     term_set_y_abs(term, MAX(argv[0], 1) - 1);
 }
 
+// Vertical position relative
 FUNCDEFN(VPR)
 {
     UNUSED(argc);
     term_set_y_rel(term, MAX(argv[0], 1) - 1);
 }
 
+// Erase in display
 FUNCDEFN(ED)
 {
     switch (argv[0]) {
@@ -880,6 +910,7 @@ FUNCDEFN(ED)
     }
 }
 
+// Erase in line
 FUNCDEFN(EL)
 {
     switch (argv[0]) {
@@ -896,6 +927,7 @@ FUNCDEFN(EL)
     }
 }
 
+// Select graphic rendition
 FUNCDEFN(SGR)
 {
     int i = 0;
@@ -904,12 +936,14 @@ FUNCDEFN(SGR)
         const int start = i;
 
         switch (argv[i]) {
+        // Reset defaults
         case 0:
             term_reset_cell_attrs(term);
             term_reset_cell_bg(term);
             term_reset_cell_fg(term);
             break;
 
+        // Set visual attributes
         case 1:  term_set_cell_attrs(term, ATTR_BOLD,      1); break;
         case 3:  term_set_cell_attrs(term, ATTR_ITALIC,    1); break;
         case 4:  term_set_cell_attrs(term, ATTR_UNDERLINE, 1); break;
@@ -923,28 +957,32 @@ FUNCDEFN(SGR)
         case 27: term_set_cell_attrs(term, ATTR_INVERT,    0); break;
         case 28: term_set_cell_attrs(term, ATTR_INVISIBLE, 0); break;
 
+        // Set background 0-7
         case 30: case 31:
         case 32: case 33:
         case 34: case 35:
         case 36: case 37:
             term_set_cell_fg(term, argv[i] - 30);
             break;
+        // Reset default foreground
         case 39:
             term_reset_cell_fg(term);
             break;
 
+        // Set background 0-7
         case 40: case 41:
         case 42: case 43:
         case 44: case 45:
         case 46: case 47:
             term_set_cell_bg(term, argv[i] - 40);
             break;
+        // Reset default background
         case 49:
             term_reset_cell_bg(term);
             break;
 
-        case 38:
-        case 48:
+        case 38: // Set foreground to next arg(s)
+        case 48: // Set background to next arg(s)
             if (++i + 1 < argc) {
                 if (argv[i] == 5) {
                     i++;
@@ -952,12 +990,14 @@ FUNCDEFN(SGR)
                     i += 3;
                 }
             }
+            // Set 0-255 (1 arg)
             if (i - start == 2) {
                 if (argv[start] == 48) {
                     term_set_cell_bg(term, argv[i] & 0xff);
                 } else if (argv[start] == 38) {
                     term_set_cell_fg(term, argv[i] & 0xff);
                 }
+            // Set literal RGB (3 args)
             } else if (i - start == 4) {
                 if (argv[start] == 48) {
                     term_set_cell_bg_rgb(term,
@@ -982,6 +1022,7 @@ FUNCDEFN(SGR)
             }
             break;
 
+        // Set foreground 8-15
         case 90: case 91:
         case 92: case 93:
         case 94: case 95:
@@ -989,6 +1030,7 @@ FUNCDEFN(SGR)
             term_set_cell_fg(term, argv[i] - 90 + 8);
             break;
 
+        // Set background 8-15
         case 100: case 101:
         case 102: case 103:
         case 104: case 105:
@@ -999,6 +1041,7 @@ FUNCDEFN(SGR)
     } while (++i < argc);
 }
 
+// Device status report
 FUNCDEFN(DSR)
 {
     UNUSED(argc);
@@ -1022,41 +1065,72 @@ FUNCDEFN(DSR)
     }
 }
 
+// Helper for setting/resetting standard modes via SM/RM
 static inline void
-decprv_helper(Term *term, int mode, bool enable)
+set_modes(Term *term, const int *args, int nargs, bool enable)
 {
-    switch (mode) {
-    case 1: // DECCKM (application/normal cursor keys)
-        break;
-    case 25: // DECTCEM
-        term_set_cursor_visibility(term, enable);
-        break;
-    case 1049: // DECSC/DECRC
-        if (enable) {
-            term_save_cursor(term);
-            term_set_screen(term, 1);
-        } else {
-            term_restore_cursor(term);
-            term_set_screen(term, 0);
+    for (int i = 0; args && i < nargs; i++) {
+        switch (args[i]) {
+        case 2: // KAM - Keyboard Action Mode
+            break;
+        case 4: // IRM - Insertion Replacement Mode
+            break;
+        case 12: // SRM - Send/Receive Mode
+            break;
+        case 20: // LNM - Automatic Linefeed Mode (not in ECMA-48)
+            break;
         }
-        break;
     }
 }
 
-// NOTE(ben): Wrapper
+// Set mode
+FUNCDEFN(SM) {
+    set_modes(term, argv, argc, true);
+}
+
+// Reset mode
+FUNCDEFN(RM)
+{
+    set_modes(term, argv, argc, false);
+}
+
+// Helper for setting/resetting private modes via DECSET/DECRST
+static inline void
+set_modes_priv(Term *term, const int *args, int nargs, bool enable)
+{
+    for (int i = 0; args && i < nargs; i++) {
+        switch (args[i]) {
+        case 1: // DECCKM - Application cursor keys
+            break;
+        case 25: // DECTCEM - Text cursor enable/disable
+            term_set_cursor_visibility(term, enable);
+            break;
+        case 1049: // DECSC/DECRC + Set alt/primary screen
+            if (enable) {
+                term_save_cursor(term);
+                term_set_screen(term, 1);
+            } else {
+                term_restore_cursor(term);
+                term_set_screen(term, 0);
+            }
+            break;
+        }
+    }
+}
+
+// Set private mode
 FUNCDEFN(DECSET)
 {
-    UNUSED(argc);
-    decprv_helper(term, argv[0], true);
+    set_modes_priv(term, argv, argc, true);
 }
 
-// NOTE(ben): Wrapper
+// Reset private mode
 FUNCDEFN(DECRST)
 {
-    UNUSED(argc);
-    decprv_helper(term, argv[0], false);
+    set_modes_priv(term, argv, argc, false);
 }
 
+// Set cursor style
 FUNCDEFN(DECSCUSR)
 {
     UNUSED(argc);

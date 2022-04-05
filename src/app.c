@@ -451,6 +451,9 @@ on_keypress_event(App *app, const WinKeyEvent *event)
         case KeyF9:
             term_print_history(app->term);
             return;
+        case KeyF10:
+            term_toggle_trace(app->term);
+            return;
         }
         break;
     default:

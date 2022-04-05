@@ -78,6 +78,7 @@ struct Term {
     Cell cell;
 
     TermParser parser;
+    bool tracing;
 };
 
 #endif

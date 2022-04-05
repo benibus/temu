@@ -36,8 +36,9 @@ void term_scroll(Term *term, int lines);
 void term_reset_scroll(Term *term);
 int term_cols(const Term *term);
 int term_rows(const Term *term);
-void term_print_history(const Term *);
-void term_print_stream(const Term *);
+void term_print_history(const Term *term);
+void term_print_stream(const Term *term);
+bool term_toggle_trace(Term *term);
 
 #endif
 
