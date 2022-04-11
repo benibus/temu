@@ -29,11 +29,8 @@
 
 // Option limits
 enum {
-    MIN_BORDER    = (0),      MAX_BORDER    = (INT16_MAX / 2),
-    MIN_HISTLINES = (1 << 8), MAX_HISTLINES = (1 << 15),
-    MIN_COLS      = (1),      MAX_COLS      = (1024),
-    MIN_ROWS      = (1),      MAX_ROWS      = (MAX_COLS * 2),
-    MIN_TABCOLS   = (1),      MAX_TABCOLS   = (32),
+    MIN_BORDER = (0),
+    MAX_BORDER = (INT16_MAX / 2),
 };
 
 static const struct {
@@ -503,9 +500,7 @@ app_get_font_metrics(const App *app,
 void
 app_set_properties(App *app, uint8 props, const char *str, size_t len)
 {
-    app = DEFAULT(app, &app_);
-
-    if (len >= INT_MAX) return;
+    if (!app || len >= INT_MAX) return;
 
     dbg_printf("props=0x%01x str=\"%.*s\"\n", props, (int)len, str);
 

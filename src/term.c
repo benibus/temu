@@ -42,7 +42,7 @@ static int term_set_y_abs(Term *term, int y);
 static int term_set_x_rel(Term *term, int x);
 static int term_set_y_rel(Term *term, int y);
 static void term_set_cursor_visibility(Term *term, bool visible);
-static void term_set_cursor_style(Term *term, uint style);
+static void term_set_cursor_style(Term *term, size_t style);
 static void term_set_cell_bg(Term *term, uint16 idx);
 static void term_set_cell_fg(Term *term, uint16 idx);
 static void term_set_cell_bg_rgb(Term *term, uint8 r, uint8 g, uint8 b);
@@ -51,13 +51,13 @@ static void term_reset_cell_bg(Term *term);
 static void term_reset_cell_fg(Term *term);
 static void term_set_cell_attrs(Term *term, uint16 mask, bool enable);
 static void term_reset_cell_attrs(Term *term);
+static void term_reset_cell(Term *term);
 static void term_set_screen(Term *term, bool alt);
 
 static void alloc_frame(Frame *, uint16, uint16);
 static void alloc_tabstops(uint8 **, uint16, uint16, uint16);
 static void update_dimensions(Term *, uint16, uint16);
 
-static uint cellslen(const Cell *, int);
 #define CELLINIT(t)                          \
     (Cell){                                  \
         .ucs4  = ' ',                        \
@@ -68,51 +68,56 @@ static uint cellslen(const Cell *, int);
         .attrs = 0                           \
     }
 
-#define FUNCPROTO(x) void x(Term *term, const char *data, const int *argv, int argc)
-#define FUNCNAME(x)  func_##x
-#define FUNCDECL(x)  static FUNCPROTO(FUNCNAME(x))
-#define FUNCDEFN(x)  inline FUNCPROTO(FUNCNAME(x))
+// Routine for emulating a known VT function as specified by ISO/ECMA/DEC standards, XTerm,
+// or any other terminal emulator. These functions are typically dispatched via
+// opcodes/parameters derived from escape sequences embedded in the input stream
+//
+// As of now, simple 1-byte codes (e.g \n, \r, \t) are handled elsewhere
+typedef void EmuFunc(Term *term, const Parser *parser);
 
-#define X_DISPATCH_FUNCS \
-    X_(RI) \
-    X_(DECSC) \
-    X_(DECRC) \
-    X_(ICH) \
-    X_(CUU) \
-    X_(CUD) \
-    X_(CUF) \
-    X_(CUB) \
-    X_(CNL) \
-    X_(CPL) \
-    X_(CHA) \
-    X_(CUP) \
-    X_(CHT) \
-    X_(DCH) \
-    X_(VPA) \
-    X_(VPR) \
-    X_(ED) \
-    X_(EL) \
-    X_(SGR) \
-    X_(DSR) \
-    X_(SM) \
-    X_(RM) \
-    X_(DECSET) \
-    X_(DECRST) \
-    X_(DECSCUSR) \
+#define XTABLE_EMUFUNCS \
+    X_(RI)              \
+    X_(DECSC)           \
+    X_(DECRC)           \
+    X_(ICH)             \
+    X_(CUU)             \
+    X_(CUD)             \
+    X_(CUF)             \
+    X_(CUB)             \
+    X_(CNL)             \
+    X_(CPL)             \
+    X_(CHA)             \
+    X_(CUP)             \
+    X_(CHT)             \
+    X_(DCH)             \
+    X_(VPA)             \
+    X_(VPR)             \
+    X_(ED)              \
+    X_(EL)              \
+    X_(SGR)             \
+    X_(DSR)             \
+    X_(SM)              \
+    X_(RM)              \
+    X_(DECSET)          \
+    X_(DECRST)          \
+    X_(DECSCUSR)        \
     X_(OSC)
 
-#define X_(cmd) FUNCDECL(cmd);
-X_DISPATCH_FUNCS
+// Generate prototypes
+#define X_(x) static EmuFunc emu_##x;
+XTABLE_EMUFUNCS
 #undef X_
 
-typedef FUNCPROTO((*DispatchFunc));
-
-static const DispatchFunc func_table[NumOpcodes] = {
-#define X_(cmd) [OPIDX_##cmd] = &FUNCNAME(cmd),
-    X_DISPATCH_FUNCS
+// Generate dispatch table
+static EmuFunc *const emu_funcs[NumOpcodes] = {
+#define X_(x) [OPIDX_##x] = &emu_##x,
+    XTABLE_EMUFUNCS
 #undef X_
 };
 
+#undef XTABLE_EMUFUNCS
+
+// Allocate/initialize terminal instance using an initialized application handle
 Term *
 term_create(App *app)
 {
@@ -167,6 +172,7 @@ term_create(App *app)
     return term;
 }
 
+// Deallocate terminal instance and kill any child processes
 void
 term_destroy(Term *term)
 {
@@ -185,6 +191,8 @@ term_destroy(Term *term)
     free(term);
 }
 
+// Start terminal child process using the specified shell and command-line.
+// Initialize the escape sequence parser
 int
 term_exec(Term *term, const char *shell, int argc, const char *const *argv)
 {
@@ -205,6 +213,7 @@ term_exec(Term *term, const char *shell, int argc, const char *const *argv)
 int term_cols(const Term *term) { return term->cols; }
 int term_rows(const Term *term) { return term->rows; }
 
+// Temporary glue code for passing screen data to the renderer
 static Frame *
 generate_frame(Term *term)
 {
@@ -243,12 +252,14 @@ term_draw(Term *term)
     }
 }
 
+// Send data to the child
 size_t
 term_push(Term *term, const void *data, size_t len)
 {
     return pty_write(term->mfd, data, len);
 }
 
+// Receive data from the child
 size_t
 term_pull(Term *term)
 {
@@ -382,14 +393,14 @@ static inline void
 print_trace(FILE *fp,
             uint64 time,
             uint32 opcode,
-            const TermParser *ctx,
+            const Parser *parser,
             const uchar *input,
             uint len)
 {
     const char *const opname = opcode_to_string(opcode);
     const uint opidx = opcode_to_index(opcode);
     const bool iswrite = (OPCODE_TAG(opcode) == OPTAG_WRITE);
-    const bool impl = (iswrite || !!func_table[opidx]);
+    const bool impl = (iswrite || !!emu_funcs[opidx]);
     const int color = isatty(fileno(fp)) ?
                           (opidx) ? (iswrite) ? 34 : (impl) ? 36 : 33 : 31 : 0;
 
@@ -406,17 +417,16 @@ print_trace(FILE *fp,
     case OPTAG_DCS:
     case OPTAG_OSC:
         fprintf(fp,
-                "\"%d;%.*s\"",
-                ctx->argi ? ctx->argv[0] : 0,
-                (int)arr_count(ctx->data),
-                (char *)ctx->data);
+                "\"%.*s\"",
+                (int)arr_count(parser->data),
+                (char *)parser->data);
         break;
     case OPTAG_WRITE:
         fprintf(fp, "%s", charstring(OPCODE_NO_TAG(opcode)));
         break;
     default:
-        for (int i = 0; i < ctx->argi + 1; i++) {
-            fprintf(fp, "%s%d", (i) ? ", " : "", ctx->argv[i]);
+        for (uint i = 0; i < parser->nargs; i++) {
+            fprintf(fp, "%s%zu", (i) ? ", " : "", parser->args[i]);
         }
         break;
     }
@@ -447,11 +457,8 @@ term_consume(Term *term, const uchar *str, size_t len)
             if (OPCODE_TAG(opcode) == OPTAG_WRITE) {
                 term_write_codepoint(term, OPCODE_NO_TAG(opcode));
             } else if (opcode) {
-                if (func_table[opidx]) {
-                    func_table[opidx](term,
-                                      (char *)term->parser.data,
-                                      term->parser.argv,
-                                      term->parser.argi+1);
+                if (emu_funcs[opidx]) {
+                    emu_funcs[opidx](term, &term->parser);
                 }
             }
         }
@@ -603,7 +610,7 @@ term_set_cursor_visibility(Term *term, bool visible)
 }
 
 void
-term_set_cursor_style(Term *term, uint style)
+term_set_cursor_style(Term *term, size_t style)
 {
     if (style < 8) {
         term->cur.style = style;
@@ -671,35 +678,17 @@ term_set_cell_attrs(Term *term, uint16 mask, bool enable)
 }
 
 void
+term_reset_cell(Term *term)
+{
+    term_reset_cell_attrs(term);
+    term_reset_cell_bg(term);
+    term_reset_cell_fg(term);
+}
+
+void
 term_set_screen(Term *term, bool alt)
 {
     term->ring = term->rings[alt];
-}
-
-uint
-cellslen(const Cell *cells, int lim)
-{
-    int l = 0;
-    int m = 0;
-    int h = MAX(0, lim - 1);
-
-    // Modified binary search
-    for (;;) {
-        m = (l + h) / 2;
-        if (cells[m].ucs4) {
-            if (cells[h].ucs4) {
-                return h + 1;
-            }
-            l = m + 1;
-        } else {
-            if (!cells[l].ucs4) {
-                return l;
-            }
-            h = m - 1;
-        }
-    }
-
-    return 0;
 }
 
 void term_print_history(const Term *term)
@@ -733,26 +722,112 @@ term_write_codepoint(Term *term, uint32 ucs4)
     }
 }
 
-// Operating system command
-FUNCDEFN(OSC)
+// Will be used for line rewrapping
+#if 0
+uint
+cellslen(const Cell *cells, int lim)
 {
-    /*
-     * Leading arguments:
-     *   0 - Set icon name and window title
-     *   1 - Set icon name
-     *   2 - Set window title
-     *   3 - Set window property
-     *   4 - Set following color specification
-     */
-    UNUSED(argc);
+    int l = 0;
+    int m = 0;
+    int h = MAX(0, lim - 1);
 
+    // Modified binary search
+    for (;;) {
+        m = (l + h) / 2;
+        if (cells[m].ucs4) {
+            if (cells[h].ucs4) {
+                return h + 1;
+            }
+            l = m + 1;
+        } else {
+            if (!cells[l].ucs4) {
+                return l;
+            }
+            h = m - 1;
+        }
+    }
+
+    return 0;
+}
+#endif
+
+// Returns parser argument at specified index, or 0 if out of bounds
+static inline size_t
+get_arg(const Parser *parser, uint idx)
+{
+    return (parser && idx < parser->nargs) ? parser->args[idx] : 0;
+}
+
+// Same as get_arg() but clamped to a range
+static inline size_t
+get_clamped_arg(const Parser *parser, uint idx, size_t min, size_t max)
+{
+    const size_t arg = get_arg(parser, idx);
+    if (!max || max < min) {
+        max = SIZE_MAX;
+    }
+    return CLAMP(arg, min, max);
+}
+
+// Returns argument suitable for cursor operations, i.e. limited to a nonzero signed
+// integer range
+#define get_cursor_arg(p,i) get_clamped_arg(p, i, 1, INT16_MAX)
+
+// Extracts numeric argument at start of control string - terminated by ';' or 0.
+// Sets readlen to the index *after* the delimiter
+static size_t
+parse_arg(const uchar *str, uint len, uint *readlen)
+{
+    size_t arg = 0;
+    uint i = 0;
+
+    for (; str && i < len; i++) {
+        const uchar c = str[i];
+        if (c >= '0' && c <= '9') {
+            if (arg <= SIZE_MAX / 10) {
+                const uint8 digit = c - '0';
+                arg *= 10;
+                arg += MIN(digit, SIZE_MAX - arg);
+            } else {
+                arg = SIZE_MAX;
+            }
+        } else if (c == ';' || !c) {
+            i += !!c;
+            break;
+        } else {
+            arg = 0;
+            break;
+        }
+    }
+
+    SETPTR(readlen, i);
+    return arg;
+}
+
+// Operating system command
+void
+emu_OSC(Term *term, const Parser *parser)
+{
+    const uchar *str = parser->data;
+    uint len = arr_count(str);
+    uint beg = 0;
+
+    const size_t arg = parse_arg(str, len, &beg);
+    str += beg;
+    len -= beg;
+
+    // 0 - Set icon name and window title
+    // 1 - Set icon name
+    // 2 - Set window title
+    // 3 - Set window property
+    // 4 - Set following color specification
     uint8 props = 0;
 
-    switch (argv[0]) {
+    switch (arg) {
     case 0:
     case 1:
         props |= APPPROP_ICON;
-        if (argv[0]) break;
+        if (arg) break;
         // fallthrough
     case 2:
         props |= APPPROP_TITLE;
@@ -762,17 +837,17 @@ FUNCDEFN(OSC)
     }
 
     if (props) {
-        app_set_properties(0, props, data, arr_count(data));
+        app_set_properties(term->app, props, (const char *)str, len);
     }
 
     return;
 }
 
 // Reverse index
-FUNCDEFN(RI)
+void
+emu_RI(Term *term, const Parser *parser)
 {
-    UNUSED(argv);
-    UNUSED(argc);
+    UNUSED(parser);
 
     if (term->cur.y > 0) {
         term_set_y_rel(term, -1);
@@ -782,119 +857,154 @@ FUNCDEFN(RI)
 }
 
 // Save cursor
-FUNCDEFN(DECSC)
+void
+emu_DECSC(Term *term, const Parser *parser)
 {
-    UNUSED(argv);
-    UNUSED(argc);
+    UNUSED(parser);
+
     term_save_cursor(term);
 }
 
 // Restore cursor
-FUNCDEFN(DECRC)
+void
+emu_DECRC(Term *term, const Parser *parser)
 {
-    UNUSED(argv);
-    UNUSED(argc);
+    UNUSED(parser);
+
     term_restore_cursor(term);
 }
 
 // Insert characters
-FUNCDEFN(ICH)
+void
+emu_ICH(Term *term, const Parser *parser)
 {
-    UNUSED(argc);
-    cells_insert(term->ring, CELLINIT(term), term->cur.x, term->cur.y, MAX(argv[0], 1));
+    const int arg = get_cursor_arg(parser, 0);
+
+    cells_insert(term->ring, CELLINIT(term), term->cur.x, term->cur.y, arg);
 }
 
 // Cursor up
-FUNCDEFN(CUU)
+void
+emu_CUU(Term *term, const Parser *parser)
 {
-    UNUSED(argc);
-    term_set_y_rel(term, -MAX(argv[0], 1));
+    const int arg = get_cursor_arg(parser, 0);
+
+    term_set_y_rel(term, -arg);
 }
 
 // Cursor down
-FUNCDEFN(CUD)
+void
+emu_CUD(Term *term, const Parser *parser)
 {
-    UNUSED(argc);
-    term_set_y_rel(term, +MAX(argv[0], 1));
+    const int arg = get_cursor_arg(parser, 0);
+
+    term_set_y_rel(term, +arg);
 }
 
 // Cursor forward
-FUNCDEFN(CUF)
+void
+emu_CUF(Term *term, const Parser *parser)
 {
-    UNUSED(argc);
-    term_set_x_rel(term, MAX(argv[0], 1));
+    const int arg = get_cursor_arg(parser, 0);
+
+    term_set_x_rel(term, +arg);
 }
 
 // Cursor backward
-FUNCDEFN(CUB)
+void
+emu_CUB(Term *term, const Parser *parser)
 {
-    UNUSED(argc);
-    term_set_x_rel(term, -MAX(argv[0], 1));
+    const int arg = get_cursor_arg(parser, 0);
+
+    term_set_x_rel(term, -arg);
 }
 
 // Cursor next line
-FUNCDEFN(CNL)
+void
+emu_CNL(Term *term, const Parser *parser)
 {
-    UNUSED(argc);
-    term_set_y_rel(term, +MAX(argv[0], 1));
+    const int arg = get_cursor_arg(parser, 0);
+
+    term_set_y_rel(term, +arg);
 }
 
 // Cursor previous line
-FUNCDEFN(CPL)
+void
+emu_CPL(Term *term, const Parser *parser)
 {
-    UNUSED(argc);
-    term_set_y_rel(term, -MAX(argv[0], 1));
+    const int arg = get_cursor_arg(parser, 0);
+
+    term_set_y_rel(term, -arg);
 }
 
 // Cursor horizontal absolute
-FUNCDEFN(CHA)
+void
+emu_CHA(Term *term, const Parser *parser)
 {
-    UNUSED(argc);
-    term_set_x_abs(term, MAX(argv[0], 1) - 1);
+    const int arg = get_cursor_arg(parser, 0) - 1;
+
+    term_set_x_abs(term, arg);
 }
 
 // Cursor position
-FUNCDEFN(CUP)
+void
+emu_CUP(Term *term, const Parser *parser)
 {
-    UNUSED(argc);
-    term_set_x_abs(term, MAX(argv[1], 1) - 1);
-    term_set_y_abs(term, MAX(argv[0], 1) - 1);
+    const int args[2] = {
+        [0] = get_cursor_arg(parser, 0) - 1,
+        [1] = get_cursor_arg(parser, 1) - 1,
+    };
+
+    term_set_y_abs(term, args[0]);
+    term_set_x_abs(term, args[1]);
 }
 
 // Cursor horizontal tabulation
-FUNCDEFN(CHT)
+void
+emu_CHT(Term *term, const Parser *parser)
 {
-    UNUSED(argc);
-    for (int n = DEFAULT(argv[0], 1); n > 0; n--) {
+    const int arg = get_cursor_arg(parser, 0);
+
+    const int limit = term->cols / term->tabcols;
+    for (int n = 0; n < arg && n < limit; n++) {
         term_write_tab(term);
     }
 }
 
 // Delete characters
-FUNCDEFN(DCH)
+void
+emu_DCH(Term *term, const Parser *parser)
 {
-    UNUSED(argc);
-    cells_delete(term->ring, term->cur.x, term->cur.y, argv[0]);
+    const int arg = get_cursor_arg(parser, 0);
+
+    cells_delete(term->ring, term->cur.x, term->cur.y, arg);
 }
 
 // Vertical position absolute
-FUNCDEFN(VPA)
+void
+emu_VPA(Term *term, const Parser *parser)
 {
-    UNUSED(argc);
-    term_set_y_abs(term, MAX(argv[0], 1) - 1);
+    const int arg = get_cursor_arg(parser, 0);
+
+    term_set_y_abs(term, arg - 1);
 }
 
 // Vertical position relative
-FUNCDEFN(VPR)
+void
+emu_VPR(Term *term, const Parser *parser)
 {
-    UNUSED(argc);
-    term_set_y_rel(term, MAX(argv[0], 1) - 1);
+    const int arg = get_cursor_arg(parser, 0);
+
+    term_set_y_rel(term, arg);
 }
 
 // Erase in display
-FUNCDEFN(ED)
+void
+emu_ED(Term *term, const Parser *parser)
 {
-    switch (argv[0]) {
+    const size_t arg = get_arg(parser, 0);
+
+    switch (arg) {
     case 0:
         rows_clear(term->ring, term->cur.y + 1, term->rows);
         cells_clear(term->ring, term->cur.x, term->cur.y, term->cols);
@@ -911,9 +1021,12 @@ FUNCDEFN(ED)
 }
 
 // Erase in line
-FUNCDEFN(EL)
+void
+emu_EL(Term *term, const Parser *parser)
 {
-    switch (argv[0]) {
+    const size_t arg = get_arg(parser, 0);
+
+    switch (arg) {
     case 0:
         cells_clear(term->ring, term->cur.x, term->cur.y, term->cols);
         break;
@@ -928,19 +1041,19 @@ FUNCDEFN(EL)
 }
 
 // Select graphic rendition
-FUNCDEFN(SGR)
+void
+emu_SGR(Term *term, const Parser *parser)
 {
-    int i = 0;
+    uint i = 0;
+    size_t args[5] = { 0 };
 
     do {
-        const int start = i;
+        args[0] = get_arg(parser, i);
 
-        switch (argv[i]) {
+        switch (args[0]) {
         // Reset defaults
         case 0:
-            term_reset_cell_attrs(term);
-            term_reset_cell_bg(term);
-            term_reset_cell_fg(term);
+            term_reset_cell(term);
             break;
 
         // Set visual attributes
@@ -962,7 +1075,7 @@ FUNCDEFN(SGR)
         case 32: case 33:
         case 34: case 35:
         case 36: case 37:
-            term_set_cell_fg(term, argv[i] - 30);
+            term_set_cell_fg(term, args[0] - 30);
             break;
         // Reset default foreground
         case 39:
@@ -974,7 +1087,7 @@ FUNCDEFN(SGR)
         case 42: case 43:
         case 44: case 45:
         case 46: case 47:
-            term_set_cell_bg(term, argv[i] - 40);
+            term_set_cell_bg(term, args[0] - 40);
             break;
         // Reset default background
         case 49:
@@ -983,41 +1096,34 @@ FUNCDEFN(SGR)
 
         case 38: // Set foreground to next arg(s)
         case 48: // Set background to next arg(s)
-            if (++i + 1 < argc) {
-                if (argv[i] == 5) {
-                    i++;
-                } else if (argv[i] == 2 && i + 3 < argc) {
+            i += 1;
+            if (i + 1 < parser->nargs) {
+                args[1] = get_arg(parser, i);
+                if (args[1] == 5) {
+                    // Set 0-255 (1 arg)
+                    i += 1;
+                    args[2] = get_arg(parser, i);
+                    if (args[0] == 48) {
+                        term_set_cell_bg(term, args[2] & 0xff);
+                    } else if (args[0] == 38) {
+                        term_set_cell_fg(term, args[2] & 0xff);
+                    }
+                } else if (args[1] == 2 && i + 3 < parser->nargs) {
+                    // Set literal RGB (3 args)
                     i += 3;
-                }
-            }
-            // Set 0-255 (1 arg)
-            if (i - start == 2) {
-                if (argv[start] == 48) {
-                    term_set_cell_bg(term, argv[i] & 0xff);
-                } else if (argv[start] == 38) {
-                    term_set_cell_fg(term, argv[i] & 0xff);
-                }
-            // Set literal RGB (3 args)
-            } else if (i - start == 4) {
-                if (argv[start] == 48) {
-                    term_set_cell_bg_rgb(term,
-                        argv[i-2] & 0xff,
-                        argv[i-1] & 0xff,
-                        argv[i-0] & 0xff
-                    );
-                } else if (argv[start] == 38) {
-                    term_set_cell_fg_rgb(term,
-                        argv[i-2] & 0xff,
-                        argv[i-1] & 0xff,
-                        argv[i-0] & 0xff
-                    );
+                    args[2] = get_arg(parser, i - 2);
+                    args[3] = get_arg(parser, i - 1);
+                    args[4] = get_arg(parser, i - 0);
+                    if (args[0] == 48) {
+                        term_set_cell_bg_rgb(term, args[2], args[3], args[4]);
+                    } else if (args[0] == 38) {
+                        term_set_cell_fg_rgb(term, args[2], args[3], args[4]);
+                    }
                 }
             } else {
                 // TODO(ben): confirm whether errors reset the defaults
                 dbg_printf("skiping invalid CSI:SGR sequence\n");
-                term_reset_cell_attrs(term);
-                term_reset_cell_bg(term);
-                term_reset_cell_fg(term);
+                term_reset_cell(term);
                 return;
             }
             break;
@@ -1027,7 +1133,7 @@ FUNCDEFN(SGR)
         case 92: case 93:
         case 94: case 95:
         case 96: case 97:
-            term_set_cell_fg(term, argv[i] - 90 + 8);
+            term_set_cell_fg(term, args[0] - 90 + 8);
             break;
 
         // Set background 8-15
@@ -1035,21 +1141,21 @@ FUNCDEFN(SGR)
         case 102: case 103:
         case 104: case 105:
         case 106: case 107:
-            term_set_cell_bg(term, argv[i] - 100 + 8);
+            term_set_cell_bg(term, args[0] - 100 + 8);
             break;
         }
-    } while (++i < argc);
+    } while (++i < parser->nargs);
 }
 
 // Device status report
-FUNCDEFN(DSR)
+void
+emu_DSR(Term *term, const Parser *parser)
 {
-    UNUSED(argc);
-
+    const size_t arg = get_arg(parser, 0);
     char str[64] = { 0 };
     int len = 0;
 
-    switch (argv[0]) {
+    switch (arg) {
     case 5: // Respond with an "OK" status
         len = snprintf(str, sizeof(str), "\033[0n");
         break;
@@ -1067,9 +1173,9 @@ FUNCDEFN(DSR)
 
 // Helper for setting/resetting standard modes via SM/RM
 static inline void
-set_modes(Term *term, const int *args, int nargs, bool enable)
+set_modes(Term *term, const size_t *args, uint nargs, bool enable)
 {
-    for (int i = 0; args && i < nargs; i++) {
+    for (uint i = 0; args && i < nargs; i++) {
         switch (args[i]) {
         case 2: // KAM - Keyboard Action Mode
             break;
@@ -1084,21 +1190,24 @@ set_modes(Term *term, const int *args, int nargs, bool enable)
 }
 
 // Set mode
-FUNCDEFN(SM) {
-    set_modes(term, argv, argc, true);
+void
+emu_SM(Term *term, const Parser *parser)
+{
+    set_modes(term, parser->args, parser->nargs, true);
 }
 
 // Reset mode
-FUNCDEFN(RM)
+void
+emu_RM(Term *term, const Parser *parser)
 {
-    set_modes(term, argv, argc, false);
+    set_modes(term, parser->args, parser->nargs, false);
 }
 
 // Helper for setting/resetting private modes via DECSET/DECRST
 static inline void
-set_modes_priv(Term *term, const int *args, int nargs, bool enable)
+set_modes_priv(Term *term, const size_t *args, uint nargs, bool enable)
 {
-    for (int i = 0; args && i < nargs; i++) {
+    for (uint i = 0; args && i < nargs; i++) {
         switch (args[i]) {
         case 1: // DECCKM - Application cursor keys
             break;
@@ -1119,21 +1228,25 @@ set_modes_priv(Term *term, const int *args, int nargs, bool enable)
 }
 
 // Set private mode
-FUNCDEFN(DECSET)
+void
+emu_DECSET(Term *term, const Parser *parser)
 {
-    set_modes_priv(term, argv, argc, true);
+    set_modes_priv(term, parser->args, parser->nargs, true);
 }
 
 // Reset private mode
-FUNCDEFN(DECRST)
+void
+emu_DECRST(Term *term, const Parser *parser)
 {
-    set_modes_priv(term, argv, argc, false);
+    set_modes_priv(term, parser->args, parser->nargs, false);
 }
 
 // Set cursor style
-FUNCDEFN(DECSCUSR)
+void
+emu_DECSCUSR(Term *term, const Parser *parser)
 {
-    UNUSED(argc);
-    term_set_cursor_style(term, argv[0]);
+    const size_t arg = get_arg(parser, 0);
+
+    term_set_cursor_style(term, arg);
 }
 

@@ -22,6 +22,13 @@
 #include "fonts.h"
 #include "app.h"
 
+enum {
+    MIN_HISTLINES = (1 << 8), MAX_HISTLINES = (1 << 15),
+    MIN_COLS      = (1),      MAX_COLS      = INT16_MAX,
+    MIN_ROWS      = (1),      MAX_ROWS      = INT16_MAX,
+    MIN_TABCOLS   = (1),      MAX_TABCOLS   = (32),
+};
+
 typedef struct Term Term;
 
 Term *term_create(App *app);

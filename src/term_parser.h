@@ -21,9 +21,9 @@
 #include "common.h"
 #include "term_private.h"
 
-bool parser_init(TermParser *ctx);
-void parser_fini(TermParser *ctx);
-uint32 parser_emit(TermParser *ctx, const uchar *data, size_t max, size_t *adv);
+bool parser_init(Parser *parser);
+void parser_fini(Parser *parser);
+uint32 parser_emit(Parser *parser, const uchar *data, size_t max, size_t *adv);
 
 #endif
 

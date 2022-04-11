@@ -28,15 +28,17 @@ static_assert(FontStyleBold == ATTR_BOLD, "Bitmask mismatch.");
 static_assert(FontStyleItalic == ATTR_ITALIC, "Bitmask mismatch.");
 static_assert(FontStyleBoldItalic == (ATTR_BOLD|ATTR_ITALIC), "Bitmask mismatch.");
 
-typedef struct TermParser TermParser;
+typedef struct Parser Parser;
 
-struct TermParser {
-    uint state;       // Current FSM state
-    uchar *data;      // Dynamic buffer for OSC/DCS/APC string sequences
-    int argv[16];     // Numeric parameters
-    int argi;         // Numeric parameter index
-    bool overflow;    // Numeric parameter overflowed
-    uchar chars[8+1]; // Stored escape sequence/UTF-8 bytes
+enum { MAX_ARGS = 16 };
+
+struct Parser {
+    uint state;            // Current FSM state
+    uchar *data;           // Dynamic buffer for OSC/DCS/APC string sequences
+    uchar chars[8+1];      // Stored escape sequence/UTF-8 bytes
+    size_t args[MAX_ARGS]; // Integer args
+    uint16 nargs;          // Number of integer args, capped at MAX_ARGS
+    size_t nargs_;         // Number of integer args, uncapped (internal use only)
 };
 
 enum { MAX_READ = 4096 };
@@ -77,7 +79,7 @@ struct Term {
     Frame frame;
     Cell cell;
 
-    TermParser parser;
+    Parser parser;
     bool tracing;
 };
 
