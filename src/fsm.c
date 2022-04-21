@@ -41,163 +41,162 @@ fsm_generate(FSM *fsm)
      * A negative state value is used as a self-reference (i.e. no change) and
      * expands to the appropriate state in the actual table
      */
-    static const TableDesc descs[NumStates] = {
-        [StateGround] = {
+    static const TableDesc descs[NUM_STATES] = {
+        [STATE_GROUND] = {
             .ranges = {
-                { 0xf0, 0xf7, StateUtf8B3, ActionUtf8GetB4 },
-                { 0xe0, 0xef, StateUtf8B2, ActionUtf8GetB3 },
-                { 0xc0, 0xdf, StateUtf8B1, ActionUtf8GetB2 },
-                { 0x20, 0x7f, -1, ActionPrint },
-                { 0x00, 0x1f, -1, ActionExec },
-                { 0x00, 0xff, -1, ActionUtf8Error },
+                { 0xf0, 0xf7, STATE_UTF8B3, ACTION_UTF8GETB4 },
+                { 0xe0, 0xef, STATE_UTF8B2, ACTION_UTF8GETB3 },
+                { 0xc0, 0xdf, STATE_UTF8B1, ACTION_UTF8GETB2 },
+                { 0x00, 0x7f, -1, ACTION_PRINT },
+                { 0x00, 0xff, -1, ACTION_UTF8ERROR },
             }
         },
 
-        [StateUtf8B1] = {
+        [STATE_UTF8B1] = {
             .ranges = {
-                { 0x80, 0xff, StateGround, ActionPrintWide },
-                { 0x00, 0x3f, StateGround, ActionPrintWide },
-                { 0x00, 0xff, StateGround, ActionUtf8Error },
+                { 0x80, 0xff, STATE_GROUND, ACTION_PRINTWIDE },
+                { 0x00, 0x3f, STATE_GROUND, ACTION_PRINTWIDE },
+                { 0x00, 0xff, STATE_GROUND, ACTION_UTF8ERROR },
             }
         },
 
-        [StateUtf8B2] = {
+        [STATE_UTF8B2] = {
             .ranges = {
-                { 0x80, 0xff, StateUtf8B1, ActionUtf8GetB2 },
-                { 0x00, 0x3f, StateUtf8B1, ActionUtf8GetB2 },
-                { 0x00, 0xff, StateGround, ActionUtf8Error },
+                { 0x80, 0xff, STATE_UTF8B1, ACTION_UTF8GETB2 },
+                { 0x00, 0x3f, STATE_UTF8B1, ACTION_UTF8GETB2 },
+                { 0x00, 0xff, STATE_GROUND, ACTION_UTF8ERROR },
             }
         },
 
-        [StateUtf8B3] = {
+        [STATE_UTF8B3] = {
             .ranges = {
-                { 0x80, 0xff, StateUtf8B2, ActionUtf8GetB3 },
-                { 0x00, 0x3f, StateUtf8B2, ActionUtf8GetB3 },
-                { 0x00, 0xff, StateGround, ActionUtf8Error },
+                { 0x80, 0xff, STATE_UTF8B2, ACTION_UTF8GETB3 },
+                { 0x00, 0x3f, STATE_UTF8B2, ACTION_UTF8GETB3 },
+                { 0x00, 0xff, STATE_GROUND, ACTION_UTF8ERROR },
             }
         },
 
-        [StateEsc1] = {
+        [STATE_ESC1] = {
             .ranges = {
-                { ']',  ']',  StateOsc, 0 },
-                { '[',  '[',  StateCsi1, 0 },
-                { '0',  0x7e, StateGround, ActionEscDispatch },
-                { ' ',  '/',  StateEsc2, ActionGetIntermediate },
-                { 0x00, 0x1f, -1, ActionExec },
+                { ']',  ']',  STATE_OSC, 0 },
+                { '[',  '[',  STATE_CSI1, 0 },
+                { '0',  0x7e, STATE_GROUND, ACTION_ESCDISPATCH },
+                { ' ',  '/',  STATE_ESC2, ACTION_GETINTERMEDIATE },
+                { 0x00, 0x1f, -1, ACTION_PRINT },
                 { 0x00, 0xff, -1, 0 },
             }
         },
 
-        [StateEsc2] = {
+        [STATE_ESC2] = {
             .ranges = {
-                { '0',  0x7e, StateGround, ActionEscDispatch },
-                { ' ',  '/',  StateGround, 0 },
-                { 0x00, 0x1f, -1, ActionExec },
+                { '0',  0x7e, STATE_GROUND, ACTION_ESCDISPATCH },
+                { ' ',  '/',  STATE_GROUND, 0 },
+                { 0x00, 0x1f, -1, ACTION_PRINT },
                 { 0x00, 0xff, -1, 0 },
             }
         },
 
-        [StateCsi1] = {
+        [STATE_CSI1] = {
             .ranges = {
-                { '@',  0x7e, StateGround, ActionCsiDispatch },
-                { '<',  '?',  StateCsiParam, ActionGetPrivMarker },
-                { ':',  ':',  StateCsiIgnore, 0 },
-                { '0',  ';',  StateCsiParam, ActionParam },
-                { ' ',  '/',  StateCsi2, ActionGetIntermediate },
-                { 0x00, 0x1f, -1, ActionExec },
+                { '@',  0x7e, STATE_GROUND, ACTION_CSIDISPATCH },
+                { '<',  '?',  STATE_CSIPARAM, ACTION_GETPRIVMARKER },
+                { ':',  ':',  STATE_CSIIGNORE, 0 },
+                { '0',  ';',  STATE_CSIPARAM, ACTION_PARAM },
+                { ' ',  '/',  STATE_CSI2, ACTION_GETINTERMEDIATE },
+                { 0x00, 0x1f, -1, ACTION_PRINT },
                 { 0x00, 0xff, -1, 0 },
             }
         },
 
-        [StateCsi2] = {
+        [STATE_CSI2] = {
             .ranges = {
-                { '@',  0x7e,  StateGround, ActionCsiDispatch },
-                { ' ',  '?',   StateCsiIgnore, 0 },
-                { 0x00, 0x1f,  -1, ActionExec },
+                { '@',  0x7e,  STATE_GROUND, ACTION_CSIDISPATCH },
+                { ' ',  '?',   STATE_CSIIGNORE, 0 },
+                { 0x00, 0x1f,  -1, ACTION_PRINT },
                 { 0x00, 0xff,  -1, 0 },
             }
         },
 
-        [StateCsiIgnore] = {
+        [STATE_CSIIGNORE] = {
             .ranges = {
-                { '@',  0x7e, StateGround, 0 },
-                { 0x00, 0x1f, -1, ActionExec },
+                { '@',  0x7e, STATE_GROUND, 0 },
+                { 0x00, 0x1f, -1, ACTION_PRINT },
                 { 0x00, 0xff, -1, 0 },
             }
         },
 
-        [StateCsiParam] = {
+        [STATE_CSIPARAM] = {
             .ranges = {
-                { '@',  0x7e, StateGround, ActionCsiDispatch },
-                { '<',  '?',  StateCsiIgnore, 0 },
-                { ':',  ':',  StateCsiIgnore, 0 },
-                { '0',  ';',  -1, ActionParam },
-                { ' ',  '/',  StateCsi2, ActionGetIntermediate },
-                { 0x00, 0x1f, -1, ActionExec },
+                { '@',  0x7e, STATE_GROUND, ACTION_CSIDISPATCH },
+                { '<',  '?',  STATE_CSIIGNORE, 0 },
+                { ':',  ':',  STATE_CSIIGNORE, 0 },
+                { '0',  ';',  -1, ACTION_PARAM },
+                { ' ',  '/',  STATE_CSI2, ACTION_GETINTERMEDIATE },
+                { 0x00, 0x1f, -1, ACTION_PRINT },
                 { 0x00, 0xff, -1, 0 },
             }
         },
 
-        [StateDcs1] = {
+        [STATE_DCS1] = {
             .ranges = {
-                { '@',  0x7e, StateDcsPass, 0 },
-                { '<',  '?',  StateDcsParam, ActionGetPrivMarker },
-                { ':',  ':',  StateDcsIgnore, 0 },
-                { '0',  ';',  StateDcsParam, ActionParam },
-                { ' ',  '/',  StateDcs2, ActionGetIntermediate },
-                { 0x00, 0x1f, -1, ActionExec },
+                { '@',  0x7e, STATE_DCSPASS, 0 },
+                { '<',  '?',  STATE_DCSPARAM, ACTION_GETPRIVMARKER },
+                { ':',  ':',  STATE_DCSIGNORE, 0 },
+                { '0',  ';',  STATE_DCSPARAM, ACTION_PARAM },
+                { ' ',  '/',  STATE_DCS2, ACTION_GETINTERMEDIATE },
+                { 0x00, 0x1f, -1, ACTION_PRINT },
                 { 0x00, 0xff, -1, 0 },
             }
         },
 
-        [StateDcs2] = {
+        [STATE_DCS2] = {
             .ranges = {
-                { '@',  0x7e, StateDcsPass, 0 },
-                { ' ',  '?',  StateDcsIgnore, 0 },
-                { 0x00, 0x1f, -1, ActionExec },
+                { '@',  0x7e, STATE_DCSPASS, 0 },
+                { ' ',  '?',  STATE_DCSIGNORE, 0 },
+                { 0x00, 0x1f, -1, ACTION_PRINT },
                 { 0x00, 0xff, -1, 0 },
             }
         },
 
-        [StateDcsIgnore] = {
+        [STATE_DCSIGNORE] = {
             .ranges = {
-                { 0x9c, 0x9c, StateGround, 0 },
-                { 0x00, 0x1f, -1, ActionExec },
+                { 0x9c, 0x9c, STATE_GROUND, 0 },
+                { 0x00, 0x1f, -1, ACTION_PRINT },
                 { 0x00, 0xff, -1, 0 },
             }
         },
 
-        [StateDcsParam] = {
+        [STATE_DCSPARAM] = {
             .ranges = {
-                { '@',  0x7e, StateDcsPass, 0 },
-                { '<',  '?',  StateDcsIgnore, 0 },
-                { ':',  ':',  StateDcsIgnore, 0 },
-                { '0',  ';',  -1, ActionParam },
-                { ' ',  '/',  StateDcs2, ActionGetIntermediate },
-                { 0x00, 0x1f, -1, ActionExec },
+                { '@',  0x7e, STATE_DCSPASS, 0 },
+                { '<',  '?',  STATE_DCSIGNORE, 0 },
+                { ':',  ':',  STATE_DCSIGNORE, 0 },
+                { '0',  ';',  -1, ACTION_PARAM },
+                { ' ',  '/',  STATE_DCS2, ACTION_GETINTERMEDIATE },
+                { 0x00, 0x1f, -1, ACTION_PRINT },
                 { 0x00, 0xff, -1, 0 },
             }
         },
 
-        [StateDcsPass] = {
+        [STATE_DCSPASS] = {
             .ranges = {
-                { 0x9c, 0x9c, StateGround, 0 },
-                { 0x00, 0x7e, -1, ActionPut },
+                { 0x9c, 0x9c, STATE_GROUND, 0 },
+                { 0x00, 0x7e, -1, ACTION_PUT },
                 { 0x00, 0xff, -1, 0 },
             }
         },
 
-        [StateOsc] = {
+        [STATE_OSC] = {
             .ranges = {
-                { 0x07, 0x07, StateGround, ActionOscEnd },
+                { 0x07, 0x07, STATE_GROUND, ACTION_OSCDISPATCH },
                 { 0x00, 0x1f, -1, 0 },
-                { 0x00, 0xff, -1, ActionOscPut },
+                { 0x00, 0xff, -1, ACTION_PUT },
             }
         },
 
-        [StateSosPmApc] = {
+        [STATE_SOSPMAPC] = {
             .ranges = {
-                { 0x9c, 0x9c, StateGround, 0 },
+                { 0x9c, 0x9c, STATE_GROUND, 0 },
                 { 0x00, 0xff, -1, 0 },
             }
         },
@@ -211,7 +210,7 @@ build_table(FSM *fsm, const TableDesc *descs)
 {
     // First pass over each state/character
     for (int c = 255; c >= 0; c--) {
-        for (int s = 0; s < NumStates; s++) {
+        for (int s = 0; s < NUM_STATES; s++) {
             uint8 state  = s;
             uint8 action = 0;
             const TableRange *range = find_range(c, descs[s]);
@@ -226,17 +225,17 @@ build_table(FSM *fsm, const TableDesc *descs)
     }
 
     // Second pass for control characters that are [mostly] state-independent
-    for (int s = 0; s < NumStates; s++) {
+    for (int s = 0; s < NUM_STATES; s++) {
         switch (s) {
         // 0x00-0x3f are valid UTF-8 continuation bytes, so we exclude these
-        case StateUtf8B3:
-        case StateUtf8B2:
-        case StateUtf8B1:
+        case STATE_UTF8B3:
+        case STATE_UTF8B2:
+        case STATE_UTF8B1:
             break;
         default:
-            fsm->table[0x1b][s] = PAIR(StateEsc1, ActionClear);
-            fsm->table[0x1a][s] = PAIR(StateGround, ActionExec);
-            fsm->table[0x18][s] = PAIR(StateGround, ActionExec);
+            fsm->table[0x1b][s] = PAIR(STATE_ESC1, ACTION_CLEAR);
+            fsm->table[0x1a][s] = PAIR(STATE_GROUND, ACTION_PRINT);
+            fsm->table[0x18][s] = PAIR(STATE_GROUND, ACTION_PRINT);
             break;
         }
     }
@@ -269,7 +268,7 @@ find_range(uchar c, TableDesc desc)
 void
 fsm_print(FILE *fp, const FSM *fsm)
 {
-    for (int s = 0; s < NumStates; s++) {
+    for (int s = 0; s < NUM_STATES; s++) {
         fprintf(fp, "STATE(%s):\n", fsm_state_to_string(s));
         for (int c = 0; c < 256; c++) {
             const uint16 pair = fsm->table[c][s];

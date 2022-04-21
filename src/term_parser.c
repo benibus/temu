@@ -174,87 +174,75 @@ do_action(Parser *parser, uint16 pair, uchar c)
     uint32 op = 0;
 
     switch (GET_ACTION(pair)) {
-    case ActionNone:
-    case ActionIgnore:
+    case ACTION_NONE:
+    case ACTION_IGNORE:
         break;
-    case ActionPrint:
-    case ActionExec:
+    case ACTION_PRINT:
         arg_set(parser, c);
         op = OP_WRITE;
         break;
-    case ActionPrintWide: {
+    case ACTION_PRINTWIDE:
         parser->seq.type = 0;
         parser->seq.chars[3] = c;
         arg_set(parser, sequence_encode(&parser->seq));
         op = OP_WRITE;
         reset_sequence(parser);
         break;
-    }
-    case ActionUtf8GetB2:
+    case ACTION_UTF8GETB2:
         parser->seq.chars[2] = c;
         break;
-    case ActionUtf8GetB3:
+    case ACTION_UTF8GETB3:
         parser->seq.chars[1] = c;
         break;
-    case ActionUtf8GetB4:
+    case ACTION_UTF8GETB4:
         parser->seq.chars[0] = c;
         break;
-    case ActionUtf8Error:
+    case ACTION_UTF8ERROR:
         err_printf("Discarding malformed UTF-8 sequence\n");
         // memset(parser->chars, 0, sizeof(parser->chars));
         reset_sequence(parser);
         break;
-    case ActionHook:
-        // sets handler based on DCS parameters, intermediates, and new char
+    case ACTION_HOOK: // sets handler based on DCS parameters, intermediates, and new char
         break;
-    case ActionUnhook:
+    case ACTION_UNHOOK:
         break;
-    case ActionPut:
+    case ACTION_PUT:
         arr_push(parser->data, c);
         break;
-    case ActionOscStart:
-        reset_args(parser);
-        reset_string(parser);
-        break;
-    case ActionOscPut:
-        arr_push(parser->data, c);
-        break;
-    case ActionOscEnd:
+    case ACTION_OSCDISPATCH:
         arr_push(parser->data, 0);
         parser->seq.type = SEQ_OSC;
         op = sequence_to_opcode(&parser->seq);
         reset_sequence(parser);
         break;
-    case ActionGetPrivMarker:
+    case ACTION_GETPRIVMARKER:
         parser->seq.chars[2] = c;
         break;
-    case ActionGetIntermediate:
+    case ACTION_GETINTERMEDIATE:
         parser->seq.chars[1] = c;
         break;
-    case ActionParam:
+    case ACTION_PARAM:
         if (c == ';') {
             arg_next(parser);
         } else {
             arg_accum(parser, c - '0');
         }
         break;
-    case ActionClear:
+    case ACTION_CLEAR:
         reset(parser);
         break;
-    case ActionEscDispatch: {
+    case ACTION_ESCDISPATCH:
         parser->seq.type = SEQ_ESC;
         parser->seq.chars[0] = c;
         op = sequence_to_opcode(&parser->seq);
         reset_sequence(parser);
         break;
-    }
-    case ActionCsiDispatch: {
+    case ACTION_CSIDISPATCH:
         parser->seq.type = SEQ_CSI;
         parser->seq.chars[0] = c;
         op = sequence_to_opcode(&parser->seq);
         reset_sequence(parser);
         break;
-    }
     default:
         break;
     }

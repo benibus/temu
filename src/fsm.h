@@ -20,81 +20,78 @@
 
 #include "common.h"
 
-#define X_STATES  \
-    X_(Ground)    \
-    X_(Utf8B1)    \
-    X_(Utf8B2)    \
-    X_(Utf8B3)    \
-    X_(Esc1)      \
-    X_(Esc2)      \
-    X_(Csi1)      \
-    X_(Csi2)      \
-    X_(CsiParam)  \
-    X_(CsiIgnore) \
-    X_(Osc)       \
-    X_(Dcs1)      \
-    X_(Dcs2)      \
-    X_(DcsParam)  \
-    X_(DcsIgnore) \
-    X_(DcsPass)   \
-    X_(SosPmApc)
+#define XTABLE_STATES \
+    X_(GROUND)        \
+    X_(UTF8B1)        \
+    X_(UTF8B2)        \
+    X_(UTF8B3)        \
+    X_(ESC1)          \
+    X_(ESC2)          \
+    X_(CSI1)          \
+    X_(CSI2)          \
+    X_(CSIPARAM)      \
+    X_(CSIIGNORE)     \
+    X_(OSC)           \
+    X_(DCS1)          \
+    X_(DCS2)          \
+    X_(DCSPARAM)      \
+    X_(DCSIGNORE)     \
+    X_(DCSPASS)       \
+    X_(SOSPMAPC)
 
-#define X_(x) State##x,
-typedef enum { X_STATES NumStates } FSMState;
+#define X_(x) STATE_##x,
+typedef enum { XTABLE_STATES NUM_STATES } FSMState;
 #undef X_
 
 static inline const char *
 fsm_state_to_string(uint8 state)
 {
-#define X_(x) [State##x] = #x,
-    static const char *strings[NumStates] = { X_STATES };
+#define X_(x) [STATE_##x] = #x,
+    static const char *strings[NUM_STATES] = { XTABLE_STATES };
 #undef X_
-    ASSERT(state < NumStates);
+    ASSERT(state < NUM_STATES);
     return strings[state];
 }
 
-#define X_ACTIONS       \
-    X_(None)            \
-    X_(Ignore)          \
-    X_(Print)           \
-    X_(PrintWide)       \
-    X_(Exec)            \
-    X_(Clear)           \
-    X_(GetIntermediate) \
-    X_(GetPrivMarker)   \
-    X_(Param)           \
-    X_(EscDispatch)     \
-    X_(CsiDispatch)     \
-    X_(Hook)            \
-    X_(Unhook)          \
-    X_(Put)             \
-    X_(OscStart)        \
-    X_(OscPut)          \
-    X_(OscEnd)          \
-    X_(Utf8GetB2)       \
-    X_(Utf8GetB3)       \
-    X_(Utf8GetB4)       \
-    X_(Utf8Error)
+#define XTABLE_ACTIONS  \
+    X_(NONE)            \
+    X_(IGNORE)          \
+    X_(PRINT)           \
+    X_(PRINTWIDE)       \
+    X_(CLEAR)           \
+    X_(GETINTERMEDIATE) \
+    X_(GETPRIVMARKER)   \
+    X_(PARAM)           \
+    X_(ESCDISPATCH)     \
+    X_(CSIDISPATCH)     \
+    X_(HOOK)            \
+    X_(UNHOOK)          \
+    X_(PUT)             \
+    X_(OSCDISPATCH)     \
+    X_(UTF8GETB2)       \
+    X_(UTF8GETB3)       \
+    X_(UTF8GETB4)       \
+    X_(UTF8ERROR)
 
-#define X_(x) Action##x,
-typedef enum { X_ACTIONS NumActions } FSMAction;
+#define X_(x) ACTION_##x,
+typedef enum { XTABLE_ACTIONS NUM_ACTIONS } FSMAction;
 #undef X_
 
 static inline const char *
 fsm_action_to_string(uint8 action)
 {
-#define X_(x) [Action##x] = #x,
-    static const char *strings[NumActions] = { X_ACTIONS };
+#define X_(x) [ACTION_##x] = #x,
+    static const char *strings[NUM_ACTIONS] = { XTABLE_ACTIONS };
 #undef X_
-    ASSERT(action < NumActions);
+    ASSERT(action < NUM_ACTIONS);
     return strings[action];
 }
 
-#undef X_STATES
-#undef X_ACTIONS
+#undef XTABLE_STATES
+#undef XTABLE_ACTIONS
 
 typedef struct {
-    uint16 table[256][NumStates];
+    uint16 table[256][NUM_STATES];
 } FSM;
 
 #define PAIR(state,action) ((((state) & 0xff) << 8)|((action) & 0xff))
