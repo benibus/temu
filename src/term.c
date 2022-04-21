@@ -33,7 +33,6 @@ static int cursor_set_x_rel(Cursor *cur, int x, int max);
 static int cursor_set_y_rel(Cursor *cur, int y, int max);
 
 static size_t term_consume(Term *term, const uchar *data, size_t len);
-static void term_write_codepoint(Term *term, uint32 ucs4);
 static void term_write_printable(Term *term, uint32 ucs4, CellType type);
 static void term_write_tab(Term *term);
 static void term_write_newline(Term *term);
@@ -76,6 +75,7 @@ static void update_dimensions(Term *, uint16, uint16);
 typedef void EmuFunc(Term *term, const Parser *parser);
 
 #define XTABLE_EMUFUNCS \
+    X_(WRITE)           \
     X_(RI)              \
     X_(DECSC)           \
     X_(DECRC)           \
@@ -109,11 +109,9 @@ XTABLE_EMUFUNCS
 #undef X_
 
 // Generate dispatch table
-static EmuFunc *const emu_funcs[NumOpcodes] = {
-#define X_(x) [OPIDX_##x] = &emu_##x,
-    XTABLE_EMUFUNCS
+#define X_(x) [OP_##x] = &emu_##x,
+static EmuFunc *const emu_funcs[NUM_OPCODES] = { XTABLE_EMUFUNCS };
 #undef X_
-};
 
 #undef XTABLE_EMUFUNCS
 
@@ -392,37 +390,33 @@ term_resize(Term *term, uint width, uint height)
 static inline void
 print_trace(FILE *fp,
             uint64 time,
-            uint32 opcode,
+            uint32 op,
             const Parser *parser,
             const uchar *input,
             uint len)
 {
-    const char *const opname = opcode_to_string(opcode);
-    const uint opidx = opcode_to_index(opcode);
-    const bool iswrite = (OPCODE_TAG(opcode) == OPTAG_WRITE);
-    const bool impl = (iswrite || !!emu_funcs[opidx]);
+    const char *const opname = opcode_name(op);
+    const bool iswrite = (op == OP_WRITE);
+    const bool impl = (iswrite || !!emu_funcs[op]);
     const int color = isatty(fileno(fp)) ?
-                          (opidx) ? (iswrite) ? 34 : (impl) ? 36 : 33 : 31 : 0;
+                          (op) ? (iswrite) ? 34 : (impl) ? 36 : 33 : 31 : 0;
 
     if (color) {
         fprintf(fp, "\033[0;%dm%lu ", color, time);
     } else {
-        fprintf(fp, "%lu %c ", time, (opcode) ? (impl) ? '+' : '-' : '?');
+        fprintf(fp, "%lu %c ", time, (op) ? (impl) ? '+' : '-' : '?');
     }
     fprintf(fp, "%s(", opname);
 
-    switch (OPCODE_TAG(opcode)) {
+    switch (opcode_type(op)) {
+    case SEQ_DCS:
+    case SEQ_OSC:
+        fprintf(fp, "\"%.*s\"", (int)arr_count(parser->data), (char *)parser->data);
+        break;
     case 0:
-        break;
-    case OPTAG_DCS:
-    case OPTAG_OSC:
-        fprintf(fp,
-                "\"%.*s\"",
-                (int)arr_count(parser->data),
-                (char *)parser->data);
-        break;
-    case OPTAG_WRITE:
-        fprintf(fp, "%s", charstring(OPCODE_NO_TAG(opcode)));
+        for (uint i = 0; i < parser->nargs; i++) {
+            fprintf(fp, "%s%s", (i) ? ", " : "", charstring(parser->args[i]));
+        }
         break;
     default:
         for (uint i = 0; i < parser->nargs; i++) {
@@ -446,20 +440,16 @@ term_consume(Term *term, const uchar *str, size_t len)
 
     while (i < len) {
         size_t adv;
-        const uint32 opcode = parser_emit(&term->parser, &str[i], len - i, &adv);
+        const uint32 op = parser_emit(&term->parser, &str[i], len - i, &adv);
 
         if (term->tracing) {
-            print_trace(stdout, time, opcode, &term->parser, &str[i], adv);
+            print_trace(stdout, time, op, &term->parser, &str[i], adv);
         }
 
-        if (opcode) {
-            const uint opidx = opcode_to_index(opcode);
-            if (OPCODE_TAG(opcode) == OPTAG_WRITE) {
-                term_write_codepoint(term, OPCODE_NO_TAG(opcode));
-            } else if (opcode) {
-                if (emu_funcs[opidx]) {
-                    emu_funcs[opidx](term, &term->parser);
-                }
+        if (op) {
+            ASSERT(op < NUM_OPCODES);
+            if (emu_funcs[op]) {
+                emu_funcs[op](term, &term->parser);
             }
         }
 
@@ -696,32 +686,6 @@ void term_print_history(const Term *term)
     dbg_print_ring(term->ring);
 }
 
-inline void
-term_write_codepoint(Term *term, uint32 ucs4)
-{
-    switch (ucs4) {
-    case '\n':
-    case '\v':
-    case '\f':
-        term_write_newline(term);
-        break;
-    case '\t':
-        term_write_tab(term);
-        break;
-    case '\r':
-        term_set_x_abs(term, 0);
-        break;
-    case '\b':
-        term_set_x_rel(term, -1);
-        break;
-    case '\a':
-        break;
-    default:
-        term_write_printable(term, ucs4, CellTypeNormal);
-        break;
-    }
-}
-
 // Will be used for line rewrapping
 #if 0
 uint
@@ -802,6 +766,35 @@ parse_arg(const uchar *str, uint len, uint *readlen)
 
     SETPTR(readlen, i);
     return arg;
+}
+
+// Write codepoint to ring buffer or execute control function
+inline void
+emu_WRITE(Term *term, const Parser *parser)
+{
+    const size_t c = get_arg(parser, 0);
+
+    switch (c) {
+    case '\n':
+    case '\v':
+    case '\f':
+        term_write_newline(term);
+        break;
+    case '\t':
+        term_write_tab(term);
+        break;
+    case '\r':
+        term_set_x_abs(term, 0);
+        break;
+    case '\b':
+        term_set_x_rel(term, -1);
+        break;
+    case '\a':
+        break;
+    default:
+        term_write_printable(term, c, CellTypeNormal);
+        break;
+    }
 }
 
 // Operating system command

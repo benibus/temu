@@ -27,6 +27,7 @@ static void reset(Parser *parser);
 static size_t *arg_curr(Parser *parser);
 static size_t *arg_next(Parser *parser);
 static size_t *arg_accum(Parser *parser, uint8 digit);
+static size_t *arg_set(Parser *parser, size_t val);
 static uint32 do_action(Parser *parser, uint16 pair, uchar c);
 
 static struct {
@@ -58,20 +59,20 @@ parser_fini(Parser *parser)
 uint32
 parser_emit(Parser *parser, const uchar *data, size_t max, size_t *adv)
 {
-    uint32 opcode = 0;
+    uint32 op = 0;
     size_t idx;
 
-    for (idx = 0; !opcode && idx < max; idx++) {
+    for (idx = 0; !op && idx < max; idx++) {
         const uchar c = data[idx];
         const uint16 pair = globals.fsm.table[c][parser->state];
 
-        opcode = do_action(parser, pair, c);
+        op = do_action(parser, pair, c);
         parser->state = GET_STATE(pair);
     }
 
     SETPTR(adv, idx);
 
-    return opcode;
+    return op;
 }
 
 void
@@ -83,7 +84,7 @@ reset_string(Parser *parser)
 void
 reset_sequence(Parser *parser)
 {
-    memset(parser->chars, 0, sizeof(parser->chars));
+    memset(&parser->seq, 0, sizeof(parser->seq));
 }
 
 void
@@ -106,13 +107,13 @@ reset(Parser *parser)
 size_t *
 arg_curr(Parser *parser)
 {
-    size_t *arg = &parser->args[parser->nargs-1];
+    size_t *arg = NULL;
 
     if (parser->nargs_ <= MAX_ARGS) {
-        return (parser->nargs > 0) ? arg : arg_next(parser);
+        arg = (parser->nargs > 0) ? &parser->args[parser->nargs-1] : arg_next(parser);
     }
 
-    return NULL;
+    return arg;
 }
 
 // If the arg limit hasn't been reached, returns a pointer to a new zero-initialized arg,
@@ -155,53 +156,53 @@ arg_accum(Parser *parser, uint8 digit)
     return arg;
 }
 
+// Sets arg count to 1 and sets the first arg to the specified value
+size_t *
+arg_set(Parser *parser, size_t val)
+{
+    reset_args(parser);
+    size_t *arg = &parser->args[0];
+    *arg = val;
+    parser->nargs = 1;
+
+    return arg;
+}
+
 uint32
 do_action(Parser *parser, uint16 pair, uchar c)
 {
-    uint32 opcode = 0;
+    uint32 op = 0;
 
     switch (GET_ACTION(pair)) {
     case ActionNone:
     case ActionIgnore:
         break;
     case ActionPrint:
-        opcode = opcode_encode(OPTAG_WRITE, c);
+    case ActionExec:
+        arg_set(parser, c);
+        op = OP_WRITE;
         break;
     case ActionPrintWide: {
-        // UTF-8 bytes get placed as they would appear in memory, but the sequence doesn't
-        // necessarily start at index 0. This means that the sequence can be re-parsed
-        // after seeking past any null bytes, which allows for deferred error reporting
-        // if the state machine indicates a malformed sequence.
-#define TO_UCS4(c)               \
-    (                            \
-        (((c)[0] & 0x07) << 18)| \
-        (((c)[1] & 0x0f) << 12)| \
-        (((c)[2] & 0x1f) <<  6)| \
-        (((c)[3] & 0x7f) <<  0)  \
-    )
-        parser->chars[3] = c;
-        const uint32 ucs4 = TO_UCS4(parser->chars);
-        opcode = opcode_encode(OPTAG_WRITE, ucs4);
+        parser->seq.type = 0;
+        parser->seq.chars[3] = c;
+        arg_set(parser, sequence_encode(&parser->seq));
+        op = OP_WRITE;
         reset_sequence(parser);
         break;
-#undef TO_UCS4
     }
     case ActionUtf8GetB2:
-        parser->chars[2] = c;
+        parser->seq.chars[2] = c;
         break;
     case ActionUtf8GetB3:
-        parser->chars[1] = c;
+        parser->seq.chars[1] = c;
         break;
     case ActionUtf8GetB4:
-        parser->chars[0] = c;
+        parser->seq.chars[0] = c;
         break;
     case ActionUtf8Error:
         err_printf("Discarding malformed UTF-8 sequence\n");
         // memset(parser->chars, 0, sizeof(parser->chars));
         reset_sequence(parser);
-        break;
-    case ActionExec:
-        opcode = opcode_encode(OPTAG_WRITE, c);
         break;
     case ActionHook:
         // sets handler based on DCS parameters, intermediates, and new char
@@ -220,21 +221,15 @@ do_action(Parser *parser, uint16 pair, uchar c)
         break;
     case ActionOscEnd:
         arr_push(parser->data, 0);
-        opcode = opcode_encode_3c(OPTAG_OSC, parser->chars[2],
-                                             parser->chars[1],
-                                             parser->chars[0]);
+        parser->seq.type = SEQ_OSC;
+        op = sequence_to_opcode(&parser->seq);
         reset_sequence(parser);
         break;
     case ActionGetPrivMarker:
-        ASSERT(c >= OcMinC32);
-        ASSERT(c <= OcMaxC32);
-        parser->chars[2] = c;
+        parser->seq.chars[2] = c;
         break;
     case ActionGetIntermediate:
-        ASSERT((GET_STATE(pair) == StateEsc2)
-               ? (c >= OcMinC21 && c <= OcMaxC21)
-               : (c >= OcMinC31 && c <= OcMaxC31));
-        parser->chars[1] = c;
+        parser->seq.chars[1] = c;
         break;
     case ActionParam:
         if (c == ';') {
@@ -247,17 +242,16 @@ do_action(Parser *parser, uint16 pair, uchar c)
         reset(parser);
         break;
     case ActionEscDispatch: {
-        parser->chars[0] = c;
-        opcode = opcode_encode_2c(OPTAG_ESC, parser->chars[1],
-                                             parser->chars[0]);
+        parser->seq.type = SEQ_ESC;
+        parser->seq.chars[0] = c;
+        op = sequence_to_opcode(&parser->seq);
         reset_sequence(parser);
         break;
     }
     case ActionCsiDispatch: {
-        parser->chars[0] = c;
-        opcode = opcode_encode_3c(OPTAG_CSI, parser->chars[2],
-                                             parser->chars[1],
-                                             parser->chars[0]);
+        parser->seq.type = SEQ_CSI;
+        parser->seq.chars[0] = c;
+        op = sequence_to_opcode(&parser->seq);
         reset_sequence(parser);
         break;
     }
@@ -265,6 +259,6 @@ do_action(Parser *parser, uint16 pair, uchar c)
         break;
     }
 
-    return opcode;
+    return op;
 }
 

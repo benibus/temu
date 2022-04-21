@@ -22,6 +22,7 @@
 #include "term.h"
 #include "term_ring.h"
 #include "cells.h"
+#include "opcodes.h"
 
 static_assert(FontStyleRegular == ATTR_NONE, "Bitmask mismatch.");
 static_assert(FontStyleBold == ATTR_BOLD, "Bitmask mismatch.");
@@ -35,10 +36,10 @@ enum { MAX_ARGS = 16 };
 struct Parser {
     uint state;            // Current FSM state
     uchar *data;           // Dynamic buffer for OSC/DCS/APC string sequences
-    uchar chars[8+1];      // Stored escape sequence/UTF-8 bytes
     size_t args[MAX_ARGS]; // Integer args
     uint16 nargs;          // Number of integer args, capped at MAX_ARGS
     size_t nargs_;         // Number of integer args, uncapped (internal use only)
+    Sequence seq;          // Current UTF-8/escape sequence
 };
 
 enum { MAX_READ = 4096 };

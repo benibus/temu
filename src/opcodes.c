@@ -16,57 +16,116 @@
  *------------------------------------------------------------------------------*/
 
 #include "utils.h"
+#define INCLUDE_ESCSEQS 1
 #include "opcodes.h"
 
-#define HAS_C(x,y,n) (((n) >> (OcShiftC##x##x + (y))) & 1)
-#define GET_C(x,y,n) \
-    (HAS_C(x, y, n) * ((((n) >> OcShiftC##x##y) & OcBitsC##x##y) + OcMinC##x##y))
+inline uint8
+opcode_type(uint32 op)
+{
+#define X_(type,name,...) [OP_##name] = SEQ_##type,
+    static const uint8 types[NUM_OPCODES] = { XTABLE_ESCSEQS };
+#undef X_
+
+    ASSERT(op < NUM_OPCODES);
+    return types[op];
+}
 
 const char *
-opcode_to_string(uint32 opcode)
+opcode_name(uint32 op)
 {
-    switch (OPCODE_TAG(opcode)) {
-    case OPTAG_WRITE: return "WRITE";
-    }
-
-    switch (opcode) {
-#define X_(t,x,...) case OP_##x: return #t "::" #x;
-    XTABLE_ESC_SEQS
+    switch (op) {
+    case OP_NONE:    return "NONE";
+    case OP_UNKNOWN: return "UNKNOWN";
+    case OP_WRITE:   return "WRITE";
+#define X_(type,name,...) case OP_##name: return #type "::" #name;
+    XTABLE_ESCSEQS
 #undef X_
-    default: return "NONE";
+    default: return "OTHER";
     }
 }
 
-uint
-opcode_to_index(uint32 opcode)
+uint32
+sequence_encode(const Sequence *seq)
 {
-    switch (OPCODE_TAG(opcode)) {
-    case OPTAG_WRITE: return OPIDX_WRITE;
+    uint32 code = 0;
+
+    switch (seq->type) {
+    case SEQ_ESC:
+    case SEQ_CSI:
+    case SEQ_OSC:
+    case SEQ_DCS:
+    case SEQ_APC: {
+        // Pack as a 3-byte escape sequence with the specific type in the highest byte
+        code = ESCSEQ(seq->type, seq->chars[2],
+                                 seq->chars[1],
+                                 seq->chars[0]);
+        break;
+    }
+    case 0:
+        // Pack as a UTF-32 wide char.
+        // The source sequence is assumed to be valid UTF-8 with 0-3 leading zero-bytes
+        code |= (seq->chars[0] & 0x07) << 18;
+        code |= (seq->chars[1] & 0x0f) << 12;
+        code |= (seq->chars[2] & 0x1f) <<  6;
+        code |= (seq->chars[3] & 0x7f) <<  0;
+        break;
+    default:
+        return 0;
     }
 
-    switch (opcode) {
-#define X_(t,x,...) case OP_##x: return OPIDX_##x;
-    XTABLE_ESC_SEQS
-#undef X_
-    default: return OPIDX_NONE;
-    }
+    return code;
 }
 
 void
-opcode_get_chars(uint32 opcode, char *buf)
+sequence_decode(uint32 code, Sequence *r_seq)
 {
-    switch (OPCODE_TAG(opcode)) {
-    case OPTAG_CSI:
-    case OPTAG_DCS:
-        buf[0] = GET_C(3, 0, opcode);
-        buf[1] = GET_C(3, 1, opcode);
-        buf[2] = GET_C(3, 2, opcode);
+    Sequence seq;
+    memset(&seq, 0, sizeof(seq));
+
+    seq.type = code >> 24;
+
+    switch (seq.type) {
+    case SEQ_ESC:
+    case SEQ_CSI:
+    case SEQ_OSC:
+    case SEQ_DCS:
+    case SEQ_APC: {
+        // Interpret the lower 24 bits as an encoded escape sequence.
+        // Convert back to original representation
+        seq.chars[0] = (code >> (0 * 8)) & 0xff;
+        seq.chars[1] = (code >> (1 * 8)) & 0xff;
+        seq.chars[2] = (code >> (2 * 8)) & 0xff;
         break;
-    case OPTAG_ESC:
-        buf[0] = GET_C(2, 0, opcode);
-        buf[1] = GET_C(2, 1, opcode);
-        buf[2] = 0;
+    }
+    case 0:
+        // Interpret the lower 24 bits as a UTF-32 codepoint.
+        // TODO(ben): Conversion back to UTF-8
         break;
+    default:
+        break;
+    }
+
+    SETPTR(r_seq, seq);
+}
+
+uint32
+sequence_to_opcode(const Sequence *seq)
+{
+    const uint32 code = sequence_encode(seq);
+
+    // If there's no type information, the lower 3 bytes are assumed to an arbitrary
+    // UTF-32 codepoint, which always translates to a WRITE operation
+    if (!(code >> 24)) {
+        return OP_WRITE;
+    }
+
+    // If a type is specified, the sequence code maps to an escape sequence operation
+    switch (code) {
+#define X_(type,name,...) case ESCSEQ_##name: return OP_##name;
+    XTABLE_ESCSEQS
+#undef X_
+    // If nothing matches, the sequence is valid but unrecognized
+    default: return OP_UNKNOWN;
     }
 }
 
