@@ -65,11 +65,11 @@ struct Term {
     int rows;      // Current screen rows
     int max_cols;  // Maximum prior screen columns
     int max_rows;  // Maximum prior screen rows
-    int width;
-    int height;
-    int border;
-    int colpx;     // Horizontal cell size in pixels
-    int rowpx;     // Vertical cell size in pixels
+    int border;    // Screen border size in pixels
+    int width;     // Screen width in pixels
+    int height;    // Screen height in pixels
+    int cwidth;    // Cell width in pixels
+    int cheight;   // Cell height in pixels
     int histlines; // Maximum lines in scrollback history
 
     Cursor cur;

@@ -415,9 +415,7 @@ on_resize_event(App *app, const WinGeomEvent *event)
         return;
     }
 
-    term_resize(app->term,
-                imax(0, event->width - 2 * app->opts.border),
-                imax(0, event->height - 2 * app->opts.border));
+    term_resize(app->term, event->width, event->height);
 
     app->width  = event->width;
     app->height = event->height;

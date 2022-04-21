@@ -125,16 +125,16 @@ term_create(App *app)
     term->fonts   = app_fonts(app);
     term->palette = app_palette(app);
     term->tabcols = app_tabcols(app);
-    term->colpx   = app_font_width(app);
-    term->rowpx   = app_font_height(app);
+    term->cwidth  = app_font_width(app);
+    term->cheight = app_font_height(app);
     term->width   = app_width(app);
     term->height  = app_height(app);
     term->border  = app_border(app);
-    ASSERT(term->colpx > 0 && term->rowpx > 0);
+    ASSERT(term->cwidth > 0 && term->cheight > 0);
 
     // Compute initial cols/rows and scrollback length
-    term->cols = imax(0, term->width - 2 * term->border) / term->colpx;
-    term->rows = imax(0, term->height - 2 * term->border) / term->rowpx;
+    term->cols = imax(0, term->width - 2 * term->border) / term->cwidth;
+    term->rows = imax(0, term->height - 2 * term->border) / term->cheight;
     term->histlines = round_pow2(imax(term->rows, app_histlines(app)));
 
     cursor_init(&term->cur);
@@ -162,8 +162,8 @@ term_create(App *app)
                term->tabcols,
                term->width,
                term->height,
-               term->colpx,
-               term->rowpx,
+               term->cwidth,
+               term->cheight,
                term->border,
                term->histlines);
 
@@ -202,7 +202,7 @@ term_exec(Term *term, const char *shell, int argc, const char *const *argv)
     if (!term->pid) {
         parser_init(&term->parser);
         term->pid = pty_init(shell, &term->mfd, &term->sfd);
-        pty_resize(term->mfd, term->cols, term->rows, term->colpx, term->rowpx);
+        pty_resize(term->mfd, term->cols, term->rows, term->cwidth, term->cheight);
     }
 
     return term->mfd;
@@ -220,8 +220,8 @@ generate_frame(Term *term)
     ring_copy_framebuffer(term->ring, frame->cells);
     frame->cols = term->cols;
     frame->rows = term->rows;
-    frame->width = term->cols * term->colpx;
-    frame->height = term->rows *term->rowpx;
+    frame->width = term->cols * term->cwidth;
+    frame->height = term->rows *term->cheight;
     frame->cursor.col = term->cur.x;
     frame->cursor.row = term->cur.y;
     frame->cursor.style = term->cur.style;
@@ -349,11 +349,10 @@ void
 term_resize(Term *term, uint width, uint height)
 {
     ASSERT(term);
-    ASSERT(width);
-    ASSERT(height);
 
-    const int cols = (int)width / term->colpx;
-    const int rows = (int)height / term->rowpx;
+    ASSERT(width <= INT_MAX && height <= INT_MAX);
+    const int cols = iclamp(((int)width - 2 * term->border) / term->cwidth, 0, MAX_COLS);
+    const int rows = iclamp(((int)height - 2 * term->border) / term->cheight, 0, MAX_ROWS);
 
     if (cols == term->cols && rows == term->rows) {
         return;
@@ -381,7 +380,7 @@ term_resize(Term *term, uint width, uint height)
     alloc_frame(&term->frame, cols, rows);
 
     // Resize psuedoterminal
-    pty_resize(term->mfd, cols, rows, term->colpx, term->rowpx);
+    pty_resize(term->mfd, cols, rows, term->cwidth, term->cheight);
 
     // Commit changes
     update_dimensions(term, cols, rows);

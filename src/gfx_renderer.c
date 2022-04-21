@@ -239,8 +239,8 @@ gfx_draw_frame(const Frame *frame, FontSet *fontset)
     const int ccol = frame->cursor.col;
     const int crow = frame->cursor.row;
     // Pixel border offset
-    const int bx = MAX(0, draw->width - frame->width);
-    const int by = MAX(0, draw->height - frame->height);
+    const int ox = MAX(0, draw->width - frame->width) / 2;
+    const int oy = MAX(0, draw->height - frame->height) / 2;
     // Pixel advance per cell
     const int dx = frame->width / frame->cols;
     const int dy = frame->height / frame->rows;
@@ -266,7 +266,7 @@ gfx_draw_frame(const Frame *frame, FontSet *fontset)
 
             // FIXME(ben):
             // Screen coords arent't normalized but texture coords are. Pretty weird
-            quads[idx].dst = VEC4F(bx + col * dx, by + row * dy, dx, dy);
+            quads[idx].dst = VEC4F(ox + col * dx, oy + row * dy, dx, dy);
             quads[idx].src = VEC4F(tex.u, tex.v, tex.w, tex.h);
             quads[idx].tex = tex.id;
 
@@ -292,7 +292,7 @@ gfx_draw_frame(const Frame *frame, FontSet *fontset)
             } else {
                 // Cursor cell is beyond the last glyph, gets appended
                 quad = &quads[idx++];
-                quad->dst = VEC4F(bx + ccol * dx, by + crow * dy, dx, dy);
+                quad->dst = VEC4F(ox + ccol * dx, oy + crow * dy, dx, dy);
                 quad->src = VEC4F(0, 0, 0, 0);
                 quad->tex = 0;
             }
